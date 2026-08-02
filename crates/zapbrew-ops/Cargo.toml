@@ -1,0 +1,16 @@
+[package]
+name = "zapbrew-ops"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+zapbrew-api = { path = "../zapbrew-api" }
+zapbrew-net = { path = "../zapbrew-net" }
+zapbrew-pour = { path = "../zapbrew-pour" }
+zapbrew-prefix = { path = "../zapbrew-prefix" }
+zapbrew-types = { path = "../zapbrew-types" }

@@ -1,0 +1,13 @@
+[package]
+name = "zapbrew-pour"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+zapbrew-prefix = { path = "../zapbrew-prefix" }
+zapbrew-types = { path = "../zapbrew-types" }

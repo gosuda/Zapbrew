@@ -1,0 +1,31 @@
+[package]
+name = "zapbrew-cli"
+version = "0.1.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "zapbrew"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+zapbrew-api = { path = "../zapbrew-api" }
+zapbrew-ops = { path = "../zapbrew-ops" }
+zapbrew-prefix = { path = "../zapbrew-prefix" }
+
+anyhow = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+clap_complete = { workspace = true }
+jaro_winkler = { workspace = true }
+owo-colors = { workspace = true }
+terminal_size = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "signal", "time"] }
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+insta = { workspace = true }
