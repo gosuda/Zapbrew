@@ -1,0 +1,31 @@
+//! Public request/result types for bottle downloads.
+//!
+//! This module is the single home for `CachedBottle`; the crate's cache
+//! internals (see `cache.rs`) never re-define it.
+
+use camino::Utf8PathBuf;
+use zapbrew_types::{BottleFile, FormulaName, PkgVersion};
+
+/// A bottle successfully fetched into the cache.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachedBottle {
+    /// Content-addressed final path: `$CACHE/downloads/<sha256(url)>--<basename>`.
+    pub path: Utf8PathBuf,
+    /// Friendly alias path: `$CACHE/<basename>` (relative symlink into `downloads/`).
+    pub alias: Utf8PathBuf,
+    /// True when the cache already held a valid file and no bytes were downloaded.
+    pub reused: bool,
+}
+
+/// One bottle to fetch, as handed to `download_all`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DownloadRequest {
+    /// Formula name, used for messages and the cache basename.
+    pub name: FormulaName,
+    /// Bottle descriptor from the API (tag, cellar, url, sha256).
+    pub bottle: BottleFile,
+    /// Stable version + revision, used in the cache basename.
+    pub pkg_version: PkgVersion,
+    /// Bottle rebuild number; 0 is omitted from the basename.
+    pub rebuild: u32,
+}

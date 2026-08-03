@@ -11,3 +11,15 @@ workspace = true
 [dependencies]
 zapbrew-prefix = { path = "../zapbrew-prefix" }
 zapbrew-types = { path = "../zapbrew-types" }
+camino = { workspace = true }
+futures = { workspace = true }
+indicatif = { workspace = true }
+reqwest = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
+wiremock = { workspace = true }
