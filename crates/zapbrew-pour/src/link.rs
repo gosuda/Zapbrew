@@ -153,6 +153,13 @@ pub fn link(keg: &Keg, prefix: &Prefix, options: LinkOptions) -> Result<LinkRepo
         });
     }
 
+    // Always-on destinations (MUST_EXIST_TOP mkdirs and opt/linked records) run
+    // even in keg-only mode, where LINK_DIRS planning never calls classify().
+    // Confine their ancestors before any mkdir/link/backup mutates the prefix.
+    let opt_record = prefix.opt_path(keg.name())?;
+    let linked_record = prefix.linked_path(keg.name())?;
+    preflight_always_on_destinations(prefix_path, &opt_record, &linked_record)?;
+
     let backup_dir = prefix.env().cache.join("Backup");
     let mut linked = Vec::new();
     let mut backups = Vec::new();
@@ -166,8 +173,8 @@ pub fn link(keg: &Keg, prefix: &Prefix, options: LinkOptions) -> Result<LinkRepo
     }
 
     // opt and linked keg records are always written (even for keg-only).
-    write_record(&prefix.opt_path(keg.name())?, keg_root)?;
-    write_record(&prefix.linked_path(keg.name())?, keg_root)?;
+    write_record(&opt_record, keg_root)?;
+    write_record(&linked_record, keg_root)?;
 
     Ok(LinkReport {
         linked,
@@ -459,6 +466,26 @@ fn ensure_destination_ancestors(prefix_path: &Utf8Path, dst: &Utf8Path) -> Resul
             Err(err) => return Err(PourError::io("read", &cur, err)),
         }
     }
+    Ok(())
+}
+
+/// Confine always-on link destinations before any prefix mutation.
+///
+/// `MUST_EXIST_TOP` directories are checked via a synthetic child so the top
+/// name itself is treated as an ancestor (catching `prefix/opt -> outside`).
+/// Opt and linked record paths check every real ancestor through their parents
+/// (catching `prefix/var -> outside` on `var/homebrew/linked/<name>`).
+fn preflight_always_on_destinations(
+    prefix_path: &Utf8Path,
+    opt_record: &Utf8Path,
+    linked_record: &Utf8Path,
+) -> Result<(), PourError> {
+    for dir in MUST_EXIST_TOP {
+        // Synthetic leaf: only ancestors (including `dir`) are inspected.
+        ensure_destination_ancestors(prefix_path, &prefix_path.join(dir).join(".preflight"))?;
+    }
+    ensure_destination_ancestors(prefix_path, opt_record)?;
+    ensure_destination_ancestors(prefix_path, linked_record)?;
     Ok(())
 }
 

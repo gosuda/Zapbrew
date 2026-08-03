@@ -903,7 +903,7 @@ fn rewrite_runpath(
         table_file,
         table_vaddr,
         new_strsz,
-    );
+    )?;
     Ok(true)
 }
 
@@ -1017,26 +1017,49 @@ fn update_dynstr_section(
     new_offset: u64,
     new_vaddr: u64,
     new_size: u64,
-) {
+) -> Result<(), String> {
     let Some(shoff) = rd_u64(buf, 40, little) else {
-        return;
+        return Err("cannot read e_shoff".to_owned());
     };
     if shoff == 0 {
-        return;
+        return Ok(());
     }
-    let shentsize = rd_u16(buf, 58, little).unwrap_or(0) as usize;
-    let shnum = rd_u16(buf, 60, little).unwrap_or(0) as usize;
+    let shentsize =
+        usize::from(rd_u16(buf, 58, little).ok_or_else(|| "cannot read e_shentsize".to_owned())?);
+    let shnum =
+        usize::from(rd_u16(buf, 60, little).ok_or_else(|| "cannot read e_shnum".to_owned())?);
     if shentsize < SHDR64_LEN {
-        return;
+        return Err("invalid e_shentsize".to_owned());
     }
+
+    let shoff_usize =
+        usize::try_from(shoff).map_err(|_| "e_shoff outside addressable range".to_owned())?;
+
+    // Validate every header span with checked arithmetic before any write.
+    let mut matches = Vec::new();
     for index in 0..shnum {
-        let base = shoff as usize + index * shentsize;
+        let base = index
+            .checked_mul(shentsize)
+            .and_then(|offset| shoff_usize.checked_add(offset))
+            .ok_or_else(|| "section header offset overflows".to_owned())?;
+        // sh_addr at +16, sh_offset at +24, sh_size at +32; each is 8 bytes.
+        let span_end = base
+            .checked_add(40)
+            .ok_or_else(|| "section header field span overflows".to_owned())?;
+        if span_end > buf.len() {
+            return Err("section header outside file".to_owned());
+        }
         if rd_u64(buf, base + 16, little) == Some(old_vaddr) {
-            let _ = write_u64(buf, base + 16, little, new_vaddr); // sh_addr
-            let _ = write_u64(buf, base + 24, little, new_offset); // sh_offset
-            let _ = write_u64(buf, base + 32, little, new_size); // sh_size
+            matches.push(base);
         }
     }
+
+    for base in matches {
+        write_u64(buf, base + 16, little, new_vaddr)?; // sh_addr
+        write_u64(buf, base + 24, little, new_offset)?; // sh_offset
+        write_u64(buf, base + 32, little, new_size)?; // sh_size
+    }
+    Ok(())
 }
 
 /// Map a virtual address to a file offset via the covering PT_LOAD segment.
@@ -1872,5 +1895,53 @@ mod tests {
             other => panic!("expected Relocation error, got {other:?}"),
         }
         assert_eq!(macho, before, "rejected image must stay byte-unchanged");
+    }
+
+    #[test]
+    fn malformed_elf_section_headers_rejected_unchanged() {
+        let mut buf = build_elf64(
+            "@@HOMEBREW_PREFIX@@/lib/ld.so",
+            "@@HOMEBREW_PREFIX@@/lib/foo",
+        );
+        // Directly exercise update_dynstr_section: a non-zero e_shoff with
+        // headers that leave the file must error before any sh_* write. The
+        // working buffer stays byte-identical (relocate_binary copies input;
+        // this unit covers the section-arithmetic gate itself).
+        let shoff = buf.len() as u64 - 8;
+        wr64(&mut buf, 40, shoff);
+        wr16(&mut buf, 58, SHDR64_LEN as u16);
+        wr16(&mut buf, 60, 64);
+        let before = buf.clone();
+        let err = update_dynstr_section(&mut buf, true, 0x41_0000, 1, 2, 3);
+        match err {
+            Err(reason) => {
+                assert!(
+                    reason.contains("section header")
+                        || reason.contains("e_sh")
+                        || reason.contains("overflow"),
+                    "reason={reason}"
+                );
+            }
+            Ok(()) => panic!("malformed section metadata must be rejected"),
+        }
+        assert_eq!(buf, before, "rejected buffer must stay byte-unchanged");
+    }
+
+    #[test]
+    fn malformed_elf_section_entsize_rejected_unchanged() {
+        let mut buf = build_elf64(
+            "@@HOMEBREW_PREFIX@@/lib/ld.so",
+            "@@HOMEBREW_PREFIX@@/lib/foo",
+        );
+        wr64(&mut buf, 40, 64); // non-zero e_shoff
+        wr16(&mut buf, 58, 8); // e_shentsize < SHDR64_LEN
+        wr16(&mut buf, 60, 1);
+        let before = buf.clone();
+        let err = update_dynstr_section(&mut buf, true, 0x41_0000, 1, 2, 3);
+        match err {
+            Err(reason) => assert!(reason.contains("e_shentsize"), "reason={reason}"),
+            Ok(()) => panic!("undersized e_shentsize must be rejected"),
+        }
+        assert_eq!(buf, before, "rejected buffer must stay byte-unchanged");
     }
 }

@@ -690,3 +690,110 @@ fn prefix_bin_symlink_blocks_link_and_outside_unchanged() {
         "no linked record when destination ancestry is unsafe"
     );
 }
+
+// --- always-on destination ancestor confinement (MUST_EXIST_TOP / records) ---
+
+#[test]
+fn prefix_opt_symlink_blocks_link_and_outside_unchanged() {
+    let fx = fixture();
+    keg_file(&fx, "bin/tool", "keg-tool");
+
+    let p = fx.prefix_path();
+    let opt = p.join("opt");
+    if opt.as_std_path().exists() {
+        fs::remove_dir_all(opt.as_std_path()).expect("remove real opt");
+    }
+    let outside = utf8(fx._tmp.path().join("outside-prefix-opt"));
+    fs::create_dir_all(outside.as_std_path()).expect("mkdir outside");
+    let marker = outside.join("KEEPME");
+    fs::write(marker.as_std_path(), "precious-opt-outside").expect("write outside marker");
+    symlink(outside.as_std_path(), opt.as_std_path()).expect("plant prefix/opt symlink");
+
+    let err = match link(&fx.keg, &fx.prefix, LinkOptions::default()) {
+        Err(err) => err,
+        Ok(report) => panic!("expected LinkConflict for prefix/opt symlink, got {report:?}"),
+    };
+    match err {
+        PourError::LinkConflict { reason, target, .. } => {
+            assert!(
+                reason.contains("destination ancestor is a symlink") || reason.contains("symlink"),
+                "reason={reason}"
+            );
+            assert_eq!(target, opt);
+        }
+        other => panic!("expected LinkConflict, got {other}"),
+    }
+
+    assert_eq!(
+        fs::read_to_string(marker.as_std_path()).expect("read outside marker"),
+        "precious-opt-outside",
+        "outside target must remain byte-identical"
+    );
+    assert!(
+        !outside.join("foo").as_std_path().exists(),
+        "opt record must not be written through the planted symlink"
+    );
+    assert!(
+        !lexists(&p.join("opt/foo")),
+        "no opt record under planted symlink"
+    );
+    assert!(
+        !lexists(&p.join("var/homebrew/linked/foo")),
+        "no linked record when always-on destination ancestry is unsafe"
+    );
+}
+
+#[test]
+fn prefix_var_symlink_blocks_keg_only_and_outside_unchanged() {
+    let fx = fixture();
+    keg_file(&fx, "bin/tool", "keg-tool");
+
+    let p = fx.prefix_path();
+    let var = p.join("var");
+    if var.as_std_path().exists() {
+        fs::remove_dir_all(var.as_std_path()).expect("remove real var");
+    }
+    let outside = utf8(fx._tmp.path().join("outside-prefix-var"));
+    fs::create_dir_all(outside.as_std_path()).expect("mkdir outside");
+    let marker = outside.join("KEEPME");
+    fs::write(marker.as_std_path(), "precious-var-outside").expect("write outside marker");
+    symlink(outside.as_std_path(), var.as_std_path()).expect("plant prefix/var symlink");
+
+    // keg-only skips LINK_DIRS classify(); always-on record preflight must still fire.
+    let options = LinkOptions {
+        keg_only: true,
+        ..LinkOptions::default()
+    };
+    let err = match link(&fx.keg, &fx.prefix, options) {
+        Err(err) => err,
+        Ok(report) => panic!("expected LinkConflict for prefix/var symlink, got {report:?}"),
+    };
+    match err {
+        PourError::LinkConflict { reason, target, .. } => {
+            assert!(
+                reason.contains("destination ancestor is a symlink") || reason.contains("symlink"),
+                "reason={reason}"
+            );
+            assert_eq!(target, var);
+        }
+        other => panic!("expected LinkConflict, got {other}"),
+    }
+
+    assert_eq!(
+        fs::read_to_string(marker.as_std_path()).expect("read outside marker"),
+        "precious-var-outside",
+        "outside target must remain byte-identical"
+    );
+    assert!(
+        !outside.join("homebrew").as_std_path().exists(),
+        "linked-record parents must not be created through the planted symlink"
+    );
+    assert!(
+        !lexists(&p.join("opt/foo")),
+        "no opt record when ancestry is unsafe"
+    );
+    assert!(
+        !lexists(&p.join("var/homebrew/linked/foo")),
+        "no linked record through planted var symlink"
+    );
+}
