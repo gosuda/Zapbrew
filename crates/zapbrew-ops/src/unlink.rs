@@ -37,7 +37,10 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
         if args.dry_run {
             let report = plan_unlink(&keg, &prefix)?;
             ctx.reporter.print("Would remove:");
-            for path in report.removed {
+            for path in &report.removed {
+                ctx.reporter.print(path.as_str());
+            }
+            for path in &report.pruned {
                 ctx.reporter.print(path.as_str());
             }
         } else {

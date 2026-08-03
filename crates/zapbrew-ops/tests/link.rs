@@ -330,3 +330,116 @@ async fn linking_unlinks_locked_keg_only_versioned_sibling_first() {
         "target"
     );
 }
+
+#[tokio::test]
+async fn family_unlinks_cover_full_variants_and_every_unlinked_sibling_was_locked() {
+    let fixture = Fixture::new();
+    let target = fixture.keg("foo", "3.0", 0);
+    let versioned = fixture.keg("foo@2", "2.0", 0);
+    let full = fixture.keg("foo-full", "1.0", 0);
+    let versioned_full = fixture.keg("foo@2-full", "2.0", 0);
+    let unrelated = fixture.keg("food", "1.0", 0);
+    fixture.keg_file(&target, "bin/foo", "target");
+    fixture.keg_file(&versioned, "bin/foo-versioned", "versioned");
+    fixture.keg_file(&full, "bin/foo-full-bin", "full");
+    fixture.keg_file(&versioned_full, "bin/foo-versioned-full", "versioned-full");
+    fixture.keg_file(&unrelated, "bin/food", "food");
+    let prefix = Prefix::new(fixture.env.clone());
+    for (keg, keg_only) in [
+        (&versioned, true),
+        (&full, true),
+        (&versioned_full, true),
+        (&unrelated, false),
+    ] {
+        pour_link(
+            keg,
+            &prefix,
+            LinkOptions {
+                force: true,
+                keg_only,
+                ..LinkOptions::default()
+            },
+        )
+        .expect("sibling link");
+    }
+
+    let formulae = vec![
+        formula("foo", "3.0", 0),
+        keg_only_formula("foo@2", "2.0", 0, ":versioned_formula", "versioned"),
+        keg_only_formula("foo-full", "1.0", 0, "some_reason", "full"),
+        keg_only_formula(
+            "foo@2-full",
+            "2.0",
+            0,
+            ":versioned_formula",
+            "full versioned",
+        ),
+        formula("food", "1.0", 0),
+    ];
+    let (ctx, reporter) = fixture.context(formulae);
+
+    for sibling in ["foo@2", "foo-full", "foo@2-full"] {
+        let held =
+            zapbrew_prefix::LockGuard::acquire(&ctx.env.locks, &format!("{sibling}.formula.lock"))
+                .expect("hold family lock");
+        let error = link::run(
+            &ctx,
+            Args {
+                names: vec!["foo".to_owned()],
+                ..Args::default()
+            },
+        )
+        .await
+        .expect_err("family member must be locked before unlink");
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("{sibling}.formula.lock")),
+            "expected busy lock for {sibling}, got {error}"
+        );
+        drop(held);
+        let _ = reporter.take();
+    }
+
+    link::run(
+        &ctx,
+        Args {
+            names: vec!["foo".to_owned()],
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("replace family links");
+
+    assert_eq!(
+        reporter.take(),
+        [
+            format!("print:Unlinking {}... 1 symlinks removed.", full.path()),
+            format!(
+                "print:Unlinking {}... 1 symlinks removed.",
+                versioned.path()
+            ),
+            format!(
+                "print:Unlinking {}... 1 symlinks removed.",
+                versioned_full.path()
+            ),
+            format!("print:Linking {}... 3 symlinks created.", target.path()),
+        ]
+    );
+    assert!(is_symlink(&ctx.env.linked.join("foo")));
+    assert!(!is_symlink(&ctx.env.linked.join("foo@2")));
+    assert!(!is_symlink(&ctx.env.linked.join("foo-full")));
+    assert!(!is_symlink(&ctx.env.linked.join("foo@2-full")));
+    assert!(
+        is_symlink(&ctx.env.linked.join("food")),
+        "unrelated prefix remains linked"
+    );
+    assert_eq!(
+        fs::read_to_string(ctx.env.prefix.join("bin/foo")).expect("linked target"),
+        "target"
+    );
+    assert_eq!(
+        fs::read_to_string(ctx.env.prefix.join("bin/food")).expect("unrelated"),
+        "food"
+    );
+}

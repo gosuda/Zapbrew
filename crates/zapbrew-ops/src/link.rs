@@ -28,7 +28,7 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
             .catalog
             .get(name)
             .ok_or_else(|| OpError::MissingFormula { name: name.clone() })?;
-        locked_names.extend(overwrite_sibling_names(&ctx.catalog, formula));
+        locked_names.extend(family_sibling_names(&ctx.catalog, formula));
     }
 
     let locks = acquire_formula_locks(&ctx.env, &locked_names)?;
@@ -140,7 +140,7 @@ fn link_one(
         return Ok(());
     }
 
-    let siblings = linked_overwrite_siblings(ctx, state, formula)?;
+    let siblings = linked_family_siblings(ctx, state, formula)?;
     reject_conflicts(ctx, formula, &preview, &siblings)?;
 
     let mut unlinked = Vec::with_capacity(siblings.len());
@@ -232,22 +232,59 @@ fn resolved_names(ctx: &Ctx, requested: &[String]) -> Result<BTreeSet<String>, O
         .collect()
 }
 
-fn overwrite_sibling_names(catalog: &Catalog, formula: &Formula) -> BTreeSet<String> {
-    let base = unversioned_name(&formula.name);
-    catalog
-        .iter()
-        .filter(|other| other.name != formula.name && unversioned_name(&other.name) == base)
-        .map(|other| other.name.clone())
-        .collect()
+/// Normalize a formula name to its link-overwrite family key by repeatedly
+/// stripping a trailing `-full` and a trailing `@version` until stable.
+fn normalize_family_key(name: &str) -> String {
+    let mut current = name.to_owned();
+    loop {
+        let before = current.clone();
+        if let Some(stripped) = current.strip_suffix("-full") {
+            current = stripped.to_owned();
+        }
+        if let Some(at) = current.rfind('@') {
+            let version = &current[at + 1..];
+            if !version.is_empty()
+                && version
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || byte == b'.')
+            {
+                current.truncate(at);
+            }
+        }
+        if current == before {
+            return current;
+        }
+    }
 }
 
-fn linked_overwrite_siblings(
+/// Catalog formulae that share [`normalize_family_key`] with `formula`, excluding
+/// self. Dedupes by `full_name`, then by canonical `name`.
+fn family_sibling_names(catalog: &Catalog, formula: &Formula) -> BTreeSet<String> {
+    let key = normalize_family_key(&formula.name);
+    let mut names = BTreeSet::new();
+    let mut seen_full = BTreeSet::from([formula.full_name.clone()]);
+    for other in catalog.iter() {
+        if other.name == formula.name {
+            continue;
+        }
+        if normalize_family_key(&other.name) != key {
+            continue;
+        }
+        if !seen_full.insert(other.full_name.clone()) {
+            continue;
+        }
+        names.insert(other.name.clone());
+    }
+    names
+}
+
+fn linked_family_siblings(
     ctx: &Ctx,
     state: &crate::state::InstalledState,
     formula: &Formula,
 ) -> Result<Vec<Keg>, OpError> {
     let mut siblings = Vec::new();
-    for name in overwrite_sibling_names(&ctx.catalog, formula) {
+    for name in family_sibling_names(&ctx.catalog, formula) {
         let Some(installed) = state.formula(&name) else {
             continue;
         };
@@ -255,6 +292,8 @@ fn linked_overwrite_siblings(
             continue;
         };
         let sibling_formula = ctx.catalog.get(&name);
+        // Non-keg-only targets only replace keg-only siblings; keg-only targets
+        // replace every linked family member.
         if !formula.keg_only && !sibling_formula.is_some_and(|item| item.keg_only) {
             continue;
         }
@@ -349,10 +388,6 @@ fn resolves_inside(path: &Utf8Path, root: &Utf8Path) -> bool {
     path.starts_with(root)
 }
 
-fn unversioned_name(name: &str) -> &str {
-    name.split_once('@').map_or(name, |(base, _)| base)
-}
-
 fn reason(formula: &Formula) -> Option<&str> {
     formula
         .keg_only_reason
@@ -413,8 +448,12 @@ fn print_path_hint(ctx: &Ctx, keg: &Keg) {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_default_macos_prefix, macos_refusal_message};
+    use super::{
+        family_sibling_names, is_default_macos_prefix, macos_refusal_message, normalize_family_key,
+    };
     use camino::Utf8Path;
+    use serde_json::json;
+    use zapbrew_api::Catalog;
     use zapbrew_types::BottleTag;
 
     #[test]
@@ -428,6 +467,77 @@ mod tests {
         assert_eq!(
             macos_refusal_message("foo", "macOS already provides it."),
             "Refusing to link macOS provided/shadowed software: foo\nmacOS already provides it."
+        );
+    }
+
+    #[test]
+    fn family_key_strips_versioned_and_full_suffixes_until_stable() {
+        assert_eq!(normalize_family_key("foo"), "foo");
+        assert_eq!(normalize_family_key("foo@2"), "foo");
+        assert_eq!(normalize_family_key("foo-full"), "foo");
+        assert_eq!(normalize_family_key("foo@2-full"), "foo");
+        assert_eq!(normalize_family_key("foo@2.1"), "foo");
+        assert_eq!(normalize_family_key("food"), "food");
+        assert_eq!(normalize_family_key("foo-bar"), "foo-bar");
+    }
+
+    #[test]
+    fn family_siblings_are_transitive_versioned_full_and_deduped() {
+        let tag = BottleTag::from_host("linux", "x86_64", None).expect("linux tag");
+        let payload = serde_json::to_vec(&json!([
+            {"name": "foo", "full_name": "foo", "versions": {"stable": "1.0", "bottle": true}},
+            {"name": "foo@2", "full_name": "foo@2", "versions": {"stable": "2.0", "bottle": true}},
+            {
+                "name": "foo-full",
+                "full_name": "foo-full",
+                "versions": {"stable": "1.0", "bottle": true}
+            },
+            {
+                "name": "foo@2-full",
+                "full_name": "foo@2-full",
+                "versions": {"stable": "2.0", "bottle": true}
+            },
+            {
+                "name": "foo-dup",
+                "full_name": "foo@2",
+                "versions": {"stable": "2.0", "bottle": true}
+            },
+            {
+                "name": "food",
+                "full_name": "food",
+                "versions": {"stable": "1.0", "bottle": true}
+            },
+            {
+                "name": "bar@1",
+                "full_name": "bar@1",
+                "versions": {"stable": "1.0", "bottle": true}
+            },
+        ]))
+        .expect("payload");
+        let catalog = Catalog::from_payload(&payload, &tag).expect("catalog");
+        let foo = catalog.get("foo").expect("foo");
+        let siblings = family_sibling_names(&catalog, foo);
+        assert_eq!(
+            siblings.iter().cloned().collect::<Vec<_>>(),
+            vec![
+                "foo-full".to_owned(),
+                "foo@2".to_owned(),
+                "foo@2-full".to_owned(),
+            ]
+        );
+        assert!(!siblings.contains("food"));
+        assert!(!siblings.contains("bar@1"));
+        assert!(!siblings.contains("foo"));
+        assert!(
+            !siblings.contains("foo-dup"),
+            "duplicate full_name foo@2 is collapsed to the first catalog entry"
+        );
+
+        let versioned = catalog.get("foo@2-full").expect("foo@2-full");
+        let from_versioned = family_sibling_names(&catalog, versioned);
+        assert_eq!(
+            from_versioned.iter().cloned().collect::<Vec<_>>(),
+            vec!["foo".to_owned(), "foo-full".to_owned(), "foo@2".to_owned(),]
         );
     }
 }

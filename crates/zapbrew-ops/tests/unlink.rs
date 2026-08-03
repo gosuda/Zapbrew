@@ -112,3 +112,60 @@ async fn missing_keg_refusal_is_exact_and_zero_link_count_is_reported() {
         format!("No such keg: {}/missing", ctx.env.cellar)
     );
 }
+
+#[tokio::test]
+async fn dry_run_lists_removed_and_pruned_matching_real_unlink() {
+    let fixture = Fixture::new();
+    let keg = fixture.keg("nested", "1.0", 0);
+    fixture.keg_file(&keg, "share/man/man1/nested.1", "manual");
+    fixture.keg_file(&keg, "lib/pkgconfig/nested.pc", "pc");
+    let prefix = Prefix::new(fixture.env.clone());
+    link(&keg, &prefix, LinkOptions::default()).expect("initial link");
+    let plan = zapbrew_pour::plan_unlink(&keg, &prefix).expect("plan");
+    assert!(
+        plan.pruned
+            .contains(&fixture.env.prefix.join("share/man/man1")),
+        "nested last-link directories must be planned for pruning"
+    );
+    assert!(plan.pruned.contains(&fixture.env.prefix.join("share/man")));
+    assert!(
+        plan.pruned
+            .contains(&fixture.env.prefix.join("lib/pkgconfig"))
+    );
+
+    let (ctx, reporter) = fixture.context(vec![formula("nested", "1.0", 0)]);
+    write(&ctx.env.locks.join("nested.formula.lock"), "");
+    let before = fingerprint(&ctx.env.prefix);
+
+    unlink::run(
+        &ctx,
+        Args {
+            names: vec!["nested".to_owned()],
+            dry_run: true,
+        },
+    )
+    .await
+    .expect("dry-run unlink");
+
+    assert_eq!(
+        fingerprint(&ctx.env.prefix),
+        before,
+        "dry-run is byte-identical"
+    );
+    let mut expected = vec!["print:Would remove:".to_owned()];
+    expected.extend(
+        plan.removed
+            .iter()
+            .chain(plan.pruned.iter())
+            .map(|path| format!("print:{path}")),
+    );
+    assert_eq!(reporter.take(), expected);
+
+    let applied = zapbrew_pour::unlink(&keg, &prefix).expect("real unlink");
+    assert_eq!(applied.removed, plan.removed);
+    assert_eq!(applied.pruned, plan.pruned);
+    assert_eq!(
+        applied.removed.iter().chain(applied.pruned.iter()).count(),
+        plan.removed.len() + plan.pruned.len()
+    );
+}
