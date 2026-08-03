@@ -115,11 +115,11 @@ pub fn pkgutil_forget(package_id: &str) -> CommandSpec {
         .arg(package_id)
 }
 
-/// Attach a disk image read-only at an explicit scratch mount point.
-pub fn hdiutil_attach(image: &Utf8Path, mountpoint: &Utf8Path) -> CommandSpec {
+/// Attach a disk image read-only under an explicit scratch mount root.
+pub fn hdiutil_attach(image: &Utf8Path, temp_root: &Utf8Path) -> CommandSpec {
     CommandSpec::new("hdiutil")
-        .args(["attach", "-nobrowse", "-readonly", "-mountpoint"])
-        .arg(mountpoint.as_str())
+        .args(["attach", "-plist", "-nobrowse", "-readonly", "-mountrandom"])
+        .arg(temp_root.as_str())
         .arg(image.as_str())
 }
 

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
-use zapbrew_api::{Catalog, Dependency, DependencyTag, Formula, UsesFromMacos};
+use zapbrew_api::{Catalog, DependencyTag, Formula, UsesFromMacos};
 use zapbrew_types::{BottleTag, MacOsVersion};
 
 use crate::OpError;
@@ -37,11 +37,14 @@ pub struct ExpandedDependency {
     pub test: bool,
 }
 
-/// Direct or transitive inverse dependency lookup.
+/// Host and edge filters for inverse dependency lookup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UsesMode {
-    Direct,
-    Recursive,
+pub struct UsesOptions {
+    pub host: BottleTag,
+    pub recursive: bool,
+    pub include_build: bool,
+    pub include_test: bool,
+    pub include_optional: bool,
 }
 
 /// Expand all dependencies of `roots` in stable post-order.
@@ -106,12 +109,22 @@ where
     Ok(expanded)
 }
 
-/// Find formulae that use any target, sorted and deduplicated.
-pub fn uses<I, S>(catalog: &Catalog, targets: I, mode: UsesMode) -> Result<Vec<String>, OpError>
+/// Find formulae that reach every target through the selected dependency edges.
+pub fn uses<I, S>(
+    catalog: &Catalog,
+    targets: I,
+    options: &UsesOptions,
+) -> Result<Vec<String>, OpError>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
+    if matches!(options.host, BottleTag::All) {
+        return Err(OpError::InvalidState {
+            reason: "the universal bottle tag is not a host platform".to_owned(),
+        });
+    }
+
     let mut sought = HashSet::new();
     for target in targets {
         let requested = target.as_ref();
@@ -122,28 +135,21 @@ where
             })?;
         sought.insert(formula.name.clone());
     }
-
-    let original = sought.clone();
-    let mut matches = HashSet::new();
-    loop {
-        let mut changed = false;
-        for formula in catalog.iter() {
-            if original.contains(&formula.name) || matches.contains(&formula.name) {
-                continue;
-            }
-            if formula_uses_any(catalog, formula, &sought) {
-                changed |= matches.insert(formula.name.clone());
-            }
-        }
-        if !matches!(mode, UsesMode::Recursive) || !changed {
-            break;
-        }
-        sought.extend(matches.iter().cloned());
+    if sought.is_empty() {
+        return Ok(Vec::new());
     }
 
-    let mut result: Vec<String> = matches.into_iter().collect();
-    result.sort();
-    Ok(result)
+    let mut matches = Vec::new();
+    for formula in catalog.iter() {
+        if sought.contains(&formula.name) {
+            continue;
+        }
+        if formula_reaches_all(catalog, formula, &sought, options)? {
+            matches.push(formula.name.clone());
+        }
+    }
+    matches.sort();
+    Ok(matches)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -263,27 +269,67 @@ fn include_uses_from_macos(dependency: &UsesFromMacos, target: BottleTag) -> Res
     }
 }
 
-fn formula_uses_any(catalog: &Catalog, formula: &Formula, sought: &HashSet<String>) -> bool {
-    formula
-        .dependencies
-        .iter()
-        .any(|dependency| dependency_is_sought(catalog, dependency, sought))
-        || formula
-            .uses_from_macos
-            .iter()
-            .any(|dependency| name_is_sought(catalog, &dependency.name, sought))
-}
-
-fn dependency_is_sought(
+fn formula_reaches_all(
     catalog: &Catalog,
-    dependency: &Dependency,
+    formula: &Formula,
     sought: &HashSet<String>,
-) -> bool {
-    name_is_sought(catalog, &dependency.name, sought)
+    options: &UsesOptions,
+) -> Result<bool, OpError> {
+    let mut reached = HashSet::new();
+    if options.recursive {
+        let mut visited = HashSet::from([formula.name.clone()]);
+        collect_reachable(catalog, formula, options, &mut visited, &mut reached)?;
+    } else {
+        for_each_dependency(catalog, formula, options, |dependency| {
+            reached.insert(dependency.name.clone());
+            Ok(())
+        })?;
+    }
+    Ok(sought.is_subset(&reached))
 }
 
-fn name_is_sought(catalog: &Catalog, name: &str, sought: &HashSet<String>) -> bool {
-    catalog
-        .get(name)
-        .is_some_and(|formula| sought.contains(&formula.name))
+fn collect_reachable(
+    catalog: &Catalog,
+    formula: &Formula,
+    options: &UsesOptions,
+    visited: &mut HashSet<String>,
+    reached: &mut HashSet<String>,
+) -> Result<(), OpError> {
+    for_each_dependency(catalog, formula, options, |dependency| {
+        reached.insert(dependency.name.clone());
+        if visited.insert(dependency.name.clone()) {
+            collect_reachable(catalog, dependency, options, visited, reached)?;
+        }
+        Ok(())
+    })
+}
+
+fn for_each_dependency(
+    catalog: &Catalog,
+    formula: &Formula,
+    options: &UsesOptions,
+    mut visit: impl FnMut(&Formula) -> Result<(), OpError>,
+) -> Result<(), OpError> {
+    for dependency in &formula.dependencies {
+        if include_tags(&dependency.tags, options)
+            && let Some(dependency) = catalog.get(&dependency.name)
+        {
+            visit(dependency)?;
+        }
+    }
+    for dependency in &formula.uses_from_macos {
+        if include_tags(&dependency.tags, options)
+            && include_uses_from_macos(dependency, options.host)?
+            && let Some(dependency) = catalog.get(&dependency.name)
+        {
+            visit(dependency)?;
+        }
+    }
+    Ok(())
+}
+
+fn include_tags(tags: &[DependencyTag], options: &UsesOptions) -> bool {
+    (options.include_build || !tags.contains(&DependencyTag::Build))
+        && (options.include_test || !tags.contains(&DependencyTag::Test))
+        && (options.include_optional || necessity(tags) != Necessity::Optional)
 }

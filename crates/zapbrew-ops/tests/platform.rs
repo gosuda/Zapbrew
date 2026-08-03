@@ -98,9 +98,10 @@ fn cask_specs_are_argument_safe_and_exact() {
         [
             "hdiutil",
             "attach",
+            "-plist",
             "-nobrowse",
             "-readonly",
-            "-mountpoint",
+            "-mountrandom",
             "/scratch/mount point",
             "/scratch/Some App.dmg",
         ]

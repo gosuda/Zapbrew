@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use zapbrew_api::Catalog;
 use zapbrew_ops::OpError;
 use zapbrew_ops::dependency::{
-    DependencyMode, DependencyOptions, Necessity, UsesMode, expand, uses,
+    DependencyMode, DependencyOptions, Necessity, UsesOptions, expand, uses,
 };
 use zapbrew_types::BottleTag;
 
@@ -23,6 +23,16 @@ fn tag(os: &str, version: Option<&str>) -> BottleTag {
 
 fn catalog(payload: &str, target: BottleTag) -> Catalog {
     ok(Catalog::from_payload(payload.as_bytes(), &target))
+}
+
+fn uses_options(host: BottleTag) -> UsesOptions {
+    UsesOptions {
+        host,
+        recursive: false,
+        include_build: false,
+        include_test: false,
+        include_optional: false,
+    }
 }
 
 const MERGE_GRAPH: &str = r#"[
@@ -237,13 +247,197 @@ fn inverse_uses_is_sorted_unique_and_optionally_recursive() {
         ]"#,
         target,
     );
+    let direct = uses_options(target);
+    let recursive = UsesOptions {
+        recursive: true,
+        ..direct
+    };
 
     assert_eq!(
-        ok(uses(&catalog, ["base-alias"], UsesMode::Direct)),
+        ok(uses(&catalog, ["base-alias"], &direct)),
         ["alpha", "zeta"]
     );
     assert_eq!(
-        ok(uses(&catalog, ["base"], UsesMode::Recursive)),
+        ok(uses(&catalog, ["base"], &recursive)),
         ["alpha", "top", "zeta"]
     );
+}
+
+#[test]
+fn inverse_uses_from_macos_obeys_linux_and_since_bound_hosts() {
+    let payload = r#"[
+      {"name":"root","full_name":"root","versions":{"stable":"1"},
+       "uses_from_macos":["always-system","new-system"],
+       "uses_from_macos_bounds":[{}, {"since":"sonoma"}]},
+      {"name":"always-system","full_name":"always-system","versions":{"stable":"1"}},
+      {"name":"new-system","full_name":"new-system","versions":{"stable":"1"}}
+    ]"#;
+
+    let linux = tag("linux", None);
+    let linux_catalog = catalog(payload, linux);
+    let linux_options = uses_options(linux);
+    assert_eq!(
+        ok(uses(&linux_catalog, ["always-system"], &linux_options)),
+        ["root"]
+    );
+    assert_eq!(
+        ok(uses(&linux_catalog, ["new-system"], &linux_options)),
+        ["root"]
+    );
+
+    let ventura = tag("macos", Some("ventura"));
+    let ventura_catalog = catalog(payload, ventura);
+    let ventura_options = uses_options(ventura);
+    assert!(ok(uses(&ventura_catalog, ["always-system"], &ventura_options)).is_empty());
+    assert_eq!(
+        ok(uses(&ventura_catalog, ["new-system"], &ventura_options)),
+        ["root"]
+    );
+
+    let sonoma = tag("macos", Some("sonoma"));
+    let sonoma_catalog = catalog(payload, sonoma);
+    let sonoma_options = uses_options(sonoma);
+    assert!(ok(uses(&sonoma_catalog, ["new-system"], &sonoma_options)).is_empty());
+}
+
+#[test]
+fn inverse_uses_filters_edge_classes_until_selected() {
+    let host = tag("linux", None);
+    let catalog = catalog(
+        r#"[
+          {"name":"required","full_name":"required","versions":{"stable":"1"}},
+          {"name":"recommended","full_name":"recommended","versions":{"stable":"1"}},
+          {"name":"recommended-optional","full_name":"recommended-optional","versions":{"stable":"1"}},
+          {"name":"optional","full_name":"optional","versions":{"stable":"1"}},
+          {"name":"build","full_name":"build","versions":{"stable":"1"}},
+          {"name":"test","full_name":"test","versions":{"stable":"1"}},
+          {"name":"consumer","full_name":"consumer","versions":{"stable":"1"},
+           "dependencies":["required"],"recommended_dependencies":["recommended"],
+           "optional_dependencies":["optional"],"build_dependencies":["build"],
+           "test_dependencies":["test"],
+           "uses_from_macos":[{"recommended-optional":["optional","recommended"]}]}
+        ]"#,
+        host,
+    );
+    let default = uses_options(host);
+
+    for target in ["required", "recommended", "recommended-optional"] {
+        assert_eq!(ok(uses(&catalog, [target], &default)), ["consumer"]);
+    }
+    for target in ["optional", "build", "test"] {
+        assert!(ok(uses(&catalog, [target], &default)).is_empty());
+    }
+
+    assert_eq!(
+        ok(uses(
+            &catalog,
+            ["optional"],
+            &UsesOptions {
+                include_optional: true,
+                ..default
+            },
+        )),
+        ["consumer"]
+    );
+    assert_eq!(
+        ok(uses(
+            &catalog,
+            ["build"],
+            &UsesOptions {
+                include_build: true,
+                ..default
+            },
+        )),
+        ["consumer"]
+    );
+    assert_eq!(
+        ok(uses(
+            &catalog,
+            ["test"],
+            &UsesOptions {
+                include_test: true,
+                ..default
+            },
+        )),
+        ["consumer"]
+    );
+}
+
+#[test]
+fn inverse_uses_requires_every_target() {
+    let host = tag("linux", None);
+    let catalog = catalog(
+        r#"[
+          {"name":"left","full_name":"left","versions":{"stable":"1"}},
+          {"name":"right","full_name":"right","versions":{"stable":"1"}},
+          {"name":"left-only","full_name":"left-only","versions":{"stable":"1"},"dependencies":["left"]},
+          {"name":"right-only","full_name":"right-only","versions":{"stable":"1"},"dependencies":["right"]},
+          {"name":"both","full_name":"both","versions":{"stable":"1"},"dependencies":["left","right"]}
+        ]"#,
+        host,
+    );
+
+    assert_eq!(
+        ok(uses(&catalog, ["left", "right"], &uses_options(host))),
+        ["both"]
+    );
+}
+
+#[test]
+fn recursive_inverse_uses_is_cycle_safe() {
+    let host = tag("linux", None);
+    let catalog = catalog(
+        r#"[
+          {"name":"base","full_name":"base","versions":{"stable":"1"}},
+          {"name":"a","full_name":"a","versions":{"stable":"1"},"dependencies":["b"]},
+          {"name":"b","full_name":"b","versions":{"stable":"1"},"dependencies":["a","base"]}
+        ]"#,
+        host,
+    );
+    let recursive = UsesOptions {
+        recursive: true,
+        ..uses_options(host)
+    };
+
+    assert_eq!(ok(uses(&catalog, ["base"], &recursive)), ["a", "b"]);
+}
+
+#[test]
+fn inverse_uses_reports_a_missing_target() {
+    let host = tag("linux", None);
+    let catalog = catalog(
+        r#"[{"name":"present","full_name":"present","versions":{"stable":"1"}}]"#,
+        host,
+    );
+
+    let error = match uses(&catalog, ["missing"], &uses_options(host)) {
+        Ok(_) => panic!("expected a missing target"),
+        Err(error) => error,
+    };
+    match error {
+        OpError::MissingFormula { name } => assert_eq!(name, "missing"),
+        other => panic!("expected missing formula, got {other:?}"),
+    }
+}
+
+#[test]
+fn inverse_uses_rejects_the_universal_host_tag() {
+    let catalog = catalog(
+        r#"[
+          {"name":"target","full_name":"target","versions":{"stable":"1"}},
+          {"name":"consumer","full_name":"consumer","versions":{"stable":"1"},"dependencies":["target"]}
+        ]"#,
+        tag("linux", None),
+    );
+
+    let error = match uses(&catalog, ["target"], &uses_options(BottleTag::All)) {
+        Ok(_) => panic!("expected a concrete host requirement"),
+        Err(error) => error,
+    };
+    match error {
+        OpError::InvalidState { reason } => {
+            assert_eq!(reason, "the universal bottle tag is not a host platform");
+        }
+        other => panic!("expected invalid state, got {other:?}"),
+    }
 }
