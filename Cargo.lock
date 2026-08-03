@@ -658,6 +658,7 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "zapbrew-types",
 ]
