@@ -1,6 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use camino::{Utf8Path, Utf8PathBuf};
 use zapbrew_prefix::{Env, Rack, Tab, is_pinned, resolve_linked, resolve_opt};
@@ -166,10 +167,41 @@ pub fn scan(env: &Env) -> Result<InstalledState, OpError> {
     }
     let canonical_cellar = fs::canonicalize(env.cellar.as_std_path())
         .map_err(|source| OpError::io("canonicalize", env.cellar.clone(), source))?;
+    scan_racks(env, &canonical_cellar, Rack::all(&env.cellar)?)
+}
 
+/// Scan only formula racks protected by the caller's lock set.
+pub(crate) fn scan_selected(
+    env: &Env,
+    names: &BTreeSet<String>,
+) -> Result<InstalledState, OpError> {
+    if !env.cellar.exists() {
+        return Ok(InstalledState::default());
+    }
+    let canonical_cellar = fs::canonicalize(env.cellar.as_std_path())
+        .map_err(|source| OpError::io("canonicalize", env.cellar.clone(), source))?;
+    let mut racks = Vec::with_capacity(names.len());
+    for name in names {
+        let formula_name = FormulaName::from_str(name).map_err(|source| OpError::InvalidState {
+            reason: format!("catalog formula name {name} is invalid: {source}"),
+        })?;
+        racks.push(Rack::new(&env.cellar, &formula_name)?);
+    }
+    scan_racks(env, &canonical_cellar, racks)
+}
+
+fn scan_racks(
+    env: &Env,
+    canonical_cellar: &Path,
+    racks: Vec<Rack>,
+) -> Result<InstalledState, OpError> {
     let mut formulae = BTreeMap::new();
-
-    for rack in Rack::all(&env.cellar)? {
+    for rack in racks {
+        match fs::symlink_metadata(rack.path().as_std_path()) {
+            Ok(_) => {}
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(source) => return Err(OpError::io("inspect", rack.path().to_path_buf(), source)),
+        }
         inspect_dir(rack.path(), "rack")?;
 
         let kegs = rack.kegs()?;
@@ -183,7 +215,7 @@ pub fn scan(env: &Env) -> Result<InstalledState, OpError> {
 
         for keg in kegs {
             inspect_dir(keg.path(), "keg")?;
-            let canonical_keg = canonicalize_keg(keg.path(), &canonical_cellar)?;
+            let canonical_keg = canonicalize_keg(keg.path(), canonical_cellar)?;
             let tab = Tab::load(keg.receipt_path())?;
             let (files, size) = inventory(keg.path())?;
             installed.push(InstalledKeg {
@@ -206,7 +238,6 @@ pub fn scan(env: &Env) -> Result<InstalledState, OpError> {
             },
         );
     }
-
     Ok(InstalledState { formulae })
 }
 

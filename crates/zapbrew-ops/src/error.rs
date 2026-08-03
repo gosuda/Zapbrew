@@ -44,6 +44,12 @@ pub enum OpError {
 
     #[error("{message}")]
     Refusal { message: String },
+
+    #[error("{original}; rollback incomplete; leftovers: {leftovers}")]
+    RollbackIncomplete {
+        original: Box<OpError>,
+        leftovers: String,
+    },
 }
 
 impl OpError {

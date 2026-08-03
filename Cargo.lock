@@ -2746,9 +2746,15 @@ name = "zapbrew-ops"
 version = "0.1.0"
 dependencies = [
  "camino",
+ "flate2",
  "reqwest",
+ "serde_json",
+ "sha2 0.11.0",
+ "tar",
  "tempfile",
  "thiserror",
+ "tokio",
+ "wiremock",
  "zapbrew-api",
  "zapbrew-net",
  "zapbrew-pour",

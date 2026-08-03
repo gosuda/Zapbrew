@@ -12,6 +12,8 @@ workspace = true
 camino.workspace = true
 reqwest.workspace = true
 thiserror.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
 zapbrew-api = { path = "../zapbrew-api" }
 zapbrew-net = { path = "../zapbrew-net" }
 zapbrew-pour = { path = "../zapbrew-pour" }
@@ -20,3 +22,7 @@ zapbrew-types = { path = "../zapbrew-types" }
 
 [dev-dependencies]
 tempfile.workspace = true
+flate2.workspace = true
+sha2.workspace = true
+tar.workspace = true
+wiremock.workspace = true
