@@ -266,17 +266,20 @@ impl InstallSteps {
             keg,
         };
         let mut guard_results = BTreeMap::new();
-        let mut commands = Vec::new();
+        let mut maintenance = Vec::new();
         for step in &self.steps {
             if !guards_match(&resolver, step, &mut guard_results)? {
                 continue;
             }
             match &step.kind {
-                StepKind::Run(run) => {
-                    commands.push((step.index, command_spec(&resolver, step.index, run)?))
-                }
+                StepKind::Run(run) => run_command(
+                    ctx.commands.as_ref(),
+                    &self.formula,
+                    step.index,
+                    command_spec(&resolver, step.index, run)?,
+                )?,
                 StepKind::Maintenance { kind, path } => {
-                    commands.push((
+                    maintenance.push((
                         step.index,
                         maintenance_spec(&resolver, step.index, *kind, path.as_ref())?,
                     ));
@@ -284,7 +287,7 @@ impl InstallSteps {
                 _ => execute_filesystem_step(ctx, &resolver, step, journal)?,
             }
         }
-        for (index, spec) in commands {
+        for (index, spec) in maintenance {
             run_command(ctx.commands.as_ref(), &self.formula, index, spec)?;
         }
         Ok(())
@@ -1448,9 +1451,11 @@ fn execute_filesystem_step(
             if *parents {
                 create_parents(ctx, resolver, step, journal, &path)
             } else {
-                journal.inverses.push(Inverse::Remove(path.clone()));
-                fs::create_dir(&path)
-                    .map_err(|source| OpError::io("create install-step directory", path, source))
+                fs::create_dir(&path).map_err(|source| {
+                    OpError::io("create install-step directory", &path, source)
+                })?;
+                journal.inverses.push(Inverse::Remove(path));
+                Ok(())
             }
         }
         StepKind::Touch { path } => {
@@ -2084,9 +2089,9 @@ fn create_parents(
         ));
     }
     for directory in missing.into_iter().rev() {
-        journal.inverses.push(Inverse::Remove(directory.clone()));
         fs::create_dir(&directory)
-            .map_err(|source| OpError::io("create install-step parent", directory, source))?;
+            .map_err(|source| OpError::io("create install-step parent", &directory, source))?;
+        journal.inverses.push(Inverse::Remove(directory));
     }
     Ok(())
 }
@@ -2367,7 +2372,8 @@ fn expand_all_strings<'a>(
 }
 
 fn ensure_existing_ancestors_confined(env: &Env, path: &Utf8Path) -> Result<(), String> {
-    ensure_lexically_within(path, &env.prefix)?;
+    let root = confinement_root(env, path)?;
+    ensure_lexically_within(path, root)?;
     let mut cursor = path;
     while !entry_exists(cursor) {
         cursor = cursor
@@ -2378,13 +2384,26 @@ fn ensure_existing_ancestors_confined(env: &Env, path: &Utf8Path) -> Result<(), 
         .map_err(|error| format!("cannot canonicalize {cursor}: {error}"))?;
     let canonical = Utf8PathBuf::from_path_buf(canonical)
         .map_err(|_| format!("canonical path for {cursor} is not UTF-8"))?;
-    let prefix = canonical_existing_root(&env.prefix)?;
-    if !canonical.starts_with(&prefix) {
+    let canonical_root = canonical_existing_root(root)?;
+    if !canonical.starts_with(&canonical_root) {
         return Err(format!(
-            "symlink ancestor escapes prefix: {cursor} -> {canonical}"
+            "symlink ancestor escapes allowed root {root}: {cursor} -> {canonical}"
         ));
     }
     Ok(())
+}
+
+fn confinement_root<'a>(env: &'a Env, path: &Utf8Path) -> Result<&'a Utf8Path, String> {
+    if path.starts_with(&env.cellar) {
+        return Ok(&env.cellar);
+    }
+    if path.starts_with(&env.prefix) {
+        return Ok(&env.prefix);
+    }
+    Err(format!(
+        "path {path} escapes allowed roots {} and {}",
+        env.prefix, env.cellar
+    ))
 }
 
 fn canonical_existing_root(root: &Utf8Path) -> Result<Utf8PathBuf, String> {
@@ -2803,7 +2822,12 @@ fn inverse_leftovers(inverse: &Inverse, leftovers: &mut Vec<Utf8PathBuf>) {
 }
 
 fn remove_entry_confined(env: &Env, path: &Utf8Path) -> Result<(), OpError> {
-    ensure_lexically_within(path, &env.prefix)
+    let root = confinement_root(env, path).map_err(|reason| OpError::InvalidState { reason })?;
+    ensure_lexically_within(path, root).map_err(|reason| OpError::InvalidState { reason })?;
+    let parent = path.parent().ok_or_else(|| OpError::InvalidState {
+        reason: format!("rollback path {path} has no parent"),
+    })?;
+    ensure_existing_ancestors_confined(env, parent)
         .map_err(|reason| OpError::InvalidState { reason })?;
     let metadata = fs::symlink_metadata(path)
         .map_err(|source| OpError::io("inspect install-step rollback path", path, source))?;
@@ -2817,7 +2841,7 @@ fn remove_entry_confined(env: &Env, path: &Utf8Path) -> Result<(), OpError> {
 }
 
 pub(crate) fn remove_tree_confined(env: &Env, path: &Utf8Path) -> Result<(), OpError> {
-    ensure_lexically_within(path, &env.prefix)
+    ensure_existing_ancestors_confined(env, path)
         .map_err(|reason| OpError::InvalidState { reason })?;
     fs::remove_dir_all(path)
         .map_err(|source| OpError::io("remove install-step journal", path, source))

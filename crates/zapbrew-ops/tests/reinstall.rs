@@ -32,6 +32,10 @@ impl RecordingReporter {
             .expect("reporter lock")
             .push(format!("{channel}:{message}"));
     }
+
+    fn take(&self) -> Vec<String> {
+        std::mem::take(&mut *self.0.lock().expect("reporter lock"))
+    }
 }
 impl Reporter for RecordingReporter {
     fn ohai(&self, message: &str) {
@@ -77,15 +81,23 @@ fn env(temp: &TempDir) -> Env {
 }
 
 fn ctx(env: Env, formulae: Vec<Value>) -> Ctx {
+    ctx_with_reporter(env, formulae).0
+}
+
+fn ctx_with_reporter(env: Env, formulae: Vec<Value>) -> (Ctx, Arc<RecordingReporter>) {
     let bytes = serde_json::to_vec(&formulae).expect("json");
-    Ctx {
-        catalog: Arc::new(Catalog::from_payload(&bytes, &env.bottle_tag).expect("catalog")),
-        casks: Arc::new(CaskCatalog::from_payload(b"[]", &env.bottle_tag).expect("casks")),
-        env,
-        http: reqwest::Client::new(),
-        commands: Arc::new(PanicRunner),
-        reporter: Arc::new(RecordingReporter::default()),
-    }
+    let recording = Arc::new(RecordingReporter::default());
+    (
+        Ctx {
+            catalog: Arc::new(Catalog::from_payload(&bytes, &env.bottle_tag).expect("catalog")),
+            casks: Arc::new(CaskCatalog::from_payload(b"[]", &env.bottle_tag).expect("casks")),
+            env,
+            http: reqwest::Client::new(),
+            commands: Arc::new(PanicRunner),
+            reporter: recording.clone(),
+        },
+        recording,
+    )
 }
 
 fn tarball(name: &str, entries: &[(&str, &[u8])]) -> Vec<u8> {
@@ -247,4 +259,40 @@ async fn reinstall_requires_installed_formula() {
     .await
     .expect_err("not installed");
     assert_eq!(error.to_string(), "root is not installed");
+}
+
+#[tokio::test]
+async fn reinstall_caveats_and_summary_match_install_output() {
+    let server = MockServer::start().await;
+    let body = vec![b'x'; 2048];
+    let bottle = tarball("root", &[("bin/root", &body)]);
+    let digest = sha(&bottle);
+    mount(&server, "/root", &bottle).await;
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    let mut root = formula(&format!("{}/root", server.uri()), &digest);
+    root["caveats"] = json!("$HOMEBREW_PREFIX|#{HOMEBREW_PREFIX}|@@HOMEBREW_PREFIX@@");
+    let (context, reporter) = ctx_with_reporter(environment, vec![root]);
+
+    initial_install(&context).await;
+    let install_messages = reporter.take();
+    reinstall::run(
+        &context,
+        reinstall::Args {
+            names: vec!["root".to_owned()],
+        },
+    )
+    .await
+    .expect("reinstall");
+    let reinstall_messages = reporter.take();
+
+    let install_output = &install_messages[install_messages.len() - 3..];
+    let reinstall_output = &reinstall_messages[reinstall_messages.len() - 3..];
+    assert_eq!(reinstall_output, install_output);
+    assert_eq!(reinstall_output[0], "ohai:Caveats");
+    assert_eq!(
+        reinstall_output[1],
+        format!("print:{0}|{0}|{0}", context.env.prefix)
+    );
+    assert!(reinstall_output[2].ends_with("KB"));
 }

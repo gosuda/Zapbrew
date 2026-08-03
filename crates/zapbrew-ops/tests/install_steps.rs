@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io;
-use std::os::unix::fs::{MetadataExt, symlink};
+use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::os::unix::process::ExitStatusExt;
 use std::process::ExitStatus;
 use std::sync::{Arc, Mutex};
@@ -79,6 +79,38 @@ impl CommandRunner for RecordingRunner {
             } else {
                 b"injected failure".to_vec()
             },
+        ))
+    }
+}
+
+struct OrderingRunner {
+    before: Utf8PathBuf,
+    after: Utf8PathBuf,
+    observations: Mutex<Vec<(String, bool, bool)>>,
+}
+
+impl OrderingRunner {
+    fn observations(&self) -> Vec<(String, bool, bool)> {
+        self.observations.lock().expect("order lock").clone()
+    }
+}
+
+impl CommandRunner for OrderingRunner {
+    fn run(&self, spec: &CommandSpec) -> Result<CommandOutput, io::Error> {
+        let program = std::path::Path::new(spec.program())
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        self.observations.lock().expect("order lock").push((
+            program,
+            self.before.exists(),
+            self.after.exists(),
+        ));
+        Ok(CommandOutput::new(
+            ExitStatus::from_raw(0),
+            Vec::new(),
+            Vec::new(),
         ))
     }
 }
@@ -464,4 +496,239 @@ async fn structured_steps_run_without_legacy_hook_then_exact_legacy_warning_is_e
     assert!(reporter.warnings.lock().expect("warnings").contains(
         &"root defines post_install; run brew postinstall root to execute it.".to_owned()
     ));
+}
+
+#[tokio::test]
+async fn failed_mkdir_does_not_journal_or_remove_preexisting_tree() {
+    let server = MockServer::start().await;
+    let bytes = bottle("root", &[("bin/root", b"root")]);
+    mount(&server, &bytes, 1).await;
+    let digest = sha(&bytes);
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    let shared = environment.prefix.join("var/shared");
+    std::fs::create_dir_all(&shared).expect("shared tree");
+    std::fs::write(shared.join("state"), b"preserve me").expect("shared bytes");
+    std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o750)).expect("shared mode");
+    let original_mode = std::fs::metadata(&shared).expect("shared metadata").mode();
+    let steps = json!([{"type":"mkdir", "path":path_spec("var", "shared")}]);
+    let (ctx, _) = context(
+        environment.clone(),
+        vec![formula(
+            "root",
+            &format!("{}/root", server.uri()),
+            &digest,
+            steps,
+        )],
+        Arc::new(PanicRunner),
+    );
+
+    install::run(&ctx, args())
+        .await
+        .expect_err("existing mkdir must fail");
+
+    assert_eq!(
+        std::fs::read(shared.join("state")).expect("preserved bytes"),
+        b"preserve me"
+    );
+    assert_eq!(
+        std::fs::metadata(&shared)
+            .expect("preserved metadata")
+            .mode(),
+        original_mode
+    );
+    assert!(!environment.cellar.join("root/1.0").exists());
+}
+
+#[tokio::test]
+async fn run_steps_execute_inline_and_maintenance_runs_last() {
+    let server = MockServer::start().await;
+    let bytes = bottle("root", &[("bin/generic", b"generic")]);
+    mount(&server, &bytes, 1).await;
+    let digest = sha(&bytes);
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    let keg = environment.cellar.join("root/1.0");
+    let runner = Arc::new(OrderingRunner {
+        before: keg.join("before"),
+        after: keg.join("after"),
+        observations: Mutex::new(Vec::new()),
+    });
+    let steps = json!([
+        {"type":"touch", "path":path_spec("prefix", "before")},
+        {"type":"run", "command":path_spec("bin", "generic")},
+        {"type":"touch", "path":path_spec("prefix", "after")},
+        {"type":"gdk_pixbuf_query_loaders"}
+    ]);
+    let (ctx, _) = context(
+        environment,
+        vec![
+            formula("root", &format!("{}/root", server.uri()), &digest, steps),
+            helper_formula("gdk-pixbuf"),
+        ],
+        runner.clone(),
+    );
+
+    install::run(&ctx, args()).await.expect("ordered steps");
+
+    assert_eq!(
+        runner.observations(),
+        [
+            ("generic".to_owned(), true, false),
+            ("gdk-pixbuf-query-loaders".to_owned(), true, true),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn keg_steps_support_cellar_outside_prefix() {
+    let server = MockServer::start().await;
+    let bytes = bottle("root", &[("bin/root", b"root")]);
+    mount(&server, &bytes, 1).await;
+    let digest = sha(&bytes);
+    let temp = TempDir::new().expect("temp");
+    let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).expect("utf8 temp");
+    let mut environment = env(&temp);
+    environment.cellar = root.join("external-cellar");
+    let steps =
+        json!([{"type":"write", "path":path_spec("prefix", "marker"), "content":"inside keg"}]);
+    let (ctx, _) = context(
+        environment.clone(),
+        vec![formula(
+            "root",
+            &format!("{}/root", server.uri()),
+            &digest,
+            steps,
+        )],
+        Arc::new(PanicRunner),
+    );
+
+    install::run(&ctx, args())
+        .await
+        .expect("external cellar install");
+
+    assert_eq!(
+        std::fs::read(environment.cellar.join("root/1.0/marker")).expect("keg marker"),
+        b"inside keg"
+    );
+}
+
+#[tokio::test]
+async fn cellar_symlink_ancestor_escape_is_rejected_before_mutation() {
+    let temp = TempDir::new().expect("temp");
+    let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).expect("utf8 temp");
+    let mut environment = env(&temp);
+    environment.cellar = root.join("external-cellar");
+    let outside = root.join("outside");
+    std::fs::create_dir_all(&environment.cellar).expect("cellar");
+    std::fs::create_dir_all(&outside).expect("outside");
+    symlink(&outside, environment.cellar.join("root")).expect("escaping rack");
+    let steps = json!([{"type":"touch", "path":path_spec("prefix", "escaped")}]);
+    let root_formula = formula("root", "http://unused/root", &"0".repeat(64), steps);
+    let (ctx, _) = context(environment, vec![root_formula], Arc::new(PanicRunner));
+
+    let error = install::run(&ctx, args())
+        .await
+        .expect_err("cellar escape rejection");
+
+    assert!(matches!(error, OpError::InstallStep { index: 0, .. }));
+    assert!(error.to_string().contains("symlink ancestor escapes"));
+    assert_eq!(
+        std::fs::read_dir(outside).expect("outside entries").count(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn committed_dependency_survives_later_requested_root_rollback() {
+    let server = MockServer::start().await;
+    let dep_bytes = bottle("dep", &[("bin/dep", b"dep")]);
+    let root_bytes = bottle("root", &[("bin/fail", b"fail")]);
+    Mock::given(method("GET"))
+        .and(path("/dep"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(dep_bytes.clone()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/root"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(root_bytes.clone()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    let dep = formula(
+        "dep",
+        &format!("{}/dep", server.uri()),
+        &sha(&dep_bytes),
+        Value::Null,
+    );
+    let mut root = formula(
+        "root",
+        &format!("{}/root", server.uri()),
+        &sha(&root_bytes),
+        json!([{"type":"run", "command":path_spec("bin", "fail")}]),
+    );
+    root["dependencies"] = json!(["dep"]);
+    let (ctx, _) = context(
+        environment.clone(),
+        vec![root, dep],
+        Arc::new(RecordingRunner::failing()),
+    );
+
+    let error = install::run(&ctx, args())
+        .await
+        .expect_err("requested root failure");
+
+    assert!(matches!(error, OpError::CommandFailed { .. }));
+    assert!(environment.cellar.join("dep/1.0/bin/dep").is_file());
+    assert!(environment.prefix.join("bin/dep").is_symlink());
+    assert!(environment.prefix.join("opt/dep").is_symlink());
+    assert!(environment.linked.join("dep").is_symlink());
+    assert!(!environment.cellar.join("root").exists());
+    assert!(!environment.prefix.join("bin/fail").exists());
+    assert!(!environment.prefix.join("opt/root").exists());
+    assert!(!environment.linked.join("root").exists());
+}
+
+#[tokio::test]
+async fn rollback_removes_prefix_links_into_external_cellar() {
+    let server = MockServer::start().await;
+    let bytes = bottle(
+        "root",
+        &[("bin/fail", b"fail"), ("share/tree/entry", b"entry")],
+    );
+    mount(&server, &bytes, 1).await;
+    let digest = sha(&bytes);
+    let temp = TempDir::new().expect("temp");
+    let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).expect("utf8 temp");
+    let mut environment = env(&temp);
+    environment.cellar = root.join("external-cellar");
+    let steps = json!([
+        {
+            "type":"link_dir",
+            "source":path_spec("prefix", "share/tree"),
+            "target":path_spec("homebrew_prefix", "share/tree-links")
+        },
+        {"type":"run", "command":path_spec("bin", "fail")}
+    ]);
+    let (ctx, _) = context(
+        environment.clone(),
+        vec![formula(
+            "root",
+            &format!("{}/root", server.uri()),
+            &digest,
+            steps,
+        )],
+        Arc::new(RecordingRunner::failing()),
+    );
+
+    let error = install::run(&ctx, args())
+        .await
+        .expect_err("command failure");
+
+    assert!(matches!(error, OpError::CommandFailed { .. }));
+    assert!(!environment.prefix.join("share/tree-links").exists());
+    assert!(!environment.cellar.join("root").exists());
 }

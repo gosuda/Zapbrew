@@ -553,14 +553,14 @@ fn bottle_requests<'a>(
         .collect()
 }
 
-fn substitute_prefixes(ctx: &Ctx, caveats: &str) -> String {
+pub(crate) fn substitute_prefixes(ctx: &Ctx, caveats: &str) -> String {
     caveats
         .replace("#{HOMEBREW_PREFIX}", ctx.env.prefix.as_str())
         .replace("$HOMEBREW_PREFIX", ctx.env.prefix.as_str())
         .replace("@@HOMEBREW_PREFIX@@", ctx.env.prefix.as_str())
 }
 
-fn format_size(bytes: u64) -> String {
+pub(crate) fn format_size(bytes: u64) -> String {
     const UNITS: [(&str, u64); 4] = [
         ("GB", 1024 * 1024 * 1024),
         ("MB", 1024 * 1024),

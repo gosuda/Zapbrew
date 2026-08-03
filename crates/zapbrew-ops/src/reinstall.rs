@@ -5,7 +5,7 @@ use zapbrew_api::Formula;
 use zapbrew_net::{DownloadRequest, download_all, select_bottle};
 use zapbrew_types::FormulaName;
 
-use crate::install::{make_tab, replacement, resolve_formula};
+use crate::install::{format_size, make_tab, replacement, resolve_formula, substitute_prefixes};
 use crate::install_steps::InstallSteps;
 use crate::state::scan_selected;
 use crate::transaction::{InstallInput, acquire_formula_locks, install as install_transaction};
@@ -100,11 +100,14 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
             && !caveats.is_empty()
         {
             ctx.reporter.ohai("Caveats");
-            ctx.reporter.print(caveats);
+            ctx.reporter.print(&substitute_prefixes(ctx, caveats));
         }
         ctx.reporter.print(&format!(
-            "{}  {}: {} files, {}B",
-            ctx.env.install_badge, summary.keg, summary.files, summary.size
+            "{}  {}: {} files, {}",
+            ctx.env.install_badge,
+            summary.keg,
+            summary.files,
+            format_size(summary.size)
         ));
     }
     Ok(())

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io;
+use std::os::unix::fs::symlink;
 use std::sync::{Arc, Mutex};
 
 use camino::Utf8PathBuf;
@@ -14,6 +15,8 @@ use zapbrew_api::{CaskCatalog, Catalog};
 use zapbrew_ops::install::{self, Args};
 use zapbrew_ops::{Ctx, Reporter};
 use zapbrew_prefix::{CommandOutput, CommandRunner, CommandSpec, Env, EnvDetectInput, Tab};
+
+const SIGNED_MIGRATIONS: &str = r#"{"payload":"{\"android-ndk\":\"homebrew/cask\",\"android-platform-tools\":\"homebrew/cask\",\"app-engine-go-32\":\"homebrew/cask/google-cloud-sdk\",\"app-engine-go-64\":\"homebrew/cask/google-cloud-sdk\",\"avidemux\":\"homebrew/cask\",\"chromedriver\":\"homebrew/cask\",\"cockatrice\":\"homebrew/cask\",\"codex\":\"homebrew/cask\",\"consul\":\"homebrew/cask\",\"copilot-language-server\":\"homebrew/cask\",\"corelocationcli\":\"homebrew/cask\",\"geany\":\"homebrew/cask\",\"gearboy\":\"homebrew/cask\",\"gearsystem\":\"homebrew/cask\",\"gimp\":\"homebrew/cask\",\"grads\":\"homebrew/cask\",\"gtkwave\":\"homebrew/cask\",\"inkscape\":\"homebrew/cask\",\"joplin\":\"homebrew/cask\",\"keybase\":\"homebrew/cask\",\"luanti\":\"homebrew/cask\",\"meld\":\"homebrew/cask\",\"minetest\":\"homebrew/cask/luanti\",\"mitmproxy\":\"homebrew/cask\",\"openrct2\":\"homebrew/cask\",\"openttd\":\"homebrew/cask\",\"osxfuse\":\"homebrew/cask\",\"quassel\":\"homebrew/cask\",\"schismtracker\":\"homebrew/cask/schism-tracker\",\"transmission-remote-gtk\":\"homebrew/cask/transmission-remote-gui\",\"truetree\":\"homebrew/cask\",\"wesnoth\":\"homebrew/cask/the-battle-for-wesnoth\"}","signatures":[{"protected":"eyJhbGciOiJQUzUxMiIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il19","header":{"kid":"homebrew-1"},"signature":"l89BOBTAX2oo91_KlSCxmHHXt8jDj2dx0AssxCgC1wT-RBc8rL4alNd9XIUR8hJ5Yw7WLlWIgj40ktanmdBEUG_HYi_ll7FLX_99tRXky8Rhvzdl7XDjX9ixE3ICvN-7sIVB7qZ809g4GTawj01g6yozQvr0OGyuo_haqWYunGPqbuamOB-W0L4h-uyUySLH8nsrxI9PT-mOquTcnopyKAVqoQ_SOZ1_f6l0Djoph40UumxpSSGD04lQHT5xtYvkkNeudlPB6kc3wHzl1iBFRDCpWOnoR6-qTgqJzOhyDFUapLgAbUSF3bEmOoVuYaxZ5U5s1Hr5lUl7sHXJsL1A0xlwIOFJFutyAnPHhgG5urJviJcmVmBxaak1g_FwDF6yopvEJFdSWYOgmPPP8Fiwp4-Z9izNFBTBLmYcfj491LpOwifvxt0ZdWcsY8hllSBkKcyD3TO02Bz7IjlOHLqoDTfMae94qZUObTlknbM5Z7w3fHxl91MVqmFUxSeaRkZlm-BDf_wCcvbetxWlfbMfKijnWHoOub8lRH4-ywTLBPYaTWnJWwGwUSBN5nUkFtaXFDVQqfRPZnWQO9wjBu8iv67VcT7WnpfN9MvO-dvptEoMx_NYfPxXCbk90Tpmlrpoq5QZOEmUz9UK_3-ur3CRdUwUsVNVcGiLwJ-8kNn72JU"}]}"#;
 
 struct PanicRunner;
 
@@ -475,4 +478,146 @@ async fn keg_only_keeps_records_without_file_links() {
         "opoo:solo is keg-only, which means it was not symlinked into {},\nbecause it is versioned.",
         ctx.env.prefix
     )));
+}
+
+#[tokio::test]
+async fn pinned_outdated_formula_is_refused_before_fetch() {
+    let server = MockServer::start().await;
+    let old_bottle = bottle("root", "0.9", &[("bin/root", b"old")]);
+    mount_blob(&server, "/old", &old_bottle, 1).await;
+    let temp = TempDir::new().expect("temp");
+    let environment = scratch_env(&temp);
+    let (old_ctx, _) = context(
+        environment.clone(),
+        vec![formula(
+            "root",
+            "0.9",
+            &format!("{}/old", server.uri()),
+            &digest(&old_bottle),
+        )],
+    );
+    install::run(&old_ctx, args("root"))
+        .await
+        .expect("old install");
+    std::fs::create_dir_all(&environment.pins).expect("pins");
+    symlink("../../../Cellar/root/0.9", environment.pins.join("root")).expect("pin");
+    let (ctx, _) = context(
+        environment,
+        vec![formula("root", "1.0", "http://unused/new", &"0".repeat(64))],
+    );
+
+    let error = install::run(&ctx, args("root"))
+        .await
+        .expect_err("pinned outdated refusal");
+
+    assert_eq!(
+        error.to_string(),
+        "root is pinned at 0.9 but 1.0 is available."
+    );
+}
+
+#[tokio::test]
+async fn installed_conflict_refusal_has_complete_guidance() {
+    let server = MockServer::start().await;
+    let blocker_bottle = bottle("blocker", "1.0", &[("bin/blocker", b"blocker")]);
+    mount_blob(&server, "/blocker", &blocker_bottle, 1).await;
+    let temp = TempDir::new().expect("temp");
+    let environment = scratch_env(&temp);
+    let blocker = formula(
+        "blocker",
+        "1.0",
+        &format!("{}/blocker", server.uri()),
+        &digest(&blocker_bottle),
+    );
+    let (blocker_ctx, _) = context(environment.clone(), vec![blocker.clone()]);
+    install::run(&blocker_ctx, args("blocker"))
+        .await
+        .expect("blocker install");
+    let mut root = formula("root", "1.0", "http://unused/root", &"0".repeat(64));
+    root["conflicts_with"] = json!(["blocker"]);
+    root["conflicts_with_reasons"] = json!(["both provide tool"]);
+    let (ctx, _) = context(environment.clone(), vec![root, blocker]);
+
+    let error = install::run(&ctx, args("root"))
+        .await
+        .expect_err("installed conflict");
+
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "Cannot install root because conflicting formulae are installed.\n  blocker: because both provide tool\n\nPlease `brew unlink blocker` before continuing.\n\nUnlinking removes a formula's symlinks from {}. You can\nlink the formula again after the install finishes. You can `--force` this\ninstall, but the build may fail or cause obscure side effects in the\nresulting software.",
+            environment.prefix
+        )
+    );
+}
+
+#[tokio::test]
+async fn migrated_formula_refusal_surfaces_verified_tap_hint() {
+    let server = MockServer::start().await;
+    mount_blob(
+        &server,
+        "/formula_tap_migrations.jws.json",
+        SIGNED_MIGRATIONS.as_bytes(),
+        1,
+    )
+    .await;
+    let temp = TempDir::new().expect("temp");
+    let mut environment = scratch_env(&temp);
+    environment.api_domain = server.uri();
+    let (ctx, _) = context(environment, Vec::new());
+
+    let error = install::run(&ctx, args("codex"))
+        .await
+        .expect_err("migration refusal");
+
+    assert_eq!(error.to_string(), "codex was migrated to homebrew/cask");
+}
+
+#[tokio::test]
+async fn missing_formula_has_exact_typed_message() {
+    let server = MockServer::start().await;
+    mount_blob(
+        &server,
+        "/formula_tap_migrations.jws.json",
+        SIGNED_MIGRATIONS.as_bytes(),
+        1,
+    )
+    .await;
+    let temp = TempDir::new().expect("temp");
+    let mut environment = scratch_env(&temp);
+    environment.api_domain = server.uri();
+    let (ctx, _) = context(environment, Vec::new());
+
+    let error = install::run(&ctx, args("never-was"))
+        .await
+        .expect_err("missing formula");
+
+    assert_eq!(
+        error.to_string(),
+        "No available formula with the name \"never-was\"."
+    );
+}
+
+#[tokio::test]
+async fn missing_host_bottle_is_refused_with_host_tag() {
+    let temp = TempDir::new().expect("temp");
+    let environment = scratch_env(&temp);
+    let mut root = formula("root", "1.0", "http://unused/root", &"0".repeat(64));
+    root["bottle"]["stable"]["files"] = json!({
+        "arm64_linux": {
+            "cellar": ":any_skip_relocation",
+            "url": "http://unused/root",
+            "sha256": "0".repeat(64)
+        }
+    });
+    let (ctx, _) = context(environment, vec![root]);
+
+    let error = install::run(&ctx, args("root"))
+        .await
+        .expect_err("host bottle refusal");
+
+    assert_eq!(
+        error.to_string(),
+        "root: no bottle available for x86_64_linux. brew can build from source; zapbrew cannot."
+    );
 }
