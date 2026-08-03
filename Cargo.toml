@@ -28,7 +28,7 @@ plist = { version = "1.10.0", features = ["serde"] }
 regex = "1.13.1"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "gzip", "brotli", "zstd", "stream", "json"] }
 rsa = { version = "0.9.10", features = ["sha2"] }
-rustix = "1.1.4"
+rustix = { version = "1.1.4", features = ["fs"] }
 ruzstd = "0.9.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

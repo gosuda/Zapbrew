@@ -25,7 +25,7 @@ Rust has no LTS channel. Crates.io crates do not publish LTS or support end date
 | jiff | 0.2.35 | 2026-07-25 | https://crates.io/crates/jiff/0.2.35 | Timestamps and HTTP-date formatting. |
 | lzma-rust2 | 0.18.0 | 2026-07-26 | https://crates.io/crates/lzma-rust2/0.18.0 | Cask `.tar.*` archive decoding only; pure-Rust LZMA avoids new external binaries or C libraries. |
 | indicatif | 0.18.6 | 2026-07-01 | https://crates.io/crates/indicatif/0.18.6 | TTY-only download progress. |
-| rustix | 1.1.4 | 2026-02-22 | https://crates.io/crates/rustix/1.1.4 | Unix metadata, permissions, and symlinks without direct libc. |
+| rustix | 1.1.4 (`fs`) | 2026-02-22 | https://crates.io/crates/rustix/1.1.4 | Unix access checks, metadata, permissions, and symlinks without direct libc. |
 | ruzstd | 0.9.0 | 2026-07-26 | https://crates.io/crates/ruzstd/0.9.0 | Cask `.tar.*` archive decoding only; pure-Rust Zstandard avoids new external binaries or C libraries. |
 | regex | 1.13.1 | 2026-07-15 | https://crates.io/crates/regex/1.13.1 | Version and search parsing. |
 | owo-colors | 4.3.0 | 2026-02-22 | https://crates.io/crates/owo-colors/4.3.0 | Stream-aware conditional ANSI output. |
