@@ -6,6 +6,7 @@ use zapbrew_net::{DownloadRequest, download_all, select_bottle};
 use zapbrew_types::FormulaName;
 
 use crate::install::{make_tab, replacement, resolve_formula};
+use crate::install_steps::InstallSteps;
 use crate::state::scan_selected;
 use crate::transaction::{InstallInput, acquire_formula_locks, install as install_transaction};
 use crate::{Ctx, OpError};
@@ -21,14 +22,14 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
     for requested in &args.names {
         let formula = resolve_formula(ctx, requested).await?;
         if affected.insert(formula.name.clone()) {
-            formulae.push(formula);
+            formulae.push((formula, InstallSteps::parse(ctx, formula)?));
         }
     }
 
     let _locks = acquire_formula_locks(&ctx.env, &affected)?;
     let state = scan_selected(&ctx.env, &affected)?;
     let mut plans = Vec::with_capacity(formulae.len());
-    for formula in formulae {
+    for (formula, steps) in formulae {
         let installed = state
             .formula(&formula.name)
             .ok_or_else(|| OpError::Refusal {
@@ -53,12 +54,13 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
             })?;
         plans.push((
             formula,
+            steps,
             old.tab().installed_on_request,
             request_for(ctx, formula)?,
         ));
     }
 
-    for (_, _, request) in &plans {
+    for (_, _, _, request) in &plans {
         ctx.reporter
             .ohai(&format!("Fetching {}", request.name.as_str()));
         ctx.reporter
@@ -69,12 +71,12 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
         &ctx.http,
         plans
             .iter()
-            .map(|(_, _, request)| request.clone())
+            .map(|(_, _, _, request)| request.clone())
             .collect(),
     )
     .await?;
 
-    for ((formula, installed_on_request, request), cached) in plans.into_iter().zip(cached) {
+    for ((formula, steps, installed_on_request, request), cached) in plans.into_iter().zip(cached) {
         let file_name = cached
             .alias
             .file_name()
@@ -90,6 +92,7 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
                 cached: &cached,
                 tab: make_tab(ctx, formula, installed_on_request)?,
                 replacement: replacement(ctx, formula, installed)?,
+                steps: &steps,
             },
         )?;
         if installed_on_request

@@ -242,3 +242,107 @@ async fn cellar_symlink_is_refused_without_outside_mutation() {
         0
     );
 }
+
+#[tokio::test]
+async fn stale_stage_collision_is_never_adopted_or_rolled_back() {
+    let server = MockServer::start().await;
+    let bytes = tarball(
+        "root",
+        &[
+            ("bin/root", b"root"),
+            (".bottle/etc/blocked/child", b"fails"),
+        ],
+    );
+    let digest = sha(&bytes);
+    mount(&server, "/root", &bytes).await;
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    let rack = environment.cellar.join("root");
+    std::fs::create_dir_all(&rack).expect("rack");
+    let stale = zapbrew_ops::transaction_test_support::force_next_stage_id(&rack, 41)
+        .expect("arm collision");
+    std::fs::create_dir(&stale).expect("stale stage");
+    std::fs::write(stale.join("sentinel"), b"stale bytes").expect("sentinel");
+    std::fs::create_dir_all(environment.prefix.join("etc")).expect("etc");
+    std::fs::write(environment.prefix.join("etc/blocked"), b"blocker").expect("blocker");
+    let context = ctx(
+        environment.clone(),
+        vec![formula(
+            "root",
+            &format!("{}/root", server.uri()),
+            &digest,
+            ":any_skip_relocation",
+        )],
+    );
+
+    install::run(&context, args(&["root"]))
+        .await
+        .expect_err("post-promotion failure");
+
+    assert_eq!(
+        std::fs::read(stale.join("sentinel")).expect("stale sentinel"),
+        b"stale bytes"
+    );
+    assert!(stale.is_dir());
+    assert_eq!(
+        std::fs::read_dir(&rack)
+            .expect("rack entries")
+            .filter_map(Result::ok)
+            .count(),
+        1,
+        "only the stale stage survives rollback"
+    );
+}
+
+#[tokio::test]
+async fn partial_backup_cleanup_failure_keeps_new_keg_active() {
+    let server = MockServer::start().await;
+    let bytes = tarball("root", &[("bin/root", b"new keg")]);
+    let digest = sha(&bytes);
+    mount(&server, "/root", &bytes).await;
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    let context = ctx(
+        environment.clone(),
+        vec![formula(
+            "root",
+            &format!("{}/root", server.uri()),
+            &digest,
+            ":any_skip_relocation",
+        )],
+    );
+    install::run(&context, args(&["root"]))
+        .await
+        .expect("initial install");
+    std::fs::write(environment.cellar.join("root/1.0/bin/root"), b"old keg")
+        .expect("distinguish old keg");
+    zapbrew_ops::transaction_test_support::fail_next_backup_cleanup("root")
+        .expect("arm cleanup failure");
+
+    let error = install::run(
+        &context,
+        Args {
+            force: true,
+            ..args(&["root"])
+        },
+    )
+    .await
+    .expect_err("cleanup is reported");
+
+    let leftovers = match error {
+        zapbrew_ops::OpError::CleanupIncomplete { keg, leftovers } => {
+            assert_eq!(keg, environment.cellar.join("root/1.0"));
+            leftovers
+        }
+        other => panic!("expected cleanup error, got {other}"),
+    };
+    assert_eq!(
+        std::fs::read(environment.cellar.join("root/1.0/bin/root")).expect("new keg"),
+        b"new keg"
+    );
+    assert!(environment.prefix.join("bin/root").is_symlink());
+    assert!(environment.prefix.join("opt/root").is_symlink());
+    assert!(environment.linked.join("root").is_symlink());
+    assert_eq!(leftovers.len(), 1);
+    assert!(leftovers[0].is_dir());
+}

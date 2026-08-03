@@ -8,6 +8,7 @@ use zapbrew_prefix::{Keg, RuntimeDependency, Source, SourceVersions, Tab};
 use zapbrew_types::{Arch, BottleTag, FormulaName};
 
 use crate::dependency::{DependencyMode, DependencyOptions, expand};
+use crate::install_steps::InstallSteps;
 use crate::state::{InstalledFormula, InstalledKeg, InstalledState, scan_selected};
 use crate::transaction::{
     InstallInput, Replacement, acquire_formula_locks, install as install_transaction,
@@ -28,6 +29,7 @@ pub struct Args {
 struct Candidate<'a> {
     formula: &'a Formula,
     requested: bool,
+    steps: InstallSteps,
 }
 
 pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
@@ -36,10 +38,18 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
     let roots = resolve_roots(ctx, &args.names).await?;
     let mut candidates = dependency_candidates(ctx, &roots)?;
     if !args.only_dependencies {
-        candidates.extend(roots.iter().copied().map(|formula| Candidate {
-            formula,
-            requested: true,
-        }));
+        candidates.extend(
+            roots
+                .iter()
+                .map(|formula| {
+                    Ok(Candidate {
+                        formula,
+                        requested: true,
+                        steps: InstallSteps::parse(ctx, formula)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, OpError>>()?,
+        );
     }
     deduplicate_candidates(&mut candidates);
     for candidate in &candidates {
@@ -113,6 +123,7 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
                 cached: &cached,
                 tab,
                 replacement,
+                steps: &candidate.steps,
             },
         )?;
 
@@ -347,12 +358,15 @@ fn dependency_candidates<'a>(
         .map(|dependency| {
             ctx.catalog
                 .get(&dependency.name)
-                .map(|formula| Candidate {
-                    formula,
-                    requested: false,
-                })
                 .ok_or(OpError::MissingFormula {
                     name: dependency.name,
+                })
+                .and_then(|formula| {
+                    Ok(Candidate {
+                        formula,
+                        requested: false,
+                        steps: InstallSteps::parse(ctx, formula)?,
+                    })
                 })
         })
         .collect()

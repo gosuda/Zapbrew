@@ -50,6 +50,23 @@ pub enum OpError {
         original: Box<OpError>,
         leftovers: String,
     },
+
+    #[error("invalid post_install_steps for {formula} at index {index} ({step_type}): {reason}")]
+    InstallStep {
+        formula: String,
+        index: usize,
+        step_type: String,
+        reason: String,
+    },
+
+    #[error(
+        "installed keg {keg} is active but cleanup is incomplete; surviving paths: {}",
+        .leftovers.iter().map(|path| path.as_str()).collect::<Vec<_>>().join(", ")
+    )]
+    CleanupIncomplete {
+        keg: Utf8PathBuf,
+        leftovers: Vec<Utf8PathBuf>,
+    },
 }
 
 impl OpError {

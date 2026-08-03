@@ -1,18 +1,29 @@
+use camino::{Utf8Path, Utf8PathBuf};
 use std::collections::BTreeSet;
 use std::fs;
+use std::io;
 use std::path::{Component, PathBuf};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
-
-use camino::{Utf8Path, Utf8PathBuf};
 use zapbrew_api::Formula;
 use zapbrew_net::CachedBottle;
 use zapbrew_pour::{LinkOptions, link, relocate, unlink, unpack};
 use zapbrew_prefix::{Env, Keg, LockGuard, Prefix, Tab};
 use zapbrew_types::{BottleFile, FormulaName};
 
+use crate::install_steps::{InstallSteps, StepJournal, remove_tree_confined};
 use crate::{Ctx, OpError};
 
 static TRANSACTION_ID: AtomicU64 = AtomicU64::new(1);
+static TEST_HOOKS: Mutex<TestHooks> = Mutex::new(TestHooks {
+    stage: None,
+    cleanup_failure_formula: None,
+});
+
+struct TestHooks {
+    stage: Option<(Utf8PathBuf, u64)>,
+    cleanup_failure_formula: Option<String>,
+}
 
 pub(crate) struct Replacement {
     pub linked: Option<Keg>,
@@ -25,6 +36,7 @@ pub(crate) struct InstallInput<'a> {
     pub cached: &'a CachedBottle,
     pub tab: Tab,
     pub replacement: Replacement,
+    pub steps: &'a InstallSteps,
 }
 
 pub(crate) struct Summary {
@@ -42,6 +54,8 @@ struct Journal {
     skeleton: Vec<SkeletonEntry>,
     backup: Option<(Utf8PathBuf, Utf8PathBuf)>,
     old_unlinked: Option<Keg>,
+    steps: StepJournal,
+    committed: bool,
 }
 
 struct SkeletonEntry {
@@ -89,6 +103,7 @@ pub(crate) fn install(ctx: &Ctx, input: InstallInput<'_>) -> Result<Summary, OpE
     };
     match transaction.apply() {
         Ok(summary) => Ok(summary),
+        Err(original) if transaction.journal.committed => Err(original),
         Err(original) => Err(transaction.rollback(original)),
     }
 }
@@ -110,14 +125,8 @@ impl FormulaTransaction<'_> {
             Some(&mut self.journal.created_dirs),
         )?;
 
-        let id = TRANSACTION_ID.fetch_add(1, Ordering::Relaxed);
-        let stage_root = rack.join(format!(".zapbrew-stage-{}-{id}", std::process::id()));
+        let stage_root = create_stage(&rack)?;
         self.journal.stage_root = Some(stage_root.clone());
-        ensure_directory(
-            &stage_root,
-            &self.ctx.env.cellar,
-            Some(&mut self.journal.created_dirs),
-        )?;
 
         let staged = unpack(
             &self.input.cached.path,
@@ -147,11 +156,7 @@ impl FormulaTransaction<'_> {
         }
 
         if let Some(target) = self.input.replacement.target.as_ref() {
-            let backup = rack.join(format!(
-                ".zapbrew-backup-{}-{}-{id}",
-                target.version(),
-                std::process::id()
-            ));
+            let backup = unique_backup_path(&rack, target.version().to_string().as_str());
             self.journal.backup = Some((target.path().to_path_buf(), backup.clone()));
             safe_rename(&self.ctx.env, target.path(), &backup)?;
         }
@@ -191,13 +196,39 @@ impl FormulaTransaction<'_> {
             &mut self.journal.skeleton,
         )?;
 
-        if let Some((_, backup)) = self.journal.backup.as_ref() {
-            safe_remove_tree(&self.ctx.env, backup)?;
-            self.journal.backup = None;
+        self.input.steps.execute(
+            self.ctx,
+            self.input.formula,
+            self.final_keg.path(),
+            &mut self.journal.steps,
+        )?;
+
+        self.journal.committed = true;
+        let mut cleanup_leftovers = Vec::new();
+        if let Some((_, backup)) = self.journal.backup.as_ref()
+            && remove_after_commit(&self.ctx.env, backup).is_err()
+            && path_entry_exists(backup)
+        {
+            cleanup_leftovers.push(backup.clone());
         }
+        if let Some(step_root) = self.journal.steps.cleanup_path()
+            && remove_after_commit(&self.ctx.env, step_root).is_err()
+            && path_entry_exists(step_root)
+        {
+            cleanup_leftovers.push(step_root.to_path_buf());
+        }
+        if !cleanup_leftovers.is_empty() {
+            cleanup_leftovers.sort();
+            cleanup_leftovers.dedup();
+            return Err(OpError::CleanupIncomplete {
+                keg: self.final_keg.path().to_path_buf(),
+                leftovers: cleanup_leftovers,
+            });
+        }
+        self.journal.backup = None;
+        self.journal.steps.clear();
         self.journal.old_unlinked = None;
         self.journal.created_dirs.clear();
-
         Ok(Summary {
             keg: self.final_keg.path().to_path_buf(),
             files,
@@ -207,6 +238,7 @@ impl FormulaTransaction<'_> {
 
     fn rollback(&mut self, original: OpError) -> OpError {
         let mut leftovers = Vec::new();
+        leftovers.extend(self.journal.steps.rollback(&self.ctx.env));
 
         for entry in self.journal.skeleton.iter().rev() {
             if safe_remove_skeleton(&self.ctx.env, entry).is_err() && path_entry_exists(&entry.path)
@@ -282,6 +314,119 @@ impl FormulaTransaction<'_> {
             }
         }
     }
+}
+
+fn create_stage(rack: &Utf8Path) -> Result<Utf8PathBuf, OpError> {
+    loop {
+        let id = next_stage_id(rack)?;
+        let stage = rack.join(format!(".zapbrew-stage-{}-{id}", std::process::id()));
+        match fs::create_dir(&stage) {
+            Ok(()) => return Ok(stage),
+            Err(source) if source.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(source) => {
+                return Err(OpError::io(
+                    "create exclusive staging directory",
+                    stage,
+                    source,
+                ));
+            }
+        }
+    }
+}
+
+fn unique_backup_path(rack: &Utf8Path, version: &str) -> Utf8PathBuf {
+    loop {
+        let id = TRANSACTION_ID.fetch_add(1, Ordering::Relaxed);
+        let backup = rack.join(format!(
+            ".zapbrew-backup-{version}-{}-{id}",
+            std::process::id()
+        ));
+        if !path_entry_exists(&backup) {
+            return backup;
+        }
+    }
+}
+
+fn next_stage_id(rack: &Utf8Path) -> Result<u64, OpError> {
+    let mut hooks = TEST_HOOKS.lock().map_err(|_| OpError::InvalidState {
+        reason: "transaction test-hook lock is poisoned".to_owned(),
+    })?;
+    if hooks
+        .stage
+        .as_ref()
+        .is_some_and(|(candidate, _)| candidate == rack)
+    {
+        let (_, id) = hooks.stage.take().ok_or_else(|| OpError::InvalidState {
+            reason: "transaction stage hook disappeared".to_owned(),
+        })?;
+        return Ok(id);
+    }
+    Ok(TRANSACTION_ID.fetch_add(1, Ordering::Relaxed))
+}
+
+fn remove_after_commit(env: &Env, path: &Utf8Path) -> Result<(), OpError> {
+    let should_fail = {
+        let mut hooks = TEST_HOOKS.lock().map_err(|_| OpError::InvalidState {
+            reason: "transaction test-hook lock is poisoned".to_owned(),
+        })?;
+        let formula = path
+            .parent()
+            .and_then(Utf8Path::file_name)
+            .unwrap_or_default();
+        if hooks.cleanup_failure_formula.as_deref() == Some(formula) {
+            hooks.cleanup_failure_formula = None;
+            true
+        } else {
+            false
+        }
+    };
+    if should_fail {
+        if let Ok(entries) = read_dir(path)
+            && let Some(first) = entries.first()
+        {
+            let _ = if fs::symlink_metadata(first)
+                .is_ok_and(|metadata| metadata.file_type().is_dir())
+            {
+                fs::remove_dir_all(first)
+            } else {
+                fs::remove_file(first)
+            };
+        }
+        return Err(OpError::io(
+            "remove committed backup",
+            path,
+            io::Error::new(io::ErrorKind::PermissionDenied, "injected cleanup failure"),
+        ));
+    }
+    if path
+        .file_name()
+        .is_some_and(|name| name.starts_with(".zapbrew-step-journal"))
+    {
+        remove_tree_confined(env, path)
+    } else {
+        safe_remove_tree(env, path)
+    }
+}
+
+pub(crate) fn arm_stage_collision(rack: Utf8PathBuf, id: u64) -> Result<Utf8PathBuf, OpError> {
+    let candidate = rack.join(format!(".zapbrew-stage-{}-{id}", std::process::id()));
+    TEST_HOOKS
+        .lock()
+        .map_err(|_| OpError::InvalidState {
+            reason: "transaction test-hook lock is poisoned".to_owned(),
+        })?
+        .stage = Some((rack, id));
+    Ok(candidate)
+}
+
+pub(crate) fn arm_cleanup_failure(formula: String) -> Result<(), OpError> {
+    TEST_HOOKS
+        .lock()
+        .map_err(|_| OpError::InvalidState {
+            reason: "transaction test-hook lock is poisoned".to_owned(),
+        })?
+        .cleanup_failure_formula = Some(formula);
+    Ok(())
 }
 
 fn copy_skeleton(
