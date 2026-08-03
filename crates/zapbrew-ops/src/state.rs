@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use camino::{Utf8Path, Utf8PathBuf};
 use zapbrew_prefix::{Env, Rack, Tab, is_pinned, resolve_linked, resolve_opt};
@@ -161,9 +161,17 @@ impl InstalledState {
 
 /// Scan every rack, keg, and receipt under `env` exactly once into an immutable snapshot.
 pub fn scan(env: &Env) -> Result<InstalledState, OpError> {
+    if !env.cellar.exists() {
+        return Ok(InstalledState::default());
+    }
+    let canonical_cellar = fs::canonicalize(env.cellar.as_std_path())
+        .map_err(|source| OpError::io("canonicalize", env.cellar.clone(), source))?;
+
     let mut formulae = BTreeMap::new();
 
     for rack in Rack::all(&env.cellar)? {
+        inspect_dir(rack.path(), "rack")?;
+
         let kegs = rack.kegs()?;
         let Some(first) = kegs.first() else {
             continue;
@@ -174,15 +182,16 @@ pub fn scan(env: &Env) -> Result<InstalledState, OpError> {
         let mut installed = Vec::with_capacity(kegs.len());
 
         for keg in kegs {
-            let canonical_keg = fs::canonicalize(keg.path().as_std_path()).ok();
+            inspect_dir(keg.path(), "keg")?;
+            let canonical_keg = canonicalize_keg(keg.path(), &canonical_cellar)?;
             let tab = Tab::load(keg.receipt_path())?;
             let (files, size) = inventory(keg.path())?;
             installed.push(InstalledKeg {
                 version: keg.version().clone(),
                 path: keg.path().to_path_buf(),
                 tab,
-                linked: same_target(linked_target.as_ref(), canonical_keg.as_ref()),
-                opt: same_target(opt_target.as_ref(), canonical_keg.as_ref()),
+                linked: same_target(linked_target.as_ref(), Some(&canonical_keg)),
+                opt: same_target(opt_target.as_ref(), Some(&canonical_keg)),
                 pinned: is_pinned(&env.pins, &name, keg.version())?,
                 files,
                 size,
@@ -199,6 +208,38 @@ pub fn scan(env: &Env) -> Result<InstalledState, OpError> {
     }
 
     Ok(InstalledState { formulae })
+}
+
+fn inspect_dir(path: &Utf8Path, kind: &'static str) -> Result<(), OpError> {
+    let metadata = fs::symlink_metadata(path.as_std_path())
+        .map_err(|source| OpError::io("inspect", path.to_path_buf(), source))?;
+    if metadata.is_symlink() {
+        return Err(OpError::InvalidState {
+            reason: format!("{kind} is a symlink: {path}"),
+        });
+    }
+    if !metadata.is_dir() {
+        return Err(OpError::InvalidState {
+            reason: format!("{kind} is not a directory: {path}"),
+        });
+    }
+    Ok(())
+}
+
+fn canonicalize_keg(path: &Utf8Path, canonical_cellar: &Path) -> Result<PathBuf, OpError> {
+    let canonical = fs::canonicalize(path.as_std_path())
+        .map_err(|source| OpError::io("canonicalize", path.to_path_buf(), source))?;
+    if !is_descendant(&canonical, canonical_cellar) {
+        return Err(OpError::InvalidState {
+            reason: format!("keg {path} escapes cellar {}", canonical_cellar.display()),
+        });
+    }
+    Ok(canonical)
+}
+
+fn is_descendant(path: &Path, ancestor: &Path) -> bool {
+    path.strip_prefix(ancestor)
+        .is_ok_and(|rest| !rest.as_os_str().is_empty())
 }
 
 fn resolved_target(target: Option<Utf8PathBuf>) -> Option<PathBuf> {

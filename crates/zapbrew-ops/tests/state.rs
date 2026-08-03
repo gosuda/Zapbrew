@@ -193,3 +193,93 @@ fn malformed_keg_directory_surfaces_the_lower_typed_error() {
         other => panic!("expected prefix error, got {other:?}"),
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn rejects_symlinked_rack_escape() {
+    use std::os::unix::fs::symlink;
+
+    let (temp, env) = scratch_env();
+    let outside = temp.path().join("outside-rack");
+    let outside_keg = outside.join("1.0");
+    ok(fs::create_dir_all(outside_keg.join("bin")));
+    ok(fs::write(outside_keg.join("bin/tool"), b"outside-sentinel"));
+
+    let receipt = outside_keg.join("INSTALL_RECEIPT.json");
+    let tab = Tab::default();
+    ok(tab.write(ok(Utf8PathBuf::from_path_buf(receipt.clone()))));
+
+    let receipt_before = ok(fs::read(&receipt));
+    let sentinel_before = ok(fs::read(outside_keg.join("bin/tool")));
+
+    ok(fs::create_dir_all(&env.cellar));
+    ok(symlink(&outside, env.cellar.join("foo").as_std_path()));
+
+    let error = match scan(&env) {
+        Ok(state) => panic!("expected confinement failure, got {state:?}"),
+        Err(error) => error,
+    };
+    match error {
+        OpError::InvalidState { reason } => assert!(
+            reason.contains("rack") || reason.contains("symlink"),
+            "unexpected reason: {reason}"
+        ),
+        other => panic!("expected InvalidState, got {other:?}"),
+    }
+
+    assert_eq!(
+        ok(fs::read(&receipt)),
+        receipt_before,
+        "outside receipt was read"
+    );
+    assert_eq!(
+        ok(fs::read(outside_keg.join("bin/tool"))),
+        sentinel_before,
+        "outside sentinel was modified"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn rejects_symlinked_keg_escape() {
+    use std::os::unix::fs::symlink;
+
+    let (temp, env) = scratch_env();
+    let outside = temp.path().join("outside-keg");
+    ok(fs::create_dir_all(outside.join("bin")));
+    ok(fs::write(outside.join("bin/tool"), b"outside-sentinel"));
+
+    let receipt = outside.join("INSTALL_RECEIPT.json");
+    let tab = Tab::default();
+    ok(tab.write(ok(Utf8PathBuf::from_path_buf(receipt.clone()))));
+
+    let receipt_before = ok(fs::read(&receipt));
+    let sentinel_before = ok(fs::read(outside.join("bin/tool")));
+
+    let rack = env.cellar.join("foo");
+    ok(fs::create_dir_all(&rack));
+    ok(symlink(&outside, rack.join("1.0").as_std_path()));
+
+    let error = match scan(&env) {
+        Ok(state) => panic!("expected confinement failure, got {state:?}"),
+        Err(error) => error,
+    };
+    match error {
+        OpError::InvalidState { reason } => assert!(
+            reason.contains("keg") || reason.contains("symlink"),
+            "unexpected reason: {reason}"
+        ),
+        other => panic!("expected InvalidState, got {other:?}"),
+    }
+
+    assert_eq!(
+        ok(fs::read(&receipt)),
+        receipt_before,
+        "outside receipt was read"
+    );
+    assert_eq!(
+        ok(fs::read(outside.join("bin/tool"))),
+        sentinel_before,
+        "outside sentinel was modified"
+    );
+}
