@@ -11,3 +11,13 @@ workspace = true
 [dependencies]
 zapbrew-prefix = { path = "../zapbrew-prefix" }
 zapbrew-types = { path = "../zapbrew-types" }
+camino = { workspace = true }
+flate2 = { workspace = true }
+object = { workspace = true }
+rustix = { workspace = true }
+tar = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+tempfile = { workspace = true }
