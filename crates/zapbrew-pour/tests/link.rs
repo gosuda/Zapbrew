@@ -14,7 +14,7 @@ use std::str::FromStr;
 
 use camino::{Utf8Path, Utf8PathBuf};
 use tempfile::TempDir;
-use zapbrew_pour::{LinkOptions, PourError, link, unlink};
+use zapbrew_pour::{LinkOptions, PourError, link, plan_unlink, unlink};
 use zapbrew_prefix::{Env, EnvDetectInput, Keg, Prefix, SystemCommandRunner};
 use zapbrew_types::{FormulaName, PkgVersion};
 
@@ -130,6 +130,36 @@ fn collect(root: &Utf8Path, dir: &Utf8Path, out: &mut Vec<String>) {
             collect(root, &path, out);
         }
     }
+}
+
+fn tree_fingerprint(root: &Utf8Path) -> Vec<String> {
+    fn visit(root: &Utf8Path, dir: &Utf8Path, out: &mut Vec<String>) {
+        let mut entries = fs::read_dir(dir.as_std_path())
+            .expect("read tree")
+            .map(|entry| entry.expect("tree entry").path())
+            .collect::<Vec<_>>();
+        entries.sort();
+        for raw in entries {
+            let path = utf8(raw);
+            let rel = path.strip_prefix(root).unwrap_or(&path);
+            let meta = fs::symlink_metadata(path.as_std_path()).expect("lstat tree");
+            if meta.file_type().is_symlink() {
+                out.push(format!("L {rel} -> {}", read_link(&path)));
+            } else if meta.is_dir() {
+                out.push(format!("D {rel}"));
+                visit(root, &path, out);
+            } else {
+                out.push(format!(
+                    "F {rel} {:?}",
+                    fs::read(path.as_std_path()).expect("read tree file")
+                ));
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    visit(root, root, &mut out);
+    out
 }
 
 // --- per-directory strategy table --------------------------------------------
@@ -484,6 +514,66 @@ fn unlink_only_touches_symlinks_that_resolve_into_the_keg() {
         "real file preserved"
     );
     assert!(is_symlink(&p.join("bin/d")), "dangling link preserved");
+}
+
+#[test]
+fn unlink_plan_is_read_only_and_matches_apply_sets() {
+    let fx = fixture();
+    keg_file(&fx, "bin/hello", "");
+    keg_file(&fx, "etc/sub/nested.conf", "");
+    keg_file(&fx, "lib/pkgconfig/foo.pc", "");
+    link(&fx.keg, &fx.prefix, LinkOptions::default()).expect("link");
+    touch(&fx.prefix_path().join("etc/sub/.DS_Store"), "metadata");
+
+    let before = tree_fingerprint(fx.prefix_path());
+    let plan = plan_unlink(&fx.keg, &fx.prefix).expect("plan unlink");
+    assert_eq!(
+        tree_fingerprint(fx.prefix_path()),
+        before,
+        "planning is byte-identical and performs no prefix mutation"
+    );
+
+    let applied = unlink(&fx.keg, &fx.prefix).expect("apply unlink");
+    assert_eq!(applied, plan, "apply consumes the exact read-only plan");
+    assert_eq!(
+        applied.removed,
+        [
+            fx.prefix_path().join("bin/hello"),
+            fx.prefix_path().join("etc/sub/nested.conf"),
+            fx.prefix_path().join("lib/pkgconfig/foo.pc"),
+        ]
+    );
+    assert_eq!(
+        applied.pruned,
+        [
+            fx.prefix_path().join("lib/pkgconfig"),
+            fx.prefix_path().join("etc/sub"),
+        ]
+    );
+}
+
+#[test]
+fn unlink_preserves_prior_ds_store_cleanup_in_nonempty_owned_directory() {
+    let fx = fixture();
+    keg_file(&fx, "etc/sub/formula.conf", "");
+    link(&fx.keg, &fx.prefix, LinkOptions::default()).expect("link");
+    touch(&fx.prefix_path().join("etc/sub/.DS_Store"), "metadata");
+    touch(&fx.prefix_path().join("etc/sub/user.conf"), "user");
+
+    let plan = plan_unlink(&fx.keg, &fx.prefix).expect("plan");
+    assert!(
+        !plan.pruned.contains(&fx.prefix_path().join("etc/sub")),
+        "foreign content keeps the directory"
+    );
+    assert!(
+        fx.prefix_path().join("etc/sub/.DS_Store").exists(),
+        "plan does not mutate metadata"
+    );
+
+    let applied = unlink(&fx.keg, &fx.prefix).expect("unlink");
+    assert_eq!(applied, plan);
+    assert!(!fx.prefix_path().join("etc/sub/.DS_Store").exists());
+    assert!(fx.prefix_path().join("etc/sub/user.conf").exists());
 }
 
 // --- dry-run overwrite backups ------------------------------------------------

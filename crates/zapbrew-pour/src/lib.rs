@@ -8,6 +8,6 @@ mod types;
 
 pub use archive::unpack;
 pub use error::PourError;
-pub use link::{link, unlink};
+pub use link::{link, plan_unlink, unlink};
 pub use relocate::relocate;
 pub use types::{LinkOptions, LinkReport, RelocationReport, UnlinkReport};

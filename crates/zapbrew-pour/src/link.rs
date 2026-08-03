@@ -187,46 +187,94 @@ pub fn link(keg: &Keg, prefix: &Prefix, options: LinkOptions) -> Result<LinkRepo
 /// directories that ownership created, and drop the linked keg record. The opt
 /// record is retained until uninstall.
 pub fn unlink(keg: &Keg, prefix: &Prefix) -> Result<UnlinkReport, PourError> {
-    let keg_root = keg.path();
-    let prefix_path = prefix.path();
+    let plan = build_unlink_plan(keg, prefix)?;
+    let mut removed = Vec::with_capacity(plan.report.removed.len());
 
-    let mut removed = Vec::new();
-    let mut owned_dirs: BTreeSet<Utf8PathBuf> = BTreeSet::new();
-
-    for dir in UNLINK_DIRS {
-        let root = keg_root.join(dir);
-        if path_exists(&root) {
-            walk_unlink(&root, keg_root, prefix_path, &mut removed, &mut owned_dirs)?;
+    for (dst, src) in plan.links {
+        if is_symlink(&dst) && symlink_resolves_to(&dst, &src) {
+            remove_file(&dst)?;
+            removed.push(dst);
         }
     }
 
-    // Drop the linked keg record when it still points at this keg; keep opt.
-    let linked_record = prefix.linked_path(keg.name())?;
-    if is_symlink(&linked_record) && symlink_resolves_to(&linked_record, keg_root) {
-        remove_file(&linked_record)?;
+    if let Some((record, keg_root)) = plan.linked_record
+        && is_symlink(&record)
+        && symlink_resolves_to(&record, &keg_root)
+    {
+        remove_file(&record)?;
     }
 
-    let must_exist = must_exist_set(prefix);
-    let mut prune: Vec<Utf8PathBuf> = owned_dirs.into_iter().collect();
-    // Deepest first so children are gone before their parents are tried.
-    prune.sort_by(|a, b| {
-        b.components()
-            .count()
-            .cmp(&a.components().count())
-            .then_with(|| b.cmp(a))
-    });
-
-    let mut pruned = Vec::new();
-    for dir in prune {
-        if must_exist.contains(&dir) {
-            continue;
-        }
+    let mut pruned = Vec::with_capacity(plan.report.pruned.len());
+    for dir in plan.prune_dirs {
         if rmdir_if_possible(&dir)? {
             pruned.push(dir);
         }
     }
 
     Ok(UnlinkReport { removed, pruned })
+}
+
+/// Return the exact paths [`unlink`] would remove and prune without mutating the
+/// prefix. The same internal plan drives the real operation.
+pub fn plan_unlink(keg: &Keg, prefix: &Prefix) -> Result<UnlinkReport, PourError> {
+    Ok(build_unlink_plan(keg, prefix)?.report)
+}
+
+#[derive(Debug)]
+struct UnlinkPlan {
+    report: UnlinkReport,
+    links: Vec<(Utf8PathBuf, Utf8PathBuf)>,
+    linked_record: Option<(Utf8PathBuf, Utf8PathBuf)>,
+    prune_dirs: Vec<Utf8PathBuf>,
+}
+
+fn build_unlink_plan(keg: &Keg, prefix: &Prefix) -> Result<UnlinkPlan, PourError> {
+    let keg_root = keg.path();
+    let prefix_path = prefix.path();
+    let mut links = Vec::new();
+    let mut owned_dirs = BTreeSet::new();
+
+    for dir in UNLINK_DIRS {
+        let root = keg_root.join(dir);
+        if path_exists(&root) {
+            walk_unlink(&root, keg_root, prefix_path, &mut links, &mut owned_dirs)?;
+        }
+    }
+
+    let removed = links.iter().map(|(dst, _)| dst.clone()).collect::<Vec<_>>();
+    let removed_set = removed.iter().cloned().collect::<BTreeSet<_>>();
+    let must_exist = must_exist_set(prefix);
+    let mut candidates = owned_dirs.into_iter().collect::<Vec<_>>();
+    candidates.sort_by(|a, b| {
+        b.components()
+            .count()
+            .cmp(&a.components().count())
+            .then_with(|| b.cmp(a))
+    });
+
+    let prune_dirs = candidates
+        .into_iter()
+        .filter(|dir| !must_exist.contains(dir))
+        .collect::<Vec<_>>();
+    let mut pruned = Vec::new();
+    let mut pruned_set = BTreeSet::new();
+    for dir in &prune_dirs {
+        if directory_empty_after_plan(dir, &removed_set, &pruned_set) {
+            pruned_set.insert(dir.clone());
+            pruned.push(dir.clone());
+        }
+    }
+
+    let record = prefix.linked_path(keg.name())?;
+    let linked_record = (is_symlink(&record) && symlink_resolves_to(&record, keg_root))
+        .then(|| (record, keg_root.to_owned()));
+
+    Ok(UnlinkPlan {
+        report: UnlinkReport { removed, pruned },
+        links,
+        linked_record,
+        prune_dirs,
+    })
 }
 
 /// Read-only walker that turns the keg tree into a validated op plan.
@@ -556,7 +604,7 @@ fn walk_unlink(
     dir: &Utf8Path,
     keg_root: &Utf8Path,
     prefix_path: &Utf8Path,
-    removed: &mut Vec<Utf8PathBuf>,
+    links: &mut Vec<(Utf8PathBuf, Utf8PathBuf)>,
     owned_dirs: &mut BTreeSet<Utf8PathBuf>,
 ) -> Result<(), PourError> {
     for src in sorted_children(dir)? {
@@ -571,8 +619,7 @@ fn walk_unlink(
         // when it still resolves into this keg; never descend through it.
         if is_symlink(&dst) {
             if symlink_resolves_to(&dst, &src) {
-                remove_file(&dst)?;
-                removed.push(dst);
+                links.push((dst, src));
             }
             continue;
         }
@@ -581,10 +628,35 @@ fn walk_unlink(
             if is_real_dir(&dst) {
                 owned_dirs.insert(dst.clone());
             }
-            walk_unlink(&src, keg_root, prefix_path, removed, owned_dirs)?;
+            walk_unlink(&src, keg_root, prefix_path, links, owned_dirs)?;
         }
     }
     Ok(())
+}
+
+fn directory_empty_after_plan(
+    dir: &Utf8Path,
+    removed: &BTreeSet<Utf8PathBuf>,
+    pruned: &BTreeSet<Utf8PathBuf>,
+) -> bool {
+    let Ok(entries) = fs::read_dir(dir.as_std_path()) else {
+        return false;
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        let Ok(path) = Utf8PathBuf::from_path_buf(entry.path()) else {
+            return false;
+        };
+        if path.file_name() != Some(".DS_Store")
+            && !removed.contains(&path)
+            && !pruned.contains(&path)
+        {
+            return false;
+        }
+    }
+    true
 }
 
 /// Rewrite `record` as a relative symlink to `keg_path`, replacing a prior

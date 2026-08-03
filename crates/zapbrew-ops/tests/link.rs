@@ -1,0 +1,332 @@
+mod support;
+
+use std::fs;
+use std::os::unix::fs::symlink;
+
+use zapbrew_ops::link::{self, Args};
+use zapbrew_pour::{LinkOptions, link as pour_link};
+use zapbrew_prefix::Prefix;
+
+use support::{Fixture, fingerprint, formula, is_symlink, keg_only_formula, write};
+
+#[tokio::test]
+async fn links_max_scheme_keg_with_records_and_exact_count_then_warns_when_repeated() {
+    let fixture = Fixture::new();
+    let high_pkg = fixture.keg("foo", "9.0", 0);
+    let selected = fixture.keg("foo", "1.0", 1);
+    fixture.keg_file(&high_pkg, "bin/wrong", "wrong");
+    fixture.keg_file(&selected, "bin/foo", "selected");
+    let (ctx, reporter) = fixture.context(vec![formula("foo", "1.0", 1)]);
+
+    link::run(
+        &ctx,
+        Args {
+            names: vec!["foo".to_owned()],
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("link");
+
+    assert_eq!(
+        reporter.take(),
+        [format!(
+            "print:Linking {}... 3 symlinks created.",
+            selected.path()
+        )]
+    );
+    assert!(is_symlink(&ctx.env.prefix.join("bin/foo")));
+    assert!(!ctx.env.prefix.join("bin/wrong").exists());
+    assert!(is_symlink(&ctx.env.prefix.join("opt/foo")));
+    assert!(is_symlink(&ctx.env.linked.join("foo")));
+
+    link::run(
+        &ctx,
+        Args {
+            names: vec!["foo".to_owned()],
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("already linked");
+    assert_eq!(
+        reporter.take(),
+        [
+            format!("opoo:Already linked: {}", selected.path()),
+            "print:To relink, run:\n  brew unlink foo && brew link foo".to_owned(),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn refuses_when_another_version_is_linked() {
+    let fixture = Fixture::new();
+    let old = fixture.keg("foo", "1.0", 0);
+    let current = fixture.keg("foo", "2.0", 1);
+    fixture.keg_file(&old, "bin/foo", "old");
+    fixture.keg_file(&current, "bin/foo", "current");
+    pour_link(
+        &old,
+        &Prefix::new(fixture.env.clone()),
+        LinkOptions::default(),
+    )
+    .expect("old link");
+    let (ctx, _reporter) = fixture.context(vec![formula("foo", "2.0", 1)]);
+
+    let error = link::run(
+        &ctx,
+        Args {
+            names: vec!["foo".to_owned()],
+            ..Args::default()
+        },
+    )
+    .await
+    .expect_err("other linked version");
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "Cannot link foo\nAnother version is already linked: {}",
+            old.path()
+        )
+    );
+}
+
+#[tokio::test]
+async fn conflict_messages_cover_real_file_and_other_keg_without_mutation() {
+    let fixture = Fixture::new();
+    let foo = fixture.keg("foo", "1.0", 0);
+    fixture.keg_file(&foo, "bin/tool", "foo");
+    write(&fixture.env.prefix.join("bin/tool"), "user");
+    let (ctx, _reporter) = fixture.context(vec![formula("foo", "1.0", 0)]);
+    write(&ctx.env.locks.join("foo.formula.lock"), "");
+    let before = fingerprint(&ctx.env.prefix);
+
+    let error = link::run(
+        &ctx,
+        Args {
+            names: vec!["foo".to_owned()],
+            ..Args::default()
+        },
+    )
+    .await
+    .expect_err("real conflict");
+    assert_eq!(fingerprint(&ctx.env.prefix), before);
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "Could not symlink bin/tool\nTarget {0}/bin/tool already exists. You may want to remove it:\n  rm '{0}/bin/tool'\nTo force the link and overwrite all conflicting files:\n  brew link --overwrite foo\n\nTo list all files that would be deleted:\n  brew link --overwrite foo --dry-run",
+            ctx.env.prefix
+        )
+    );
+
+    fs::remove_file(ctx.env.prefix.join("bin/tool")).expect("remove user file");
+    let bar = fixture.keg("bar", "1.0", 0);
+    fixture.keg_file(&bar, "bin/tool", "bar");
+    symlink(bar.path().join("bin/tool"), ctx.env.prefix.join("bin/tool"))
+        .expect("foreign keg link");
+    let error = link::run(
+        &ctx,
+        Args {
+            names: vec!["foo".to_owned()],
+            ..Args::default()
+        },
+    )
+    .await
+    .expect_err("keg conflict");
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "Could not symlink bin/tool\nTarget {}/bin/tool is a symlink belonging to bar. You can unlink it:\n  brew unlink bar\nTo force the link and overwrite all conflicting files:\n  brew link --overwrite foo\n\nTo list all files that would be deleted:\n  brew link --overwrite foo --dry-run",
+            ctx.env.prefix
+        )
+    );
+}
+
+#[tokio::test]
+async fn dry_run_lists_exact_paths_and_is_byte_identical_for_link_and_overwrite() {
+    let fixture = Fixture::new();
+    let foo = fixture.keg("foo", "1.0", 0);
+    fixture.keg_file(&foo, "bin/tool", "foo");
+    let (ctx, reporter) = fixture.context(vec![formula("foo", "1.0", 0)]);
+    fs::create_dir_all(&ctx.env.prefix).expect("prefix");
+    write(&ctx.env.locks.join("foo.formula.lock"), "");
+    let before = fingerprint(&ctx.env.prefix);
+
+    link::run(
+        &ctx,
+        Args {
+            names: vec!["foo".to_owned()],
+            dry_run: true,
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("link dry run");
+    assert_eq!(fingerprint(&ctx.env.prefix), before);
+    assert_eq!(
+        reporter.take(),
+        [
+            "print:Would link:".to_owned(),
+            format!("print:{}", ctx.env.prefix.join("bin/tool")),
+        ]
+    );
+
+    write(&ctx.env.prefix.join("bin/tool"), "user");
+    let before = fingerprint(&ctx.env.prefix);
+    link::run(
+        &ctx,
+        Args {
+            names: vec!["foo".to_owned()],
+            overwrite: true,
+            dry_run: true,
+            force: false,
+        },
+    )
+    .await
+    .expect("overwrite dry run");
+    assert_eq!(fingerprint(&ctx.env.prefix), before);
+    assert_eq!(
+        reporter.take(),
+        [
+            "print:Would remove:".to_owned(),
+            format!("print:{}", ctx.env.prefix.join("bin/tool")),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn keg_only_force_versioned_macos_and_path_messages_are_exact() {
+    let fixture = Fixture::new();
+    let forced = fixture.keg("forced", "1.0", 0);
+    let versioned = fixture.keg("versioned@1", "1.0", 0);
+    let macos = fixture.keg("macos", "1.0", 0);
+    fixture.keg_file(&forced, "bin/forced", "forced");
+    fixture.keg_file(&versioned, "bin/versioned", "versioned");
+    fixture.keg_file(&macos, "bin/macos", "macos");
+    let formulae = vec![
+        keg_only_formula("forced", "1.0", 0, "some_reason", "reason"),
+        keg_only_formula("versioned@1", "1.0", 0, ":versioned_formula", "versioned"),
+        keg_only_formula(
+            "macos",
+            "1.0",
+            0,
+            "provided_by_macos",
+            "macOS already provides it.",
+        ),
+    ];
+    let (ctx, reporter) = fixture.context(formulae);
+
+    link::run(
+        &ctx,
+        Args {
+            names: vec!["forced".to_owned()],
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("force warning");
+    assert_eq!(
+        reporter.take(),
+        [
+            "opoo:forced is keg-only and must be linked with `--force`.".to_owned(),
+            format!(
+                "print:\nIf you need to have this software first in your PATH instead consider running:\n  echo 'export PATH=\"{}/opt/forced/bin:$PATH\"' >> {}",
+                ctx.env.prefix,
+                ctx.env.home.join(".profile")
+            ),
+        ]
+    );
+    assert!(!is_symlink(&ctx.env.linked.join("forced")));
+
+    link::run(
+        &ctx,
+        Args {
+            names: vec!["forced".to_owned()],
+            force: true,
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("forced link");
+    assert!(is_symlink(&ctx.env.prefix.join("bin/forced")));
+    assert!(reporter.take()[0].contains("3 symlinks created."));
+
+    link::run(
+        &ctx,
+        Args {
+            names: vec!["versioned@1".to_owned()],
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("versioned links without force");
+    assert!(is_symlink(&ctx.env.prefix.join("bin/versioned")));
+    assert_eq!(
+        reporter.take().len(),
+        1,
+        "versioned formula prints no PATH hint"
+    );
+
+    let mut mac_ctx = ctx;
+    mac_ctx.env.bottle_tag =
+        zapbrew_types::BottleTag::from_host("macos", "arm64", Some("tahoe")).expect("mac tag");
+    link::run(
+        &mac_ctx,
+        Args {
+            names: vec!["macos".to_owned()],
+            force: true,
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("custom macOS prefix allows forced link");
+    assert!(reporter.take()[0].contains("3 symlinks created."));
+    assert!(is_symlink(&fixture.env.linked.join("macos")));
+}
+
+#[tokio::test]
+async fn linking_unlinks_locked_keg_only_versioned_sibling_first() {
+    let fixture = Fixture::new();
+    let target = fixture.keg("foo", "2.0", 0);
+    let sibling = fixture.keg("foo@1", "1.0", 0);
+    fixture.keg_file(&target, "bin/foo", "target");
+    fixture.keg_file(&sibling, "bin/foo", "sibling");
+    pour_link(
+        &sibling,
+        &Prefix::new(fixture.env.clone()),
+        LinkOptions {
+            force: true,
+            keg_only: true,
+            ..LinkOptions::default()
+        },
+    )
+    .expect("sibling link");
+    let (ctx, reporter) = fixture.context(vec![
+        formula("foo", "2.0", 0),
+        keg_only_formula("foo@1", "1.0", 0, ":versioned_formula", "versioned"),
+    ]);
+
+    link::run(
+        &ctx,
+        Args {
+            names: vec!["foo".to_owned()],
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("replace sibling links");
+
+    assert_eq!(
+        reporter.take(),
+        [
+            format!("print:Unlinking {}... 1 symlinks removed.", sibling.path()),
+            format!("print:Linking {}... 3 symlinks created.", target.path()),
+        ]
+    );
+    assert!(is_symlink(&ctx.env.linked.join("foo")));
+    assert!(!is_symlink(&ctx.env.linked.join("foo@1")));
+    assert_eq!(
+        fs::read_to_string(target.path().join("bin/foo")).expect("target contents"),
+        "target"
+    );
+}
