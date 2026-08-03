@@ -50,10 +50,15 @@ struct Candidate {
 }
 
 pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
+    ensure_real_root(&ctx.env.prefix)?;
+    ensure_real_root(&ctx.env.cellar)?;
+    ensure_real_root(&ctx.env.cache)?;
+    ensure_real_root(&ctx.env.locks)?;
+    ensure_no_symlink_components(&ctx.env.prefix, &ctx.env.locks)?;
+
     let explicitly_named = !args.names.is_empty();
     let mut names = resolve_racks(ctx, &args.names)?;
     retain_cleanable(ctx, &mut names, explicitly_named);
-    ensure_no_symlink_components(&ctx.env.prefix, &ctx.env.locks)?;
 
     let formula_locks = if args.dry_run {
         None
@@ -145,7 +150,7 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
 
 fn resolve_racks(ctx: &Ctx, requested: &[String]) -> Result<BTreeSet<String>, OpError> {
     if requested.is_empty() {
-        if !ctx.env.cellar.exists() {
+        if !present_real_directory(&ctx.env.cellar)? {
             return Ok(BTreeSet::new());
         }
         return Rack::all(&ctx.env.cellar)
@@ -255,7 +260,7 @@ fn collect_cache_candidates(
     scrub: bool,
     candidates: &mut BTreeMap<Utf8PathBuf, Candidate>,
 ) -> Result<(), OpError> {
-    if !ctx.env.cache.exists() {
+    if !present_real_directory(&ctx.env.cache)? {
         return Ok(());
     }
     let (referenced, invalid_aliases) = cache_aliases(&ctx.env)?;
@@ -402,7 +407,7 @@ pub(crate) fn broken_prefix_symlinks(env: &Env) -> Result<Vec<Utf8PathBuf>, OpEr
 }
 
 pub(crate) fn cache_incomplete_entries(env: &Env) -> Result<Vec<Utf8PathBuf>, OpError> {
-    if !env.cache.exists() {
+    if !present_real_directory(&env.cache)? {
         return Ok(Vec::new());
     }
     let mut entries = Vec::new();
@@ -690,7 +695,7 @@ fn collect_lock_candidates(
     env: &Env,
     candidates: &mut BTreeMap<Utf8PathBuf, Candidate>,
 ) -> Result<(), OpError> {
-    if !env.locks.exists() {
+    if !present_real_directory(&env.locks)? {
         return Ok(());
     }
     for path in sorted_children(&env.locks)? {
@@ -725,7 +730,7 @@ fn cleanup_stale_locks(
     failed: &mut Vec<Utf8PathBuf>,
     removed_size: &mut u64,
 ) -> Result<(), OpError> {
-    if !env.locks.exists() {
+    if !present_real_directory(&env.locks)? {
         return Ok(());
     }
     for path in sorted_children(&env.locks)? {
@@ -760,6 +765,9 @@ fn real_directory_below(root: &Utf8Path, path: &Utf8Path) -> Result<bool, OpErro
     let relative = path.strip_prefix(root).map_err(|_| OpError::InvalidState {
         reason: format!("path escaped {root}: {path}"),
     })?;
+    if !present_real_directory(root)? {
+        return Ok(false);
+    }
     let mut current = root.to_path_buf();
     for component in relative.components() {
         current.push(component.as_str());
@@ -773,6 +781,23 @@ fn real_directory_below(root: &Utf8Path, path: &Utf8Path) -> Result<bool, OpErro
         }
     }
     Ok(true)
+}
+
+fn ensure_real_root(path: &Utf8Path) -> Result<(), OpError> {
+    present_real_directory(path).map(|_| ())
+}
+
+fn present_real_directory(path: &Utf8Path) -> Result<bool, OpError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            Err(OpError::InvalidState {
+                reason: format!("cleanup root is not a real directory: {path}"),
+            })
+        }
+        Ok(_) => Ok(true),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(OpError::io("inspect", path.to_path_buf(), source)),
+    }
 }
 
 fn ensure_no_symlink_components(root: &Utf8Path, path: &Utf8Path) -> Result<(), OpError> {

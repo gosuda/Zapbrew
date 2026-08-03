@@ -43,42 +43,66 @@ pub(crate) fn findings(
 ) -> Result<Vec<String>, OpError> {
     let mut findings = Vec::new();
 
-    let broken = cleanup::broken_prefix_symlinks(&ctx.env)?;
-    if !broken.is_empty() {
+    let prefix_usable = configured_root_usable(&ctx.env.prefix)?;
+    let cache_usable = configured_root_usable(&ctx.env.cache)?;
+    let mut invalid_roots = Vec::new();
+    if matches!(prefix_usable, RootUsability::Invalid) {
+        invalid_roots.push(ctx.env.prefix.clone());
+    }
+    if matches!(cache_usable, RootUsability::Invalid) {
+        invalid_roots.push(ctx.env.cache.clone());
+    }
+    invalid_roots.sort();
+    if !invalid_roots.is_empty() {
         findings.push(list_finding(
-            "Broken symlinks were found:",
-            &broken,
-            "Remove them with `brew cleanup`.",
+            "The following configured roots are not real directories:",
+            &invalid_roots,
+            "Replace each symlink or non-directory with a real directory.",
         ));
     }
 
-    let unlinked = unlinked_racks(ctx)?;
-    if !unlinked.is_empty() {
-        findings.push(format!(
-            "You have unlinked kegs in your Cellar.\n\
+    if !matches!(prefix_usable, RootUsability::Invalid) {
+        let broken = cleanup::broken_prefix_symlinks(&ctx.env)?;
+        if !broken.is_empty() {
+            findings.push(list_finding(
+                "Broken symlinks were found:",
+                &broken,
+                "Remove them with `brew cleanup`.",
+            ));
+        }
+
+        let unlinked = unlinked_racks(ctx)?;
+        if !unlinked.is_empty() {
+            findings.push(format!(
+                "You have unlinked kegs in your Cellar.\n\
              Leaving kegs unlinked can lead to build-trouble and cause formulae that depend on\n\
              those kegs to fail to run properly once built.\n\n\
              Run `brew link` on these:\n{}",
-            indented(&unlinked)
-        ));
+                indented(&unlinked)
+            ));
+        }
+
+        findings.extend(path_findings(&ctx.env.prefix, path_entries)?);
     }
 
-    let incomplete = cleanup::cache_incomplete_entries(&ctx.env)?;
-    if !incomplete.is_empty() {
-        findings.push(list_finding(
-            "Stray incomplete downloads were found:",
-            &incomplete,
-            "Remove them with `brew cleanup`.",
-        ));
+    if !matches!(cache_usable, RootUsability::Invalid) {
+        let incomplete = cleanup::cache_incomplete_entries(&ctx.env)?;
+        if !incomplete.is_empty() {
+            findings.push(list_finding(
+                "Stray incomplete downloads were found:",
+                &incomplete,
+                "Remove them with `brew cleanup`.",
+            ));
+        }
     }
 
-    findings.extend(path_findings(&ctx.env.prefix, path_entries)?);
-
-    let mut unwritable = [&ctx.env.cache, &ctx.env.prefix]
-        .into_iter()
-        .filter(|path| !writable(path))
-        .cloned()
-        .collect::<Vec<_>>();
+    let mut unwritable = Vec::new();
+    if !matches!(cache_usable, RootUsability::Invalid) && !writable(&ctx.env.cache) {
+        unwritable.push(ctx.env.cache.clone());
+    }
+    if !matches!(prefix_usable, RootUsability::Invalid) && !writable(&ctx.env.prefix) {
+        unwritable.push(ctx.env.prefix.clone());
+    }
     unwritable.sort();
     if !unwritable.is_empty() {
         findings.push(list_finding(
@@ -192,6 +216,24 @@ fn directory_names(path: &Utf8Path) -> Result<BTreeSet<String>, OpError> {
         }
     }
     Ok(names)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RootUsability {
+    Usable,
+    Missing,
+    Invalid,
+}
+
+fn configured_root_usable(path: &Utf8Path) -> Result<RootUsability, OpError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            Ok(RootUsability::Invalid)
+        }
+        Ok(_) => Ok(RootUsability::Usable),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(RootUsability::Missing),
+        Err(source) => Err(OpError::io("inspect", path.to_path_buf(), source)),
+    }
 }
 
 fn list_finding(heading: &str, paths: &[Utf8PathBuf], remediation: &str) -> String {

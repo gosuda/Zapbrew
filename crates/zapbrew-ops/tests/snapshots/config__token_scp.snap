@@ -1,0 +1,5 @@
+---
+source: crates/zapbrew-ops/tests/config.rs
+expression: "&lines[1]"
+---
+ORIGIN: set

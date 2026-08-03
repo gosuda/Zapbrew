@@ -173,3 +173,78 @@ fn injected_writability_reports_sorted_prefix_and_cache_paths() {
         )]
     );
 }
+
+#[test]
+fn symlinked_roots_report_configured_paths_without_traversing_sentinels() {
+    let fixture = Fixture::new();
+    let cache_sentinel = fixture.env.home.join("cache-sentinel");
+    let prefix_sentinel = fixture.env.home.join("prefix-sentinel");
+    fs::create_dir_all(cache_sentinel.join("nested")).expect("cache sentinel");
+    write(&cache_sentinel.join("nested/secret.incomplete"), "secret");
+    fs::create_dir_all(prefix_sentinel.join("bin")).expect("prefix sentinel");
+    symlink("missing", prefix_sentinel.join("bin/broken")).expect("sentinel broken");
+
+    let cache = fixture.env.cache.clone();
+    let prefix = fixture.env.prefix.clone();
+    if cache.exists() {
+        fs::remove_dir_all(&cache).expect("remove cache");
+    }
+    // Replace prefix with a symlink while keeping the configured path identity.
+    let prefix_backup = fixture.env.home.join("prefix-backup");
+    fs::rename(&prefix, &prefix_backup).expect("move prefix");
+    symlink(&prefix_sentinel, &prefix).expect("prefix symlink");
+    symlink(&cache_sentinel, &cache).expect("cache symlink");
+
+    let (ctx, _reporter) = fixture.context(Vec::new());
+    let findings =
+        doctor_test_support::findings(&ctx, &[ctx.env.prefix.join("bin")], &BTreeSet::new())
+            .expect("findings");
+
+    let root_finding = findings
+        .iter()
+        .find(|finding| {
+            finding.starts_with("The following configured roots are not real directories:")
+        })
+        .expect("root finding");
+    assert_eq!(
+        root_finding,
+        &format!(
+            "The following configured roots are not real directories:\n  {}\n  {}\nReplace each symlink or non-directory with a real directory.",
+            ctx.env.cache, ctx.env.prefix
+        )
+    );
+    let joined = findings.join("\n");
+    assert!(!joined.contains(cache_sentinel.as_str()));
+    assert!(!joined.contains(prefix_sentinel.as_str()));
+    assert!(!joined.contains("secret.incomplete"));
+    assert!(!joined.contains("bin/broken"));
+    assert_eq!(
+        fs::read_to_string(cache_sentinel.join("nested/secret.incomplete")).expect("sentinel"),
+        "secret"
+    );
+    assert!(fs::symlink_metadata(prefix_sentinel.join("bin/broken")).is_ok());
+}
+
+#[test]
+fn non_directory_configured_root_is_reported_without_descent() {
+    let fixture = Fixture::new();
+    fs::create_dir_all(fixture.env.prefix.join("bin")).expect("bin");
+    if fixture.env.cache.exists() {
+        fs::remove_dir_all(&fixture.env.cache).expect("remove cache");
+    }
+    write(&fixture.env.cache, "cache-file");
+    let (ctx, _reporter) = fixture.context(Vec::new());
+    let findings =
+        doctor_test_support::findings(&ctx, &[ctx.env.prefix.join("bin")], &BTreeSet::new())
+            .expect("findings");
+    assert!(findings.iter().any(|finding| {
+        finding.starts_with("The following configured roots are not real directories:")
+            && finding.contains(ctx.env.cache.as_str())
+            && !finding.contains(ctx.env.prefix.as_str())
+    }));
+    assert!(
+        !findings
+            .iter()
+            .any(|finding| finding.contains("incomplete"))
+    );
+}

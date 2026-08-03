@@ -31,10 +31,14 @@ impl RecordingRunner {
     }
 
     fn credentialed_origin() -> Self {
+        Self::with_origin("https://user:token@example.test/zapbrew.git\n")
+    }
+
+    fn with_origin(origin: &'static str) -> Self {
         Self {
             calls: Mutex::new(Vec::new()),
             fail: false,
-            origin: Some("https://user:token@example.test/zapbrew.git\n"),
+            origin: Some(origin),
         }
     }
 
@@ -234,6 +238,68 @@ fn core_json_symlink_and_symlinked_parent_are_not_followed() {
     fs::remove_file(&api).expect("remove api symlink");
     fs::create_dir_all(&api).expect("api cache");
     symlink(&outside, api.join("formula.jws.json")).expect("core symlink");
+    let lines = config_test_support::lines(&ctx, &BTreeMap::new(), 1);
+    assert_eq!(lines[4], "Core tap: N/A");
+    assert_eq!(
+        fs::read_to_string(outside).expect("outside untouched"),
+        "outside"
+    );
+}
+
+#[test]
+fn normal_ssh_and_token_scp_origin_snapshots() {
+    let fixture = Fixture::new();
+    let cases = [
+        (
+            "normal_ssh",
+            "git@github.com:Homebrew/brew.git\n",
+            "ORIGIN: git@github.com:Homebrew/brew.git",
+        ),
+        (
+            "token_scp",
+            "ghp_exampleTokenValue@github.com:org/private.git\n",
+            "ORIGIN: set",
+        ),
+        (
+            "ssh_transport_user",
+            "ssh@example.test:zapbrew/repo.git\n",
+            "ORIGIN: ssh@example.test:zapbrew/repo.git",
+        ),
+        (
+            "credentialed_https",
+            "https://user:token@example.test/zapbrew.git\n",
+            "ORIGIN: set",
+        ),
+    ];
+    for (name, origin, expected) in cases {
+        let (mut ctx, _reporter) = fixture.context(Vec::new());
+        ctx.commands = Arc::new(RecordingRunner::with_origin(origin));
+        let lines = config_test_support::lines(&ctx, &BTreeMap::new(), 1);
+        assert_eq!(lines[1], expected, "{name}");
+        insta::assert_snapshot!(name, &lines[1]);
+        assert!(
+            !lines
+                .iter()
+                .any(|line| line.contains("ghp_exampleTokenValue"))
+        );
+        assert!(!lines.iter().any(|line| line.contains("user:token")));
+    }
+}
+
+#[test]
+fn symlinked_cache_root_yields_core_tap_na_without_following() {
+    let fixture = Fixture::new();
+    let sentinel = fixture.env.home.join("outside-cache");
+    fs::create_dir_all(sentinel.join("api")).expect("sentinel api");
+    let outside = sentinel.join("api/formula.jws.json");
+    fs::write(&outside, "outside").expect("outside core");
+    if fixture.env.cache.exists() {
+        fs::remove_dir_all(&fixture.env.cache).expect("remove cache");
+    }
+    symlink(&sentinel, &fixture.env.cache).expect("cache symlink");
+    let (mut ctx, _reporter) = fixture.context(Vec::new());
+    ctx.commands = Arc::new(RecordingRunner::failing());
+
     let lines = config_test_support::lines(&ctx, &BTreeMap::new(), 1);
     assert_eq!(lines[4], "Core tap: N/A");
     assert_eq!(

@@ -194,12 +194,40 @@ fn contains_credentials(value: &str) -> bool {
     ]
     .iter()
     .any(|marker| lower.contains(marker));
-    credential_parameter
-        || value.split_once("://").is_some_and(|(_, rest)| {
-            rest.split('/')
-                .next()
-                .is_some_and(|host| host.contains('@'))
-        })
+    if credential_parameter {
+        return true;
+    }
+    if value.split_once("://").is_some_and(|(_, rest)| {
+        rest.split('/')
+            .next()
+            .is_some_and(|authority| authority.contains('@'))
+    }) {
+        return true;
+    }
+    scp_style_credentials(value)
+}
+
+fn scp_style_credentials(value: &str) -> bool {
+    if value.contains("://") {
+        return false;
+    }
+    let Some((userinfo, host_path)) = value.split_once('@') else {
+        return false;
+    };
+    if userinfo.is_empty() || userinfo.contains('/') {
+        return false;
+    }
+    let Some((host, _path)) = host_path.split_once(':') else {
+        return false;
+    };
+    if host.is_empty() || host.contains('/') {
+        return false;
+    }
+    !is_known_transport_user(userinfo)
+}
+
+fn is_known_transport_user(userinfo: &str) -> bool {
+    matches!(userinfo, "git" | "ssh" | "hg" | "svn")
 }
 
 fn command_text(ctx: &Ctx, spec: CommandSpec, fallback: &str) -> String {
@@ -237,6 +265,12 @@ fn tool_description(ctx: &Ctx, program: &str, args: &[&str], prefix: &str) -> St
 }
 
 fn core_json_line(ctx: &Ctx) -> String {
+    let Ok(cache_metadata) = fs::symlink_metadata(&ctx.env.cache) else {
+        return "Core tap: N/A".to_owned();
+    };
+    if !cache_metadata.is_dir() || cache_metadata.file_type().is_symlink() {
+        return "Core tap: N/A".to_owned();
+    }
     let api = ctx.env.cache.join("api");
     let Ok(api_metadata) = fs::symlink_metadata(&api) else {
         return "Core tap: N/A".to_owned();

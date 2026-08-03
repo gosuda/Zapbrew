@@ -370,6 +370,58 @@ async fn missing_named_formula_is_typed_and_mutates_nothing() {
     );
 }
 
+#[tokio::test]
+async fn symlinked_cache_root_is_rejected_without_mutating_target() {
+    let fixture = Fixture::new();
+    let sentinel = fixture.env.home.join("cache-sentinel");
+    fs::create_dir_all(&sentinel).expect("sentinel");
+    let marker = sentinel.join("sentinel-bytes");
+    write(&marker, "preserve-me");
+    if fixture.env.cache.exists() {
+        fs::remove_dir_all(&fixture.env.cache).expect("remove cache");
+    }
+    symlink(&sentinel, &fixture.env.cache).expect("cache root symlink");
+    let before = fs::read_to_string(&marker).expect("sentinel before");
+    let (ctx, _reporter) = fixture.context(Vec::new());
+
+    let error = cleanup::run(
+        &ctx,
+        Args {
+            dry_run: true,
+            ..Args::default()
+        },
+    )
+    .await
+    .expect_err("symlinked cache root");
+    assert!(
+        error
+            .to_string()
+            .contains("cleanup root is not a real directory")
+    );
+    assert!(error.to_string().contains(ctx.env.cache.as_str()));
+    assert!(!error.to_string().contains(sentinel.as_str()));
+    assert_eq!(fs::read_to_string(&marker).expect("sentinel after"), before);
+}
+
+#[tokio::test]
+async fn non_directory_cache_root_is_typed_invalid_state() {
+    let fixture = Fixture::new();
+    if fixture.env.cache.exists() {
+        fs::remove_dir_all(&fixture.env.cache).expect("remove cache");
+    }
+    write(&fixture.env.cache, "not-a-directory");
+    let (ctx, _reporter) = fixture.context(Vec::new());
+
+    let error = cleanup::run(&ctx, Args::default())
+        .await
+        .expect_err("file cache root");
+    assert!(
+        error
+            .to_string()
+            .contains("cleanup root is not a real directory")
+    );
+}
+
 #[test]
 fn candidate_name_set_is_deterministic() {
     let names = BTreeSet::from(["b", "a"]);
