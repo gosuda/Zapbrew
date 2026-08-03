@@ -1,15 +1,19 @@
 //! Homebrew-style verbs: install, uninstall, upgrade, outdated, autoremove, cleanup, pin, deps, and related commands.
 
+pub mod autoremove;
 mod context;
 pub mod dependency;
 mod error;
 pub mod fetch;
 pub mod install;
 mod install_steps;
+pub mod outdated;
 pub mod platform;
 pub mod reinstall;
 pub mod state;
 mod transaction;
+pub mod uninstall;
+pub mod upgrade;
 
 pub use context::{Ctx, Reporter};
 pub use error::OpError;
@@ -26,5 +30,13 @@ pub mod transaction_test_support {
 
     pub fn fail_next_backup_cleanup(formula: &str) -> Result<(), OpError> {
         transaction::arm_cleanup_failure(formula.to_owned())
+    }
+
+    pub fn fail_install_after_unlink(formula: &str) -> Result<(), OpError> {
+        transaction::arm_install_failure_after_unlink(formula.to_owned())
+    }
+
+    pub fn fail_removal_after(formula: &str, staged: usize) -> Result<(), OpError> {
+        transaction::arm_removal_failure_after(formula.to_owned(), staged)
     }
 }

@@ -285,15 +285,10 @@ pub(crate) fn replacement(
     formula: &Formula,
     installed: Option<&InstalledFormula>,
 ) -> Result<Replacement, OpError> {
-    let name = FormulaName::from_str(&formula.name).map_err(|source| OpError::InvalidState {
-        reason: format!("catalog formula name {} is invalid: {source}", formula.name),
-    })?;
-    let to_keg = |keg: &InstalledKeg| {
-        Keg::new(&ctx.env.cellar, name.clone(), keg.version().clone()).map_err(OpError::from)
-    };
+    let name = formula_name(formula)?;
     let linked = installed
         .and_then(InstalledFormula::linked)
-        .map(&to_keg)
+        .map(|keg| installed_keg(ctx, &name, keg))
         .transpose()?;
     let target = installed
         .and_then(|formula_state| {
@@ -302,9 +297,35 @@ pub(crate) fn replacement(
                 .iter()
                 .find(|keg| keg.version() == &formula.pkg_version)
         })
-        .map(to_keg)
+        .map(|keg| installed_keg(ctx, &name, keg))
         .transpose()?;
     Ok(Replacement { linked, target })
+}
+
+pub(crate) fn linked_replacement(
+    ctx: &Ctx,
+    formula: &Formula,
+    installed: &InstalledFormula,
+) -> Result<Replacement, OpError> {
+    let name = formula_name(formula)?;
+    let linked = installed
+        .linked()
+        .map(|keg| installed_keg(ctx, &name, keg))
+        .transpose()?;
+    Ok(Replacement {
+        linked,
+        target: None,
+    })
+}
+
+fn formula_name(formula: &Formula) -> Result<FormulaName, OpError> {
+    FormulaName::from_str(&formula.name).map_err(|source| OpError::InvalidState {
+        reason: format!("catalog formula name {} is invalid: {source}", formula.name),
+    })
+}
+
+fn installed_keg(ctx: &Ctx, name: &FormulaName, keg: &InstalledKeg) -> Result<Keg, OpError> {
+    Keg::new(&ctx.env.cellar, name.clone(), keg.version().clone()).map_err(OpError::from)
 }
 
 fn refuse_ruby_modes(args: &Args) -> Result<(), OpError> {
@@ -527,30 +548,34 @@ fn bottle_requests<'a>(
     selected
         .into_iter()
         .map(|candidate| {
-            let name = FormulaName::from_str(&candidate.formula.name).map_err(|source| {
-                OpError::InvalidState {
-                    reason: format!(
-                        "catalog formula name {} is invalid: {source}",
-                        candidate.formula.name
-                    ),
-                }
-            })?;
-            let bottle_block = candidate.formula.bottle.as_ref().ok_or_else(|| {
-                zapbrew_net::NetError::NoBottle {
-                    name: candidate.formula.name.clone(),
-                    tag: ctx.env.bottle_tag,
-                }
-            })?;
-            let bottle = select_bottle(&ctx.env, &name, &bottle_block.files)?;
-            let request = DownloadRequest {
-                name,
-                bottle: bottle.clone(),
-                pkg_version: candidate.formula.pkg_version.clone(),
-                rebuild: bottle_block.rebuild,
-            };
+            let (bottle, request) = request_for_formula(ctx, candidate.formula)?;
             Ok((candidate, bottle, request))
         })
         .collect()
+}
+
+pub(crate) fn request_for_formula<'a>(
+    ctx: &Ctx,
+    formula: &'a Formula,
+) -> Result<(&'a zapbrew_types::BottleFile, DownloadRequest), OpError> {
+    let name = formula_name(formula)?;
+    let bottle_block = formula
+        .bottle
+        .as_ref()
+        .ok_or_else(|| zapbrew_net::NetError::NoBottle {
+            name: formula.name.clone(),
+            tag: ctx.env.bottle_tag,
+        })?;
+    let bottle = select_bottle(&ctx.env, &name, &bottle_block.files)?;
+    Ok((
+        bottle,
+        DownloadRequest {
+            name,
+            bottle: bottle.clone(),
+            pkg_version: formula.pkg_version.clone(),
+            rebuild: bottle_block.rebuild,
+        },
+    ))
 }
 
 pub(crate) fn substitute_prefixes(ctx: &Ctx, caveats: &str) -> String {

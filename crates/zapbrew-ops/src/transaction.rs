@@ -2,6 +2,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io;
+use std::os::unix::fs::symlink;
 use std::path::{Component, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,11 +19,15 @@ static TRANSACTION_ID: AtomicU64 = AtomicU64::new(1);
 static TEST_HOOKS: Mutex<TestHooks> = Mutex::new(TestHooks {
     stage: None,
     cleanup_failure_formula: None,
+    install_failure_after_unlink: None,
+    removal_failure_after: None,
 });
 
 struct TestHooks {
     stage: Option<(Utf8PathBuf, u64)>,
     cleanup_failure_formula: Option<String>,
+    install_failure_after_unlink: Option<String>,
+    removal_failure_after: Option<(String, usize)>,
 }
 
 pub(crate) struct Replacement {
@@ -43,6 +48,36 @@ pub(crate) struct Summary {
     pub keg: Utf8PathBuf,
     pub files: usize,
     pub size: u64,
+}
+
+pub(crate) struct RemovalKeg {
+    pub keg: Keg,
+    pub linked: bool,
+    pub optlinked: bool,
+}
+
+pub(crate) struct RemovalInput {
+    pub name: FormulaName,
+    pub targets: Vec<RemovalKeg>,
+    pub remove_rack: bool,
+}
+
+struct SymlinkSnapshot {
+    path: Utf8PathBuf,
+    target: Option<PathBuf>,
+}
+
+struct RemovalRecord {
+    rack: Utf8PathBuf,
+    rack_removed: bool,
+    opt: SymlinkSnapshot,
+    linked: SymlinkSnapshot,
+    pin: SymlinkSnapshot,
+}
+
+struct StagedRemoval {
+    original: Utf8PathBuf,
+    trash: Utf8PathBuf,
 }
 
 #[derive(Default)]
@@ -108,6 +143,179 @@ pub(crate) fn install(ctx: &Ctx, input: InstallInput<'_>) -> Result<Summary, OpE
     }
 }
 
+pub(crate) fn remove_formulae(ctx: &Ctx, inputs: Vec<RemovalInput>) -> Result<(), OpError> {
+    let mut transaction = RemovalTransaction {
+        ctx,
+        inputs,
+        records: Vec::new(),
+        staged: Vec::new(),
+        unlinked: Vec::new(),
+        trash_root: None,
+        committed: false,
+    };
+    match transaction.apply() {
+        Ok(()) => Ok(()),
+        Err(original) if transaction.committed => Err(original),
+        Err(original) => Err(transaction.rollback(original)),
+    }
+}
+
+struct RemovalTransaction<'a> {
+    ctx: &'a Ctx,
+    inputs: Vec<RemovalInput>,
+    records: Vec<RemovalRecord>,
+    staged: Vec<StagedRemoval>,
+    unlinked: Vec<Keg>,
+    trash_root: Option<Utf8PathBuf>,
+    committed: bool,
+}
+
+impl RemovalTransaction<'_> {
+    fn apply(&mut self) -> Result<(), OpError> {
+        for input in &self.inputs {
+            let rack = self.ctx.env.cellar.join(input.name.name());
+            for target in &input.targets {
+                ensure_confined(target.keg.path(), &[&self.ctx.env.cellar])?;
+                let metadata = fs::symlink_metadata(target.keg.path().as_std_path())
+                    .map_err(|source| OpError::io("inspect", target.keg.path(), source))?;
+                if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                    return Err(OpError::InvalidState {
+                        reason: format!(
+                            "uninstall target is not a real directory: {}",
+                            target.keg.path()
+                        ),
+                    });
+                }
+            }
+            self.records.push(RemovalRecord {
+                rack,
+                rack_removed: false,
+                opt: snapshot_symlink(self.ctx.env.prefix.join("opt").join(input.name.name()))?,
+                linked: snapshot_symlink(self.ctx.env.linked.join(input.name.name()))?,
+                pin: snapshot_symlink(self.ctx.env.pins.join(input.name.name()))?,
+            });
+        }
+
+        let trash_root = create_trash_root(&self.ctx.env, "uninstall")?;
+        self.trash_root = Some(trash_root.clone());
+        let prefix = Prefix::new(self.ctx.env.clone());
+
+        for (index, input) in self.inputs.iter().enumerate() {
+            let formula_trash = trash_root.join(input.name.name());
+            ensure_directory(&formula_trash, &trash_root, None)?;
+            if input.remove_rack {
+                remove_symlink_entry(&self.records[index].pin)?;
+            }
+            for target in &input.targets {
+                if target.linked {
+                    self.unlinked.push(target.keg.clone());
+                    unlink(&target.keg, &prefix)?;
+                }
+                if target.optlinked {
+                    remove_symlink_entry(&self.records[index].opt)?;
+                }
+                let destination = formula_trash.join(target.keg.version().to_string());
+                safe_trash_rename(&self.ctx.env, &trash_root, target.keg.path(), &destination)?;
+                self.staged.push(StagedRemoval {
+                    original: target.keg.path().to_path_buf(),
+                    trash: destination,
+                });
+                maybe_fail_removal(input.name.name())?;
+            }
+            if input.remove_rack {
+                remove_symlink_entry(&self.records[index].opt)?;
+                remove_symlink_entry(&self.records[index].linked)?;
+                remove_empty_dir_strict(&self.ctx.env, &self.records[index].rack)?;
+                self.records[index].rack_removed = true;
+            }
+        }
+
+        self.committed = true;
+        let mut leftovers = Vec::new();
+        for staged in &self.staged {
+            if remove_trash_after_commit(&trash_root, &staged.trash).is_err()
+                && path_entry_exists(&staged.trash)
+            {
+                leftovers.push(staged.trash.clone());
+            }
+        }
+        remove_empty_trash_dirs(&trash_root);
+        if leftovers.is_empty() {
+            self.trash_root = None;
+            return Ok(());
+        }
+        leftovers.sort();
+        leftovers.dedup();
+        Err(OpError::CleanupIncomplete {
+            keg: self
+                .staged
+                .first()
+                .map_or_else(|| trash_root.clone(), |staged| staged.original.clone()),
+            leftovers,
+        })
+    }
+
+    fn rollback(&mut self, original: OpError) -> OpError {
+        let mut leftovers = Vec::new();
+        for record in self
+            .records
+            .iter()
+            .rev()
+            .filter(|record| record.rack_removed)
+        {
+            if ensure_directory(&record.rack, &self.ctx.env.cellar, None).is_err() {
+                leftovers.push(record.rack.clone());
+            }
+        }
+        for staged in self.staged.iter().rev() {
+            if path_entry_exists(&staged.trash)
+                && self.trash_root.as_ref().is_none_or(|root| {
+                    safe_trash_rename(&self.ctx.env, root, &staged.trash, &staged.original).is_err()
+                })
+            {
+                leftovers.push(staged.trash.clone());
+            }
+        }
+
+        let prefix = Prefix::new(self.ctx.env.clone());
+        for keg in self.unlinked.iter().rev() {
+            match link(keg, &prefix, LinkOptions::default()) {
+                Ok(report) => leftovers.extend(report.conflicts),
+                Err(_) => leftovers.push(keg.path().to_path_buf()),
+            }
+        }
+        for record in self.records.iter().rev() {
+            for snapshot in [&record.pin, &record.linked, &record.opt] {
+                if restore_symlink(&self.ctx.env, snapshot).is_err() {
+                    leftovers.push(snapshot.path.clone());
+                }
+            }
+        }
+
+        if leftovers.is_empty()
+            && let Some(root) = self.trash_root.as_ref()
+            && path_entry_exists(root)
+            && safe_remove_tree_within(root, &[root]).is_err()
+        {
+            leftovers.push(root.clone());
+        }
+        leftovers.sort();
+        leftovers.dedup();
+        if leftovers.is_empty() {
+            original
+        } else {
+            OpError::RollbackIncomplete {
+                original: Box::new(original),
+                leftovers: leftovers
+                    .iter()
+                    .map(|path| path.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            }
+        }
+    }
+}
+
 struct FormulaTransaction<'a> {
     ctx: &'a Ctx,
     input: InstallInput<'a>,
@@ -153,6 +361,7 @@ impl FormulaTransaction<'_> {
         if let Some(linked) = self.input.replacement.linked.clone() {
             self.journal.old_unlinked = Some(linked.clone());
             unlink(&linked, &Prefix::new(self.ctx.env.clone()))?;
+            maybe_fail_install_after_unlink(self.name.name())?;
         }
 
         if let Some(target) = self.input.replacement.target.as_ref() {
@@ -365,6 +574,23 @@ fn next_stage_id(rack: &Utf8Path) -> Result<u64, OpError> {
 }
 
 fn remove_after_commit(env: &Env, path: &Utf8Path) -> Result<(), OpError> {
+    inject_cleanup_failure(path)?;
+    if path
+        .file_name()
+        .is_some_and(|name| name.starts_with(".zapbrew-step-journal"))
+    {
+        remove_tree_confined(env, path)
+    } else {
+        safe_remove_tree(env, path)
+    }
+}
+
+fn remove_trash_after_commit(trash_root: &Utf8Path, path: &Utf8Path) -> Result<(), OpError> {
+    inject_cleanup_failure(path)?;
+    safe_remove_tree_within(path, &[trash_root])
+}
+
+fn inject_cleanup_failure(path: &Utf8Path) -> Result<(), OpError> {
     let should_fail = {
         let mut hooks = TEST_HOOKS.lock().map_err(|_| OpError::InvalidState {
             reason: "transaction test-hook lock is poisoned".to_owned(),
@@ -380,32 +606,23 @@ fn remove_after_commit(env: &Env, path: &Utf8Path) -> Result<(), OpError> {
             false
         }
     };
-    if should_fail {
-        if let Ok(entries) = read_dir(path)
-            && let Some(first) = entries.first()
-        {
-            let _ = if fs::symlink_metadata(first)
-                .is_ok_and(|metadata| metadata.file_type().is_dir())
-            {
-                fs::remove_dir_all(first)
-            } else {
-                fs::remove_file(first)
-            };
-        }
-        return Err(OpError::io(
-            "remove committed backup",
-            path,
-            io::Error::new(io::ErrorKind::PermissionDenied, "injected cleanup failure"),
-        ));
+    if !should_fail {
+        return Ok(());
     }
-    if path
-        .file_name()
-        .is_some_and(|name| name.starts_with(".zapbrew-step-journal"))
+    if let Ok(entries) = read_dir(path)
+        && let Some(first) = entries.first()
     {
-        remove_tree_confined(env, path)
-    } else {
-        safe_remove_tree(env, path)
+        let _ = if fs::symlink_metadata(first).is_ok_and(|metadata| metadata.file_type().is_dir()) {
+            fs::remove_dir_all(first)
+        } else {
+            fs::remove_file(first)
+        };
     }
+    Err(OpError::io(
+        "remove committed backup",
+        path,
+        io::Error::new(io::ErrorKind::PermissionDenied, "injected cleanup failure"),
+    ))
 }
 
 pub(crate) fn arm_stage_collision(rack: Utf8PathBuf, id: u64) -> Result<Utf8PathBuf, OpError> {
@@ -427,6 +644,216 @@ pub(crate) fn arm_cleanup_failure(formula: String) -> Result<(), OpError> {
         })?
         .cleanup_failure_formula = Some(formula);
     Ok(())
+}
+
+pub(crate) fn arm_install_failure_after_unlink(formula: String) -> Result<(), OpError> {
+    TEST_HOOKS
+        .lock()
+        .map_err(|_| OpError::InvalidState {
+            reason: "transaction test-hook lock is poisoned".to_owned(),
+        })?
+        .install_failure_after_unlink = Some(formula);
+    Ok(())
+}
+
+pub(crate) fn arm_removal_failure_after(formula: String, staged: usize) -> Result<(), OpError> {
+    if staged == 0 {
+        return Err(OpError::InvalidState {
+            reason: "removal failure hook requires at least one staged keg".to_owned(),
+        });
+    }
+    TEST_HOOKS
+        .lock()
+        .map_err(|_| OpError::InvalidState {
+            reason: "transaction test-hook lock is poisoned".to_owned(),
+        })?
+        .removal_failure_after = Some((formula, staged));
+    Ok(())
+}
+
+pub(crate) fn cleanup_replaced_kegs(
+    env: &Env,
+    active_keg: &Utf8Path,
+    name: &FormulaName,
+    kegs: &[Keg],
+) -> Result<(), OpError> {
+    if kegs.is_empty() {
+        return Ok(());
+    }
+    let trash_root = create_trash_root(env, "upgrade")?;
+    let formula_trash = trash_root.join(name.name());
+    ensure_directory(&formula_trash, &trash_root, None)?;
+    let mut staged: Vec<StagedRemoval> = Vec::with_capacity(kegs.len());
+    for keg in kegs {
+        let destination = formula_trash.join(keg.version().to_string());
+        if let Err(original) = safe_trash_rename(env, &trash_root, keg.path(), &destination) {
+            let mut leftovers = Vec::new();
+            for entry in staged.iter().rev() {
+                if safe_trash_rename(env, &trash_root, &entry.trash, &entry.original).is_err() {
+                    leftovers.push(entry.trash.clone());
+                }
+            }
+            if leftovers.is_empty() {
+                remove_empty_trash_dirs(&trash_root);
+                return Err(original);
+            }
+            leftovers.sort();
+            leftovers.dedup();
+            return Err(OpError::CleanupIncomplete {
+                keg: active_keg.to_path_buf(),
+                leftovers,
+            });
+        }
+        staged.push(StagedRemoval {
+            original: keg.path().to_path_buf(),
+            trash: destination,
+        });
+    }
+    let mut leftovers = Vec::new();
+    for entry in &staged {
+        if remove_trash_after_commit(&trash_root, &entry.trash).is_err()
+            && path_entry_exists(&entry.trash)
+        {
+            leftovers.push(entry.trash.clone());
+        }
+    }
+    remove_empty_trash_dirs(&trash_root);
+    if leftovers.is_empty() {
+        Ok(())
+    } else {
+        leftovers.sort();
+        leftovers.dedup();
+        Err(OpError::CleanupIncomplete {
+            keg: active_keg.to_path_buf(),
+            leftovers,
+        })
+    }
+}
+
+fn maybe_fail_install_after_unlink(formula: &str) -> Result<(), OpError> {
+    let mut hooks = TEST_HOOKS.lock().map_err(|_| OpError::InvalidState {
+        reason: "transaction test-hook lock is poisoned".to_owned(),
+    })?;
+    if hooks.install_failure_after_unlink.as_deref() != Some(formula) {
+        return Ok(());
+    }
+    hooks.install_failure_after_unlink = None;
+    Err(OpError::InvalidState {
+        reason: "injected install failure after unlink".to_owned(),
+    })
+}
+
+fn maybe_fail_removal(formula: &str) -> Result<(), OpError> {
+    let mut hooks = TEST_HOOKS.lock().map_err(|_| OpError::InvalidState {
+        reason: "transaction test-hook lock is poisoned".to_owned(),
+    })?;
+    let Some((candidate, remaining)) = hooks.removal_failure_after.as_mut() else {
+        return Ok(());
+    };
+    if candidate != formula {
+        return Ok(());
+    }
+    *remaining -= 1;
+    if *remaining != 0 {
+        return Ok(());
+    }
+    hooks.removal_failure_after = None;
+    Err(OpError::InvalidState {
+        reason: "injected pre-commit removal failure".to_owned(),
+    })
+}
+
+fn create_trash_root(env: &Env, purpose: &str) -> Result<Utf8PathBuf, OpError> {
+    let parent = env.cellar.parent().ok_or_else(|| OpError::InvalidState {
+        reason: format!("cellar has no parent: {}", env.cellar),
+    })?;
+    ensure_existing_directory(parent)?;
+    loop {
+        let id = TRANSACTION_ID.fetch_add(1, Ordering::Relaxed);
+        let path = parent.join(format!(
+            ".zapbrew-cellar-{purpose}-trash-{}-{id}",
+            std::process::id()
+        ));
+        match fs::create_dir(path.as_std_path()) {
+            Ok(()) => return Ok(path),
+            Err(source) if source.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(source) => {
+                return Err(OpError::io(
+                    "create exclusive trash directory",
+                    path,
+                    source,
+                ));
+            }
+        }
+    }
+}
+
+fn snapshot_symlink(path: Utf8PathBuf) -> Result<SymlinkSnapshot, OpError> {
+    let target = match fs::symlink_metadata(path.as_std_path()) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Some(
+            fs::read_link(path.as_std_path())
+                .map_err(|source| OpError::io("read symlink", path.clone(), source))?,
+        ),
+        Ok(_) => {
+            return Err(OpError::InvalidState {
+                reason: format!("formula record is not a symlink: {path}"),
+            });
+        }
+        Err(source) if source.kind() == io::ErrorKind::NotFound => None,
+        Err(source) => return Err(OpError::io("inspect", path, source)),
+    };
+    Ok(SymlinkSnapshot { path, target })
+}
+
+fn remove_symlink_entry(snapshot: &SymlinkSnapshot) -> Result<(), OpError> {
+    match fs::symlink_metadata(snapshot.path.as_std_path()) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            fs::remove_file(snapshot.path.as_std_path())
+                .map_err(|source| OpError::io("remove symlink", snapshot.path.clone(), source))
+        }
+        Ok(_) => Err(OpError::InvalidState {
+            reason: format!("formula record is not a symlink: {}", snapshot.path),
+        }),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(OpError::io("inspect", snapshot.path.clone(), source)),
+    }
+}
+
+fn restore_symlink(env: &Env, snapshot: &SymlinkSnapshot) -> Result<(), OpError> {
+    remove_symlink_entry(snapshot)?;
+    let Some(target) = snapshot.target.as_ref() else {
+        return Ok(());
+    };
+    let parent = snapshot
+        .path
+        .parent()
+        .ok_or_else(|| OpError::InvalidState {
+            reason: format!("symlink path has no parent: {}", snapshot.path),
+        })?;
+    ensure_directory(parent, &env.prefix, None)?;
+    symlink(target, snapshot.path.as_std_path())
+        .map_err(|source| OpError::io("restore symlink", snapshot.path.clone(), source))
+}
+
+fn remove_empty_dir_strict(env: &Env, path: &Utf8Path) -> Result<(), OpError> {
+    ensure_confined(path, &[&env.cellar])?;
+    let metadata = fs::symlink_metadata(path.as_std_path())
+        .map_err(|source| OpError::io("inspect", path, source))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(OpError::InvalidState {
+            reason: format!("rack is not a real directory: {path}"),
+        });
+    }
+    fs::remove_dir(path.as_std_path()).map_err(|source| OpError::io("remove rack", path, source))
+}
+
+fn remove_empty_trash_dirs(root: &Utf8Path) {
+    if let Ok(formulae) = read_dir(root) {
+        for formula in formulae {
+            let _ = fs::remove_dir(formula.as_std_path());
+        }
+    }
+    let _ = fs::remove_dir(root.as_std_path());
 }
 
 fn copy_skeleton(
@@ -539,8 +966,25 @@ fn remove_stage_shell(env: &Env, stage_root: &Utf8Path) -> Result<(), OpError> {
 }
 
 fn safe_rename(env: &Env, source: &Utf8Path, destination: &Utf8Path) -> Result<(), OpError> {
-    ensure_confined(source, &[&env.cellar])?;
-    ensure_confined(destination, &[&env.cellar])?;
+    safe_rename_within(source, destination, &[&env.cellar])
+}
+
+fn safe_trash_rename(
+    env: &Env,
+    trash_root: &Utf8Path,
+    source: &Utf8Path,
+    destination: &Utf8Path,
+) -> Result<(), OpError> {
+    safe_rename_within(source, destination, &[&env.cellar, trash_root])
+}
+
+fn safe_rename_within(
+    source: &Utf8Path,
+    destination: &Utf8Path,
+    roots: &[&Utf8Path],
+) -> Result<(), OpError> {
+    ensure_confined(source, roots)?;
+    ensure_confined(destination, roots)?;
     let metadata = fs::symlink_metadata(source.as_std_path())
         .map_err(|error| OpError::io("inspect", source.to_path_buf(), error))?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -558,7 +1002,11 @@ fn safe_rename(env: &Env, source: &Utf8Path, destination: &Utf8Path) -> Result<(
 }
 
 fn safe_remove_tree(env: &Env, path: &Utf8Path) -> Result<(), OpError> {
-    ensure_confined(path, &[&env.cellar])?;
+    safe_remove_tree_within(path, &[&env.cellar])
+}
+
+fn safe_remove_tree_within(path: &Utf8Path, roots: &[&Utf8Path]) -> Result<(), OpError> {
+    ensure_confined(path, roots)?;
     let metadata = fs::symlink_metadata(path.as_std_path())
         .map_err(|error| OpError::io("inspect", path.to_path_buf(), error))?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
