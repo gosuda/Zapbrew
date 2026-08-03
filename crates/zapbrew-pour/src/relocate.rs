@@ -262,7 +262,10 @@ fn relocate_binary(
         // generic pass off them so stale placeholders left in old slots (grow
         // case) are never re-substituted or falsely rejected.
         protected = elf_linkage_regions(original);
-    } else if matches!(format, Some(BinaryFormat::MachO)) {
+    } else if matches!(format, Some(BinaryFormat::MachO)) || has_thin_macho_magic(original) {
+        // Recognized thin Mach-O (even when `object` cannot parse a malformed
+        // command table) must take the structured path. Malformed tables return
+        // a typed Relocation error before the generic pass or codesign.
         if macho_relocate(&mut buf, original, subs).map_err(|reason| PourError::Relocation {
             path: path.to_path_buf(),
             reason,
@@ -285,7 +288,7 @@ fn relocate_binary(
         changed = true;
     }
 
-    if matches!(format, Some(BinaryFormat::MachO)) {
+    if matches!(format, Some(BinaryFormat::MachO)) || has_thin_macho_magic(original) {
         // Homebrew re-signs relocated Mach-O images; content-detected so the
         // codesign seam is exercised regardless of the host OS.
         codesign = changed;
@@ -1134,8 +1137,10 @@ fn write_u64(buf: &mut [u8], offset: usize, little: bool, value: u64) -> Result<
 // strings are rewritten in place; the slot capacity is everything from the
 // string's start to the end of its load command (`cmdsize`), so a replacement
 // may grow into the command's trailing NUL padding. 32- and 64-bit thin images
-// (either endianness); universal/fat binaries and anything malformed fall back
-// to the generic size-preserving pass, which cannot move bytes.
+// (either endianness). Universal/fat binaries are not thin Mach-O and skip this
+// pass. A recognized thin image with a malformed/unsupported command table
+// returns a typed error before the generic size-preserving pass or codesign;
+// only non-Mach-O (and non-thin) inputs decline into that generic pass.
 // ---------------------------------------------------------------------------
 
 const MH_MAGIC: u32 = 0xfeed_face;
@@ -1159,39 +1164,83 @@ struct MachSlot {
     end: usize,
 }
 
+/// True when `data` begins with a thin Mach-O magic (32/64-bit, either endian).
+fn has_thin_macho_magic(data: &[u8]) -> bool {
+    matches!(
+        rd_u32(data, 0, true),
+        Some(MH_MAGIC | MH_CIGAM | MH_MAGIC_64 | MH_CIGAM_64)
+    )
+}
+
+/// Decode thin Mach-O header endianness and header length, or `None` when the
+/// input is not thin Mach-O.
+fn thin_macho_header(data: &[u8]) -> Option<(bool, usize)> {
+    match rd_u32(data, 0, true)? {
+        MH_MAGIC => Some((true, MACHO_HEADER32_LEN)),
+        MH_CIGAM => Some((false, MACHO_HEADER32_LEN)),
+        MH_MAGIC_64 => Some((true, MACHO_HEADER64_LEN)),
+        MH_CIGAM_64 => Some((false, MACHO_HEADER64_LEN)),
+        _ => None,
+    }
+}
+
 /// Decode the rewritable load-command string slots of a thin Mach-O image.
-/// `None` when the input is not thin Mach-O or its command table is malformed
-/// (left to the size-preserving generic pass). Load commands are laid out
-/// identically in 32- and 64-bit images; only the header length differs.
-fn macho_string_slots(data: &[u8]) -> Option<Vec<MachSlot>> {
-    let (little, header_len) = match rd_u32(data, 0, true)? {
-        MH_MAGIC => (true, MACHO_HEADER32_LEN),
-        MH_CIGAM => (false, MACHO_HEADER32_LEN),
-        MH_MAGIC_64 => (true, MACHO_HEADER64_LEN),
-        MH_CIGAM_64 => (false, MACHO_HEADER64_LEN),
-        _ => return None,
+///
+/// - `Ok(None)` when the input is not thin Mach-O (caller may use the generic pass).
+/// - `Ok(Some(slots))` when the command table is well-formed.
+/// - `Err` when thin Mach-O magic is recognized but the command table is
+///   malformed or unsupported (typed rejection; no generic fallback).
+fn macho_string_slots(data: &[u8]) -> Result<Option<Vec<MachSlot>>, String> {
+    let Some((little, header_len)) = thin_macho_header(data) else {
+        return Ok(None);
     };
-    let ncmds = rd_u32(data, 16, little)? as usize;
-    let sizeofcmds = rd_u32(data, 20, little)? as usize;
-    let cmds_end = header_len.checked_add(sizeofcmds)?;
+    let ncmds = rd_u32(data, 16, little)
+        .ok_or_else(|| "malformed Mach-O load command table".to_owned())? as usize;
+    let sizeofcmds = rd_u32(data, 20, little)
+        .ok_or_else(|| "malformed Mach-O load command table".to_owned())?
+        as usize;
+    let cmds_end = header_len
+        .checked_add(sizeofcmds)
+        .ok_or_else(|| "malformed Mach-O load command table".to_owned())?;
     if cmds_end > data.len() {
-        return None;
+        return Err("malformed Mach-O load command table".to_owned());
     }
 
     let mut slots = Vec::new();
     let mut cursor = header_len;
     for _ in 0..ncmds {
-        let cmd = rd_u32(data, cursor, little)?;
-        let cmdsize = rd_u32(data, cursor.checked_add(4)?, little)? as usize;
-        let cmd_end = cursor.checked_add(cmdsize)?;
+        let cmd = rd_u32(data, cursor, little)
+            .ok_or_else(|| "malformed Mach-O load command table".to_owned())?;
+        let cmdsize = rd_u32(
+            data,
+            cursor
+                .checked_add(4)
+                .ok_or_else(|| "malformed Mach-O load command table".to_owned())?,
+            little,
+        )
+        .ok_or_else(|| "malformed Mach-O load command table".to_owned())?
+            as usize;
+        let cmd_end = cursor
+            .checked_add(cmdsize)
+            .ok_or_else(|| "malformed Mach-O load command table".to_owned())?;
         if cmdsize < 8 || cmd_end > cmds_end {
-            return None;
+            return Err("malformed Mach-O load command table".to_owned());
         }
         if matches!(cmd, LC_ID_DYLIB | LC_LOAD_DYLIB | LC_RPATH) {
-            let str_off = rd_u32(data, cursor.checked_add(8)?, little)? as usize;
-            let start = cursor.checked_add(str_off)?;
+            let str_off = rd_u32(
+                data,
+                cursor
+                    .checked_add(8)
+                    .ok_or_else(|| "malformed Mach-O load command table".to_owned())?,
+                little,
+            )
+            .ok_or_else(|| "malformed Mach-O load command table".to_owned())?
+                as usize;
+            let start = cursor
+                .checked_add(str_off)
+                .ok_or_else(|| "malformed Mach-O load command table".to_owned())?;
             if str_off < MIN_LC_STR_OFFSET || start >= cmd_end {
-                return None;
+                return Err("malformed Mach-O load command table".to_owned());
             }
             slots.push(MachSlot {
                 start,
@@ -1200,18 +1249,19 @@ fn macho_string_slots(data: &[u8]) -> Option<Vec<MachSlot>> {
         }
         cursor = cmd_end;
     }
-    Some(slots)
+    Ok(Some(slots))
 }
 
 /// Rewrite the dylib/rpath load-command strings of `buf` in place, reading the
-/// original strings (and slot capacities) from `original`. `Err` when a
-/// replacement cannot fit its command slot (rejected before any write).
+/// original strings (and slot capacities) from `original`. `Ok(false)` when the
+/// input is not thin Mach-O. `Err` when a recognized thin image has a malformed
+/// command table, or when a replacement cannot fit its command slot.
 fn macho_relocate(
     buf: &mut [u8],
     original: &[u8],
     subs: &[(Vec<u8>, Vec<u8>)],
 ) -> Result<bool, String> {
-    let Some(slots) = macho_string_slots(original) else {
+    let Some(slots) = macho_string_slots(original)? else {
         return Ok(false);
     };
     let mut changed = false;
@@ -1243,14 +1293,13 @@ fn macho_relocate(
 
 /// Load-command string slots as protected byte ranges for the generic pass.
 fn macho_linkage_regions(data: &[u8]) -> Vec<(usize, usize)> {
-    macho_string_slots(data)
-        .map(|slots| {
-            slots
-                .into_iter()
-                .map(|slot| (slot.start, slot.end))
-                .collect()
-        })
-        .unwrap_or_default()
+    match macho_string_slots(data) {
+        Ok(Some(slots)) => slots
+            .into_iter()
+            .map(|slot| (slot.start, slot.end))
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 #[cfg(test)]
@@ -1768,7 +1817,7 @@ mod tests {
         let mut buf = macho.clone();
         assert!(okr(macho_relocate(&mut buf, &macho, &subs), "relocate"));
         assert_eq!(buf.len(), macho.len(), "in-place rewrite only");
-        let slots = some(macho_string_slots(&buf), "slots");
+        let slots = some(okr(macho_string_slots(&buf), "slots"), "slots");
         assert_eq!(slots.len(), 1);
         assert_eq!(
             cstr(&buf[slots[0].start..slots[0].end]),
@@ -1793,7 +1842,7 @@ mod tests {
             Ok(Some((bytes, codesign))) => {
                 assert!(codesign, "modified Mach-O must be re-signed");
                 assert_eq!(bytes.len(), macho.len());
-                let slots = some(macho_string_slots(&bytes), "slots");
+                let slots = some(okr(macho_string_slots(&bytes), "slots"), "slots");
                 assert_eq!(
                     cstr(&bytes[slots[0].start..slots[0].end]),
                     b"/opt/homebrew-longer/lib"
@@ -1804,17 +1853,24 @@ mod tests {
     }
 
     #[test]
-    fn malformed_macho_command_table_falls_back_to_generic_pass() {
+    fn malformed_macho_command_table_rejected_unchanged() {
         let mut macho = build_macho_rpath("@@HOMEBREW_PREFIX@@/lib", 8);
-        // Corrupt sizeofcmds so the command table leaves the file: the
-        // structured pass must decline rather than read out of bounds.
+        // Corrupt sizeofcmds so the command table leaves the file: a recognized
+        // thin Mach-O with a malformed table must return a typed Relocation
+        // error before the generic pass or codesign, leaving bytes unchanged.
         wr32(&mut macho, 20, u32::MAX);
-        assert!(macho_string_slots(&macho).is_none());
-        let mut buf = macho.clone();
-        assert!(!okr(
-            macho_relocate(&mut buf, &macho, &subs_for("/opt/hb")),
-            "fallback"
-        ));
-        assert_eq!(buf, macho);
+        assert!(
+            macho_string_slots(&macho).is_err(),
+            "recognized malformed thin Mach-O must not decline silently"
+        );
+        let before = macho.clone();
+        let result = relocate_bytes(&macho, "/opt/hb", false);
+        match result {
+            Err(PourError::Relocation { reason, .. }) => {
+                assert!(reason.contains("malformed Mach-O"), "reason={reason}");
+            }
+            other => panic!("expected Relocation error, got {other:?}"),
+        }
+        assert_eq!(macho, before, "rejected image must stay byte-unchanged");
     }
 }

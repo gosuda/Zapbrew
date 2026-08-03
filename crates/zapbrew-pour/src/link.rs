@@ -384,6 +384,12 @@ impl Planner<'_> {
     }
 
     fn classify(&self, dst: &Utf8Path, src: &Utf8Path) -> Result<DstState, PourError> {
+        // Refuse to plan through a planted symlink or non-directory between the
+        // prefix root and the destination parent; `lstat(dst)` would otherwise
+        // follow those ancestors and report a false Absent/Conflict on the
+        // outside target.
+        ensure_destination_ancestors(self.prefix_path, dst)?;
+
         let lmeta = match fs::symlink_metadata(dst.as_std_path()) {
             Ok(meta) => meta,
             Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(DstState::Absent),
@@ -411,6 +417,49 @@ impl Planner<'_> {
             Ok(DstState::Conflict)
         }
     }
+}
+
+/// Preflight every path component from `prefix_path` (exclusive) to the parent
+/// of `dst`. A symlink or non-directory ancestor is a hard conflict: planning
+/// must not follow it into an outside write.
+fn ensure_destination_ancestors(prefix_path: &Utf8Path, dst: &Utf8Path) -> Result<(), PourError> {
+    let rel = dst
+        .strip_prefix(prefix_path)
+        .map_err(|_| PourError::LinkConflict {
+            link_source: dst.to_owned(),
+            target: prefix_path.to_owned(),
+            reason: format!("is not under the prefix '{prefix_path}'"),
+        })?;
+
+    let mut cur = prefix_path.to_owned();
+    let components: Vec<_> = rel.components().collect();
+    for (index, component) in components.iter().enumerate() {
+        // The destination leaf is classified separately.
+        if index + 1 == components.len() {
+            break;
+        }
+        cur = cur.join(component.as_str());
+        match fs::symlink_metadata(cur.as_std_path()) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(PourError::LinkConflict {
+                    link_source: dst.to_owned(),
+                    target: cur,
+                    reason: "destination ancestor is a symlink; refusing to follow it".to_owned(),
+                });
+            }
+            Ok(meta) if meta.is_dir() => {}
+            Ok(_) => {
+                return Err(PourError::LinkConflict {
+                    link_source: dst.to_owned(),
+                    target: cur,
+                    reason: "destination ancestor exists and is not a directory".to_owned(),
+                });
+            }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => return Err(PourError::io("read", &cur, err)),
+        }
+    }
+    Ok(())
 }
 
 /// Execute one planned op, recording created links and backed-up conflicts.

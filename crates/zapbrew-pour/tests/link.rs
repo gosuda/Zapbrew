@@ -636,3 +636,57 @@ fn planted_backup_bin_symlink_refused_and_outside_unchanged() {
         "no link written after refusal"
     );
 }
+
+// --- prefix destination ancestor symlink confinement --------------------------
+
+#[test]
+fn prefix_bin_symlink_blocks_link_and_outside_unchanged() {
+    let fx = fixture();
+    keg_file(&fx, "bin/tool", "keg-tool");
+
+    let p = fx.prefix_path();
+    // Remove the real bin created by the fixture's prefix layout if present,
+    // then plant prefix/bin -> outside so linking bin/tool would escape.
+    let bin = p.join("bin");
+    if bin.as_std_path().exists() {
+        fs::remove_dir_all(bin.as_std_path()).expect("remove real bin");
+    }
+    let outside = utf8(fx._tmp.path().join("outside-prefix-bin"));
+    fs::create_dir_all(outside.as_std_path()).expect("mkdir outside");
+    let marker = outside.join("KEEPME");
+    fs::write(marker.as_std_path(), "precious-outside").expect("write outside marker");
+    symlink(outside.as_std_path(), bin.as_std_path()).expect("plant prefix/bin symlink");
+
+    let err = match link(&fx.keg, &fx.prefix, LinkOptions::default()) {
+        Err(err) => err,
+        Ok(report) => panic!("expected LinkConflict for prefix/bin symlink, got {report:?}"),
+    };
+    match err {
+        PourError::LinkConflict { reason, target, .. } => {
+            assert!(
+                reason.contains("destination ancestor is a symlink") || reason.contains("symlink"),
+                "reason={reason}"
+            );
+            assert_eq!(target, bin);
+        }
+        other => panic!("expected LinkConflict, got {other}"),
+    }
+
+    assert_eq!(
+        fs::read_to_string(marker.as_std_path()).expect("read outside marker"),
+        "precious-outside",
+        "outside target must remain byte-identical"
+    );
+    assert!(
+        !outside.join("tool").as_std_path().exists(),
+        "link must not write bin/tool through the planted symlink"
+    );
+    assert!(
+        !lexists(&p.join("opt/foo")),
+        "no opt record when destination ancestry is unsafe"
+    );
+    assert!(
+        !lexists(&p.join("var/homebrew/linked/foo")),
+        "no linked record when destination ancestry is unsafe"
+    );
+}

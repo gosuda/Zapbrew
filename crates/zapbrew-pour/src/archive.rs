@@ -107,11 +107,10 @@ fn preflight(
             | EntryType::Link => {
                 validate_entry_path(path.as_std_path(), name, version)?;
                 let kind = entry_kind(entry_type);
-                // Non-directory entries under a symlink/hardlink ancestor would be
-                // followed by extractors (and by `unpack_in` canonicalize).
-                if kind != EntryKind::Directory {
-                    reject_link_ancestor(path.as_std_path(), &entry_kinds)?;
-                }
+                // Any entry nested under a non-directory ancestor (symlink,
+                // hardlink, or file) would be followed by extractors (and by
+                // `unpack_in` canonicalize), including directory children.
+                reject_link_ancestor(path.as_std_path(), &entry_kinds)?;
                 validate_destination(cellar, keg_path, path.as_std_path())?;
                 if matches!(entry_type, EntryType::Symlink | EntryType::Link) {
                     validate_link(&entry, path.as_std_path(), cellar, keg_path, name, version)?;
@@ -219,8 +218,8 @@ fn normalize_archive_path(path: &Path) -> PathBuf {
     out
 }
 
-/// Reject a non-directory entry when any strict ancestor was recorded as a
-/// symlink or hardlink in the archive (lexical nest escape).
+/// Reject any entry when a strict ancestor was recorded as a non-directory
+/// (symlink, hardlink, or file) in the archive (lexical nest escape).
 fn reject_link_ancestor(
     path: &Path,
     entry_kinds: &HashMap<PathBuf, EntryKind>,
@@ -238,10 +237,10 @@ fn reject_link_ancestor(
         };
         prefix.push(part);
         match entry_kinds.get(&prefix) {
-            Some(EntryKind::Symlink) | Some(EntryKind::Hardlink) => {
+            Some(kind) if *kind != EntryKind::Directory => {
                 return Err(invalid_archive(
                     display,
-                    "entry nested under symlink or hardlink path is forbidden",
+                    "entry nested under non-directory path is forbidden",
                 ));
             }
             _ => {}

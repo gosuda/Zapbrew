@@ -655,3 +655,59 @@ fn unpack_rejects_non_gzip_magic() {
         Err(err) => assert_invalid_archive(err),
     }
 }
+
+#[test]
+fn unpack_rejects_directory_below_archive_symlink_before_mutation() {
+    let (_temp, root) = utf8_temp();
+    let cellar = root.join("Cellar");
+    let name = formula_name("foo");
+    let version = pkg_version("1.0.0");
+
+    let tarball = root.join("dir-under-symlink.bottle.tar.gz");
+    // Symlink ancestor followed by a directory child must fail in preflight
+    // before any extraction; the target keg must remain absent/empty.
+    write_gzip_tarball(
+        tarball.as_std_path(),
+        &[
+            ("foo/1.0.0", TestEntry::Dir { mode: 0o755 }),
+            (
+                "foo/1.0.0/nested",
+                TestEntry::Symlink {
+                    // In-keg target so validate_link accepts the symlink itself;
+                    // the directory child below it is what must be rejected.
+                    target: ".",
+                },
+            ),
+            ("foo/1.0.0/nested/child", TestEntry::Dir { mode: 0o755 }),
+        ],
+    );
+
+    match unpack(&tarball, &cellar, &name, &version) {
+        Ok(_) => panic!("directory under archive symlink must be rejected"),
+        Err(err) => match err {
+            PourError::InvalidArchive { reason, .. } => {
+                assert!(
+                    reason.contains("non-directory") || reason.contains("symlink"),
+                    "reason={reason}"
+                );
+            }
+            other => panic!("expected InvalidArchive, got {other}"),
+        },
+    }
+
+    assert!(
+        !cellar.join("foo").exists(),
+        "target keg must remain absent after preflight rejection"
+    );
+    if cellar.exists() {
+        let mut entries = match fs::read_dir(cellar.as_std_path()) {
+            Ok(entries) => entries,
+            Err(err) => panic!("read cellar after reject: {err}"),
+        };
+        match entries.next() {
+            None => {}
+            Some(Ok(entry)) => panic!("cellar unexpectedly contains {}", entry.path().display()),
+            Some(Err(err)) => panic!("read cellar entry: {err}"),
+        }
+    }
+}
