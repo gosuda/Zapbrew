@@ -1,15 +1,23 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::str::FromStr;
+#[cfg(test)]
+use std::sync::Mutex;
 
 use camino::{Utf8Path, Utf8PathBuf};
-use zapbrew_prefix::Keg;
+use zapbrew_prefix::{Keg, Rack};
 use zapbrew_types::FormulaName;
 
 use crate::install::format_size;
-use crate::state::{InstalledFormula, InstalledState, scan};
+use crate::state::{InstalledFormula, InstalledState, scan_selected};
 use crate::transaction::{RemovalInput, RemovalKeg, acquire_formula_locks, remove_formulae};
 use crate::{Ctx, OpError};
+
+#[cfg(test)]
+static AFTER_ENUMERATION: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
+
+#[cfg(test)]
+static LAST_SNAPSHOT: Mutex<Option<(BTreeSet<String>, BTreeSet<String>)>> = Mutex::new(None);
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Args {
@@ -25,8 +33,30 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
         });
     }
     let names = canonical_names(&args.names)?;
-    let locks = acquire_formula_locks(&ctx.env, &names)?;
-    let state = scan(&ctx.env)?;
+    let mut locked_names = Rack::all(&ctx.env.cellar)?
+        .into_iter()
+        .map(|rack| rack.name().to_owned())
+        .collect::<BTreeSet<_>>();
+    locked_names.extend(names.iter().cloned());
+    let locks = acquire_formula_locks(&ctx.env, &locked_names)?;
+    #[cfg(test)]
+    if let Some(hook) = AFTER_ENUMERATION
+        .lock()
+        .expect("uninstall test hook lock")
+        .take()
+    {
+        hook();
+    }
+    let state = scan_selected(&ctx.env, &locked_names)?;
+    #[cfg(test)]
+    {
+        let scanned = state
+            .iter()
+            .map(|formula| formula.name().name().to_owned())
+            .collect::<BTreeSet<_>>();
+        *LAST_SNAPSHOT.lock().expect("uninstall snapshot lock") =
+            Some((locked_names.clone(), scanned));
+    }
     preflight(&ctx.env.cellar, &state, &names, &args)?;
     remove_locked(ctx, &state, &names, args.force)?;
     drop(locks);
@@ -263,5 +293,154 @@ fn to_sentence(items: &[String]) -> String {
             };
             format!("{}, and {last}", rest.join(", "))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::io;
+    use std::str::FromStr;
+    use std::sync::Arc;
+
+    use camino::Utf8PathBuf;
+    use tempfile::TempDir;
+    use zapbrew_api::{CaskCatalog, Catalog};
+    use zapbrew_prefix::{
+        CommandOutput, CommandRunner, CommandSpec, Env, EnvDetectInput, Keg, RuntimeDependency,
+        Source, SourceVersions, Tab,
+    };
+    use zapbrew_types::{FormulaName, PkgVersion};
+
+    use super::{AFTER_ENUMERATION, Args, LAST_SNAPSHOT, run};
+    use crate::{Ctx, Reporter};
+
+    struct PanicRunner;
+
+    impl CommandRunner for PanicRunner {
+        fn run(&self, spec: &CommandSpec) -> Result<CommandOutput, io::Error> {
+            panic!("host command must not run: {:?}", spec.program())
+        }
+    }
+
+    struct NullReporter;
+
+    impl Reporter for NullReporter {
+        fn ohai(&self, _: &str) {}
+        fn oh1(&self, _: &str) {}
+        fn opoo(&self, _: &str) {}
+        fn onoe(&self, _: &str) {}
+        fn print(&self, _: &str) {}
+        fn eprint(&self, _: &str) {}
+    }
+
+    fn context(temp: &TempDir) -> Ctx {
+        let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).expect("utf8 temp");
+        let env = Env::detect_from(
+            &EnvDetectInput {
+                os: "linux".to_owned(),
+                arch: "x86_64".to_owned(),
+                home: root.join("home"),
+                xdg_cache_home: None,
+                vars: HashMap::from([
+                    (
+                        "HOMEBREW_PREFIX".to_owned(),
+                        root.join("prefix").to_string(),
+                    ),
+                    ("HOMEBREW_CACHE".to_owned(), root.join("cache").to_string()),
+                    ("HOMEBREW_TEMP".to_owned(), root.join("temp").to_string()),
+                    ("HOMEBREW_NO_AUTOREMOVE".to_owned(), "1".to_owned()),
+                ]),
+                available_parallelism: 2,
+            },
+            &PanicRunner,
+        )
+        .expect("scratch env");
+        Ctx {
+            catalog: Arc::new(
+                Catalog::from_payload(b"[]", &env.bottle_tag).expect("formula catalog"),
+            ),
+            casks: Arc::new(
+                CaskCatalog::from_payload(b"[]", &env.bottle_tag).expect("cask catalog"),
+            ),
+            env,
+            http: reqwest::Client::new(),
+            commands: Arc::new(PanicRunner),
+            reporter: Arc::new(NullReporter),
+        }
+    }
+
+    fn keg(env: &Env, name: &str, dependencies: &[&str]) -> Keg {
+        let keg = Keg::new(
+            &env.cellar,
+            FormulaName::from_str(name).expect("formula name"),
+            PkgVersion::from_str("1.0").expect("version"),
+        )
+        .expect("keg");
+        std::fs::create_dir_all(keg.path()).expect("keg dir");
+        Tab {
+            installed_on_request: true,
+            runtime_dependencies: Some(
+                dependencies
+                    .iter()
+                    .map(|dependency| RuntimeDependency {
+                        full_name: (*dependency).to_owned(),
+                        version: "1.0".to_owned(),
+                        revision: 0,
+                        bottle_rebuild: None,
+                        pkg_version: "1.0".to_owned(),
+                        declared_directly: true,
+                        compatibility_version: None,
+                    })
+                    .collect(),
+            ),
+            source: Source {
+                versions: SourceVersions {
+                    stable: Some(keg.version().to_string()),
+                    version_scheme: 0,
+                    ..SourceVersions::default()
+                },
+                ..Source::default()
+            },
+            ..Tab::default()
+        }
+        .write(keg.receipt_path())
+        .expect("tab");
+        keg
+    }
+
+    #[tokio::test]
+    async fn late_rack_is_excluded_and_scanned_names_are_locked() {
+        let temp = TempDir::new().expect("temp");
+        let ctx = context(&temp);
+        let dependency = keg(&ctx.env, "dep", &[]);
+        let late_env = ctx.env.clone();
+        *AFTER_ENUMERATION.lock().expect("uninstall test hook lock") = Some(Box::new(move || {
+            keg(&late_env, "late", &["dep"]);
+        }));
+        *LAST_SNAPSHOT.lock().expect("uninstall snapshot lock") = None;
+
+        run(
+            &ctx,
+            Args {
+                names: vec!["dep".to_owned()],
+                ..Args::default()
+            },
+        )
+        .await
+        .expect("uninstall ignores late dependent");
+
+        assert!(!dependency.path().exists());
+        assert!(ctx.env.cellar.join("late/1.0").exists());
+        let (locked, scanned) = LAST_SNAPSHOT
+            .lock()
+            .expect("uninstall snapshot lock")
+            .take()
+            .expect("snapshot recorded");
+        assert!(!scanned.contains("late"));
+        assert!(!locked.contains("late"));
+        assert!(scanned.is_subset(&locked));
+        assert!(locked.contains("dep"));
+        assert!(scanned.contains("dep"));
     }
 }

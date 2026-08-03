@@ -82,15 +82,20 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
 }
 
 pub(crate) fn is_outdated(formula: &Formula, installed: &InstalledFormula) -> bool {
-    !installed.kegs().is_empty()
-        && installed.kegs().iter().all(|keg| {
-            let installed_scheme = keg.tab().source.versions.version_scheme;
-            if formula.version_scheme > installed_scheme {
-                formula.pkg_version != *keg.version()
-            } else {
-                formula.version_scheme == installed_scheme && formula.pkg_version > *keg.version()
-            }
-        })
+    let kegs = installed.kegs();
+    if kegs.is_empty() {
+        return false;
+    }
+    let scheme_bumped_for_all = kegs.iter().all(|keg| {
+        formula.version_scheme > keg.tab().source.versions.version_scheme
+            && formula.pkg_version != *keg.version()
+    });
+    let pkg_newer_than_max = kegs
+        .iter()
+        .map(|keg| keg.version())
+        .max()
+        .is_some_and(|version| formula.pkg_version > *version);
+    scheme_bumped_for_all || pkg_newer_than_max
 }
 
 fn canonical_name(ctx: &Ctx, requested: &str) -> Result<String, OpError> {

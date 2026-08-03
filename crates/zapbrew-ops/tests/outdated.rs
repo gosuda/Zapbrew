@@ -134,23 +134,47 @@ fn keg(env: &Env, name: &str, version: &str, scheme: u32) -> Keg {
 }
 
 #[tokio::test]
-async fn predicate_matrix_uses_semantic_pkg_versions_and_scheme_rule() {
+async fn scheme_by_max_pkg_matrix_and_mixed_keg_boundaries() {
     let temp = TempDir::new().expect("temp");
     let env = env(&temp);
+    // Installed baseline for the 3x3 matrix cells: scheme=1, pkg=2.0.
     let formulae = vec![
-        formula("higher", "2.0", 0, 0),
-        formula("equal", "1.0", 0, 0),
-        formula("lower", "1.0", 0, 0),
+        formula("s-eq-p-eq", "2.0", 0, 1),
+        formula("s-eq-p-high", "3.0", 0, 1),
+        formula("s-eq-p-low", "1.0", 0, 1),
+        formula("s-high-p-eq", "2.0", 0, 2),
+        formula("s-high-p-high", "3.0", 0, 2),
+        formula("s-high-p-low", "1.0", 0, 2),
+        formula("s-low-p-eq", "2.0", 0, 0),
+        formula("s-low-p-high", "3.0", 0, 0),
+        formula("s-low-p-low", "1.0", 0, 0),
+        formula("all-scheme-old", "1.0", 0, 1),
+        formula("empty", "2.0", 0, 0),
+        formula("mixed-current", "2.0", 0, 0),
+        formula("mixed-scheme-current", "1.0", 0, 1),
         formula("revision", "1.0", 1, 0),
-        formula("scheme-different", "1.0", 0, 1),
-        formula("scheme-equal", "1.0", 0, 1),
     ];
-    keg(&env, "higher", "1.0", 0);
-    keg(&env, "equal", "1.0", 0);
-    keg(&env, "lower", "2.0", 0);
+    for name in [
+        "s-eq-p-eq",
+        "s-eq-p-high",
+        "s-eq-p-low",
+        "s-high-p-eq",
+        "s-high-p-high",
+        "s-high-p-low",
+        "s-low-p-eq",
+        "s-low-p-high",
+        "s-low-p-low",
+    ] {
+        keg(&env, name, "2.0", 1);
+    }
+    keg(&env, "all-scheme-old", "9.0", 0);
+    keg(&env, "all-scheme-old", "8.0", 0);
+    std::fs::create_dir_all(env.cellar.join("empty")).expect("empty rack");
+    keg(&env, "mixed-current", "1.0", 0);
+    keg(&env, "mixed-current", "2.0", 0);
+    keg(&env, "mixed-scheme-current", "9.0", 0);
+    keg(&env, "mixed-scheme-current", "1.0", 1);
     keg(&env, "revision", "1.0", 0);
-    keg(&env, "scheme-different", "9.0", 0);
-    keg(&env, "scheme-equal", "1.0", 0);
     let (ctx, reporter) = context(env, formulae);
 
     outdated::run(&ctx, Args::default())
@@ -160,40 +184,13 @@ async fn predicate_matrix_uses_semantic_pkg_versions_and_scheme_rule() {
     assert_eq!(
         reporter.take(),
         vec![
-            "print:higher".to_owned(),
+            "print:all-scheme-old".to_owned(),
             "print:revision".to_owned(),
-            "print:scheme-different".to_owned(),
+            "print:s-eq-p-high".to_owned(),
+            "print:s-high-p-high".to_owned(),
+            "print:s-high-p-low".to_owned(),
+            "print:s-low-p-high".to_owned(),
         ]
-    );
-}
-
-#[tokio::test]
-async fn formula_is_outdated_only_when_every_installed_keg_is_outdated() {
-    let temp = TempDir::new().expect("temp");
-    let env = env(&temp);
-    let formulae = vec![
-        formula("all-old", "2.0", 0, 1),
-        formula("empty", "2.0", 0, 0),
-        formula("mixed-scheme", "1.0", 0, 1),
-        formula("mixed-version", "2.0", 0, 0),
-        formula("revision-mix", "1.0", 1, 0),
-    ];
-    keg(&env, "all-old", "1.0", 1);
-    keg(&env, "all-old", "9.0", 0);
-    std::fs::create_dir_all(env.cellar.join("empty")).expect("empty rack");
-    keg(&env, "mixed-scheme", "9.0", 0);
-    keg(&env, "mixed-scheme", "1.0", 0);
-    keg(&env, "mixed-version", "1.0", 0);
-    keg(&env, "mixed-version", "2.0", 0);
-    keg(&env, "revision-mix", "1.0", 0);
-    let (ctx, reporter) = context(env, formulae);
-
-    outdated::run(&ctx, Args::default())
-        .await
-        .expect("outdated");
-    assert_eq!(
-        reporter.take(),
-        vec!["print:all-old".to_owned(), "print:revision-mix".to_owned()]
     );
 
     let error = outdated::run(
