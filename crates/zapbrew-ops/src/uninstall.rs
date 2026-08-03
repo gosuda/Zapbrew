@@ -108,7 +108,7 @@ pub(crate) fn remove_locked(
     for (name, paths) in leftovers {
         if !paths.is_empty() {
             ctx.reporter.opoo(&format!(
-                "The following {name} configuration files have not been removed!\nIf desired, remove them manually with `rm -rf`:\n  {}",
+                "The following {name} configuration files have not been removed!\nIf desired, remove them manually with rm -rf:\n  {}",
                 paths
                     .iter()
                     .map(|path| path.as_str())

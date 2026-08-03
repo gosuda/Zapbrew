@@ -166,6 +166,26 @@ async fn dry_run_prints_exact_sorted_plan_without_mutation() {
 }
 
 #[tokio::test]
+async fn single_candidate_dry_run_uses_fixed_formulae_noun() {
+    let temp = TempDir::new().expect("temp");
+    let (ctx, reporter) = context(&temp);
+    let candidate = keg(&ctx.env, "solo", false, &[]);
+
+    autoremove::run(&ctx, Args { dry_run: true })
+        .await
+        .expect("dry run");
+
+    assert!(candidate.path().exists());
+    assert_eq!(
+        reporter.take(),
+        vec![
+            "oh1:Would autoremove 1 unneeded formulae:".to_owned(),
+            "print:solo".to_owned(),
+        ]
+    );
+}
+
+#[tokio::test]
 async fn requested_formula_and_its_dependency_are_not_candidates() {
     let temp = TempDir::new().expect("temp");
     let (ctx, reporter) = context(&temp);

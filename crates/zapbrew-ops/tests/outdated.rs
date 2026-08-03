@@ -168,6 +168,47 @@ async fn predicate_matrix_uses_semantic_pkg_versions_and_scheme_rule() {
 }
 
 #[tokio::test]
+async fn formula_is_outdated_only_when_every_installed_keg_is_outdated() {
+    let temp = TempDir::new().expect("temp");
+    let env = env(&temp);
+    let formulae = vec![
+        formula("all-old", "2.0", 0, 1),
+        formula("empty", "2.0", 0, 0),
+        formula("mixed-scheme", "1.0", 0, 1),
+        formula("mixed-version", "2.0", 0, 0),
+        formula("revision-mix", "1.0", 1, 0),
+    ];
+    keg(&env, "all-old", "1.0", 1);
+    keg(&env, "all-old", "9.0", 0);
+    std::fs::create_dir_all(env.cellar.join("empty")).expect("empty rack");
+    keg(&env, "mixed-scheme", "9.0", 0);
+    keg(&env, "mixed-scheme", "1.0", 0);
+    keg(&env, "mixed-version", "1.0", 0);
+    keg(&env, "mixed-version", "2.0", 0);
+    keg(&env, "revision-mix", "1.0", 0);
+    let (ctx, reporter) = context(env, formulae);
+
+    outdated::run(&ctx, Args::default())
+        .await
+        .expect("outdated");
+    assert_eq!(
+        reporter.take(),
+        vec!["print:all-old".to_owned(), "print:revision-mix".to_owned()]
+    );
+
+    let error = outdated::run(
+        &ctx,
+        Args {
+            names: vec!["empty".to_owned()],
+            ..Args::default()
+        },
+    )
+    .await
+    .expect_err("empty rack is not installed");
+    assert_eq!(error.to_string(), "empty is not installed");
+}
+
+#[tokio::test]
 async fn default_verbose_pinned_and_json_v2_are_exact() {
     let temp = TempDir::new().expect("temp");
     let env = env(&temp);

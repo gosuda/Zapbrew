@@ -80,6 +80,11 @@ struct StagedRemoval {
     trash: Utf8PathBuf,
 }
 
+struct UnlinkedKeg {
+    keg: Keg,
+    keg_only: bool,
+}
+
 #[derive(Default)]
 struct Journal {
     created_dirs: Vec<Utf8PathBuf>,
@@ -88,7 +93,7 @@ struct Journal {
     new_link_attempted: bool,
     skeleton: Vec<SkeletonEntry>,
     backup: Option<(Utf8PathBuf, Utf8PathBuf)>,
-    old_unlinked: Option<Keg>,
+    old_unlinked: Option<UnlinkedKeg>,
     steps: StepJournal,
     committed: bool,
 }
@@ -165,7 +170,7 @@ struct RemovalTransaction<'a> {
     inputs: Vec<RemovalInput>,
     records: Vec<RemovalRecord>,
     staged: Vec<StagedRemoval>,
-    unlinked: Vec<Keg>,
+    unlinked: Vec<UnlinkedKeg>,
     trash_root: Option<Utf8PathBuf>,
     committed: bool,
 }
@@ -208,8 +213,11 @@ impl RemovalTransaction<'_> {
             }
             for target in &input.targets {
                 if target.linked {
-                    self.unlinked.push(target.keg.clone());
-                    unlink(&target.keg, &prefix)?;
+                    let report = unlink(&target.keg, &prefix)?;
+                    self.unlinked.push(UnlinkedKeg {
+                        keg: target.keg.clone(),
+                        keg_only: report.removed.is_empty(),
+                    });
                 }
                 if target.optlinked {
                     remove_symlink_entry(&self.records[index].opt)?;
@@ -278,10 +286,17 @@ impl RemovalTransaction<'_> {
         }
 
         let prefix = Prefix::new(self.ctx.env.clone());
-        for keg in self.unlinked.iter().rev() {
-            match link(keg, &prefix, LinkOptions::default()) {
+        for old in self.unlinked.iter().rev() {
+            match link(
+                &old.keg,
+                &prefix,
+                LinkOptions {
+                    keg_only: old.keg_only,
+                    ..LinkOptions::default()
+                },
+            ) {
                 Ok(report) => leftovers.extend(report.conflicts),
-                Err(_) => leftovers.push(keg.path().to_path_buf()),
+                Err(_) => leftovers.push(old.keg.path().to_path_buf()),
             }
         }
         for record in self.records.iter().rev() {
@@ -359,8 +374,11 @@ impl FormulaTransaction<'_> {
         let (files, size) = inventory(staged.path())?;
 
         if let Some(linked) = self.input.replacement.linked.clone() {
-            self.journal.old_unlinked = Some(linked.clone());
-            unlink(&linked, &Prefix::new(self.ctx.env.clone()))?;
+            let report = unlink(&linked, &Prefix::new(self.ctx.env.clone()))?;
+            self.journal.old_unlinked = Some(UnlinkedKeg {
+                keg: linked,
+                keg_only: report.removed.is_empty(),
+            });
             maybe_fail_install_after_unlink(self.name.name())?;
         }
 
@@ -478,17 +496,20 @@ impl FormulaTransaction<'_> {
 
         if let Some(old) = self.journal.old_unlinked.as_ref()
             && link(
-                old,
+                &old.keg,
                 &Prefix::new(self.ctx.env.clone()),
-                LinkOptions::default(),
+                LinkOptions {
+                    keg_only: old.keg_only,
+                    ..LinkOptions::default()
+                },
             )
             .is_err()
         {
-            leftovers.push(old.path().to_path_buf());
-            if let Ok(path) = Prefix::new(self.ctx.env.clone()).linked_path(old.name()) {
+            leftovers.push(old.keg.path().to_path_buf());
+            if let Ok(path) = Prefix::new(self.ctx.env.clone()).linked_path(old.keg.name()) {
                 leftovers.push(path);
             }
-            if let Ok(path) = Prefix::new(self.ctx.env.clone()).opt_path(old.name()) {
+            if let Ok(path) = Prefix::new(self.ctx.env.clone()).opt_path(old.keg.name()) {
                 leftovers.push(path);
             }
         }

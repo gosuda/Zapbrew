@@ -263,7 +263,7 @@ async fn non_force_removes_active_keg_and_force_removes_every_version() {
 async fn reports_leftover_configuration_paths_exactly() {
     let temp = TempDir::new().expect("temp");
     let (ctx, reporter) = context(env(&temp, true));
-    let _installed = keg(&ctx.env, "foo", "1.0", true, &[], false);
+    let installed = keg(&ctx.env, "foo", "1.0", true, &[], false);
     let config = ctx.env.prefix.join("etc/foo/config.toml");
     std::fs::create_dir_all(config.parent().expect("config parent")).expect("config dir");
     std::fs::write(&config, b"x").expect("config");
@@ -271,13 +271,19 @@ async fn reports_leftover_configuration_paths_exactly() {
     uninstall::run(&ctx, args(&["foo"]))
         .await
         .expect("uninstall");
-    assert!(reporter.take().contains(&format!(
-        "opoo:The following foo configuration files have not been removed!\nIf desired, remove them manually with `rm -rf`:\n  {config}"
-    )));
+    assert_eq!(
+        reporter.take(),
+        vec![
+            format!("print:Uninstalling {}... (645B)", installed.path()),
+            format!(
+                "opoo:The following foo configuration files have not been removed!\nIf desired, remove them manually with rm -rf:\n  {config}"
+            ),
+        ]
+    );
 }
 
 #[tokio::test]
-async fn precommit_failure_restores_keg_links_and_records() {
+async fn precommit_failure_restores_normal_and_keg_only_link_surfaces() {
     let temp = TempDir::new().expect("temp");
     let (ctx, _) = context(env(&temp, true));
     let installed = keg(&ctx.env, "rollbackfoo", "1.0", true, &[], true);
@@ -303,6 +309,37 @@ async fn precommit_failure_restores_keg_links_and_records() {
         std::fs::canonicalize(installed.path()).expect("keg target")
     );
     assert!(ctx.env.prefix.join("bin/tool").exists());
+
+    let keg_only_temp = TempDir::new().expect("temp");
+    let (keg_only_ctx, _) = context(env(&keg_only_temp, true));
+    let keg_only = keg(
+        &keg_only_ctx.env,
+        "kegonlyrollback",
+        "1.0",
+        true,
+        &[],
+        false,
+    );
+    zapbrew_pour::link(
+        &keg_only,
+        &Prefix::new(keg_only_ctx.env.clone()),
+        LinkOptions {
+            keg_only: true,
+            ..LinkOptions::default()
+        },
+    )
+    .expect("keg-only link");
+    let prefix_file = keg_only_ctx.env.prefix.join("bin/tool");
+    assert!(!prefix_file.exists());
+    fail_removal_after("kegonlyrollback", 1).expect("arm failure");
+
+    uninstall::run(&keg_only_ctx, args(&["kegonlyrollback"]))
+        .await
+        .expect_err("injected failure");
+
+    assert!(keg_only.path().exists());
+    assert!(keg_only_ctx.env.linked.join("kegonlyrollback").exists());
+    assert!(!prefix_file.exists());
 }
 
 #[tokio::test]

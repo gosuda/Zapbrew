@@ -269,6 +269,46 @@ async fn dry_run_scheme_bump_is_exact_and_performs_zero_download_or_mutation() {
 }
 
 #[tokio::test]
+async fn mixed_scheme_kegs_with_a_current_keg_are_not_upgraded() {
+    let temp = TempDir::new().expect("temp");
+    let env = env(&temp, false);
+    let old = installed(&env, "mixedupgrade", "9.0", 0, true);
+    zapbrew_pour::unlink(&old, &Prefix::new(env.clone())).expect("unlink old");
+    let current = installed(&env, "mixedupgrade", "1.0", 1, true);
+    let (ctx, reporter) = context(
+        env,
+        vec![formula(
+            "mixedupgrade",
+            "1.0",
+            0,
+            1,
+            "http://unused",
+            &"0".repeat(64),
+        )],
+    );
+
+    upgrade::run(
+        &ctx,
+        Args {
+            dry_run: true,
+            ..named("mixedupgrade")
+        },
+    )
+    .await
+    .expect("up-to-date");
+
+    assert!(old.path().exists());
+    assert!(current.path().exists());
+    assert_eq!(
+        reporter.take(),
+        vec![
+            "opoo:mixedupgrade 1.0 is already installed and up-to-date.\nTo reinstall 1.0, run:\n  zapbrew reinstall mixedupgrade"
+                .to_owned()
+        ]
+    );
+}
+
+#[tokio::test]
 async fn named_pinned_is_refusal_and_all_mode_warns_and_skips() {
     let temp = TempDir::new().expect("temp");
     let env = env(&temp, false);
@@ -329,16 +369,16 @@ async fn no_install_cleanup_keeps_old_keg_after_new_commit() {
 }
 
 #[tokio::test]
-async fn transaction_failure_after_unlink_restores_old_link_and_keg() {
+async fn transaction_failure_restores_normal_and_empty_old_link_surfaces() {
     let server = MockServer::start().await;
     let tarball = bottle("rollbackupgrade", "2.0");
     mount(&server, "/rollback.tar.gz", &tarball, 1).await;
     let temp = TempDir::new().expect("temp");
-    let env = env(&temp, false);
-    let old = installed(&env, "rollbackupgrade", "1.0", 0, true);
+    let normal_env = env(&temp, false);
+    let old = installed(&normal_env, "rollbackupgrade", "1.0", 0, true);
     let url = format!("{}/rollback.tar.gz", server.uri());
     let (ctx, _) = context(
-        env,
+        normal_env,
         vec![formula(
             "rollbackupgrade",
             "2.0",
@@ -364,6 +404,49 @@ async fn transaction_failure_after_unlink_restores_old_link_and_keg() {
         std::fs::canonicalize(ctx.env.linked.join("rollbackupgrade")).expect("linked"),
         std::fs::canonicalize(old.path()).expect("old keg")
     );
+
+    {
+        let server = MockServer::start().await;
+        let tarball = bottle("emptyrollback", "2.0");
+        mount(&server, "/empty-rollback.tar.gz", &tarball, 1).await;
+        let temp = TempDir::new().expect("temp");
+        let env = env(&temp, false);
+        let old = installed(&env, "emptyrollback", "1.0", 0, true);
+        zapbrew_pour::unlink(&old, &Prefix::new(env.clone())).expect("unlink normal surface");
+        zapbrew_pour::link(
+            &old,
+            &Prefix::new(env.clone()),
+            LinkOptions {
+                keg_only: true,
+                ..LinkOptions::default()
+            },
+        )
+        .expect("empty link surface");
+        let prefix_file = env.prefix.join("bin/emptyrollback");
+        assert!(!prefix_file.exists());
+        let url = format!("{}/empty-rollback.tar.gz", server.uri());
+        let (ctx, _) = context(
+            env,
+            vec![formula(
+                "emptyrollback",
+                "2.0",
+                0,
+                0,
+                &url,
+                &digest(&tarball),
+            )],
+        );
+        fail_install_after_unlink("emptyrollback").expect("arm failure");
+
+        upgrade::run(&ctx, named("emptyrollback"))
+            .await
+            .expect_err("transaction failure");
+
+        assert!(old.path().exists());
+        assert!(ctx.env.linked.join("emptyrollback").exists());
+        assert!(!ctx.env.cellar.join("emptyrollback/2.0").exists());
+        assert!(!prefix_file.exists());
+    }
 }
 
 #[tokio::test]
