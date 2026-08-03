@@ -3,8 +3,9 @@
 //! Every case builds a real keg tree under a scratch cellar, links it into a
 //! scratch prefix, and inspects the resulting symlink set. Snapshots capture
 //! the per-directory strategy table (Appendix E); the remaining cases assert
-//! conflict, overwrite, dry-run, force, keg-only, relative-record, and
-//! ownership-safe unlink behavior directly.
+//! conflict, overwrite, dry-run backups, force, keg-only, relative-record,
+//! record-directory conflict, backup symlink-escape, and ownership-safe
+//! unlink behavior directly.
 
 use std::collections::HashMap;
 use std::fs;
@@ -13,7 +14,7 @@ use std::str::FromStr;
 
 use camino::{Utf8Path, Utf8PathBuf};
 use tempfile::TempDir;
-use zapbrew_pour::{LinkOptions, link, unlink};
+use zapbrew_pour::{LinkOptions, PourError, link, unlink};
 use zapbrew_prefix::{Env, EnvDetectInput, Keg, Prefix, SystemCommandRunner};
 use zapbrew_types::{FormulaName, PkgVersion};
 
@@ -483,4 +484,155 @@ fn unlink_only_touches_symlinks_that_resolve_into_the_keg() {
         "real file preserved"
     );
     assert!(is_symlink(&p.join("bin/d")), "dangling link preserved");
+}
+
+// --- dry-run overwrite backups ------------------------------------------------
+
+#[test]
+fn dry_run_overwrite_reports_would_be_backups_from_backup_ops() {
+    let fx = fixture();
+    keg_file(&fx, "bin/hello", "keg");
+    // Empty mkpath dir -> BackupThenMkdir when the prefix path is a real file.
+    fs::create_dir_all(fx.keg_path().join("lib/pkgconfig").as_std_path())
+        .expect("mkdir keg lib/pkgconfig");
+
+    let p = fx.prefix_path();
+    touch(&p.join("bin/hello"), "old"); // Symlink Pre::Backup
+    touch(&p.join("lib/pkgconfig"), "not-a-dir"); // BackupThenMkdir
+
+    let options = LinkOptions {
+        dry_run: true,
+        overwrite: true,
+        ..LinkOptions::default()
+    };
+    let report = link(&fx.keg, &fx.prefix, options).expect("dry-run link");
+
+    assert!(
+        report.conflicts.is_empty(),
+        "overwrite plans backups, not conflicts"
+    );
+    assert!(
+        report.backups.contains(&p.join("bin/hello")),
+        "Symlink Pre::Backup destination reported: {:?}",
+        report.backups
+    );
+    assert!(
+        report.backups.contains(&p.join("lib/pkgconfig")),
+        "BackupThenMkdir destination reported: {:?}",
+        report.backups
+    );
+
+    // Mutate nothing: originals intact, records absent, Backup never created.
+    assert!(!is_symlink(&p.join("bin/hello")));
+    assert_eq!(
+        fs::read_to_string(p.join("bin/hello").as_std_path()).expect("read hello"),
+        "old"
+    );
+    assert_eq!(
+        fs::read_to_string(p.join("lib/pkgconfig").as_std_path()).expect("read pkgconfig"),
+        "not-a-dir"
+    );
+    assert!(!lexists(&p.join("opt/foo")), "no opt record on dry-run");
+    assert!(
+        !fx._tmp.path().join("cache/Backup").exists(),
+        "dry-run must not create Backup"
+    );
+}
+
+// --- write_record directory conflict ------------------------------------------
+
+#[test]
+fn write_record_refuses_real_directory_preserving_bytes() {
+    let fx = fixture();
+    keg_file(&fx, "bin/hello", "keg");
+
+    let p = fx.prefix_path();
+    let opt = p.join("opt/foo");
+    fs::create_dir_all(opt.as_std_path()).expect("mkdir opt/foo");
+    let marker = opt.join("precious.txt");
+    fs::write(marker.as_std_path(), "do-not-delete").expect("write marker");
+
+    let err = match link(&fx.keg, &fx.prefix, LinkOptions::default()) {
+        Err(err) => err,
+        Ok(report) => panic!("expected LinkConflict, got success {report:?}"),
+    };
+    match err {
+        PourError::LinkConflict { target, reason, .. } => {
+            assert_eq!(target, opt);
+            assert!(
+                reason.contains("already exists and is a directory"),
+                "reason={reason}"
+            );
+        }
+        other => panic!("expected LinkConflict, got {other}"),
+    }
+
+    assert!(
+        opt.as_std_path().is_dir() && !is_symlink(&opt),
+        "opt/foo must remain a real directory"
+    );
+    assert_eq!(
+        fs::read_to_string(marker.as_std_path()).expect("read marker"),
+        "do-not-delete",
+        "bytes under the real directory must be preserved"
+    );
+}
+
+// --- backup symlink escape ----------------------------------------------------
+
+#[test]
+fn planted_backup_bin_symlink_refused_and_outside_unchanged() {
+    let fx = fixture();
+    keg_file(&fx, "bin/hello", "keg");
+
+    let p = fx.prefix_path();
+    touch(&p.join("bin/hello"), "old");
+
+    let outside = utf8(fx._tmp.path().join("outside-target"));
+    fs::create_dir_all(outside.as_std_path()).expect("mkdir outside");
+    let marker = outside.join("KEEPME");
+    fs::write(marker.as_std_path(), "precious").expect("write outside marker");
+
+    let backup_root = utf8(fx._tmp.path().join("cache/Backup"));
+    fs::create_dir_all(backup_root.as_std_path()).expect("mkdir Backup");
+    // Plant Backup/bin -> outside so a naive create_dir_all/rename would escape.
+    symlink(outside.as_std_path(), backup_root.join("bin").as_std_path())
+        .expect("plant Backup/bin symlink");
+
+    let options = LinkOptions {
+        overwrite: true,
+        ..LinkOptions::default()
+    };
+    let err = match link(&fx.keg, &fx.prefix, options) {
+        Err(err) => err,
+        Ok(report) => panic!("expected refusal of planted Backup symlink, got {report:?}"),
+    };
+    match err {
+        PourError::LinkConflict { reason, .. } => {
+            assert!(
+                reason.contains("planted symlink") || reason.contains("symlink"),
+                "reason={reason}"
+            );
+        }
+        other => panic!("expected LinkConflict, got {other}"),
+    }
+
+    assert_eq!(
+        fs::read_to_string(marker.as_std_path()).expect("read outside marker"),
+        "precious",
+        "outside target must remain unchanged"
+    );
+    assert!(
+        !outside.join("hello").as_std_path().exists(),
+        "conflict must not be renamed into the outside target"
+    );
+    assert_eq!(
+        fs::read_to_string(p.join("bin/hello").as_std_path()).expect("read hello"),
+        "old",
+        "prefix conflict must remain until a safe backup succeeds"
+    );
+    assert!(
+        !is_symlink(&p.join("bin/hello")),
+        "no link written after refusal"
+    );
 }

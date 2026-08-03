@@ -134,12 +134,13 @@ pub fn link(keg: &Keg, prefix: &Prefix, options: LinkOptions) -> Result<LinkRepo
     } = planner;
 
     // Dry run: report what would happen, mutate nothing (no file links, no
-    // opt/linked records).
+    // opt/linked records). With overwrite, include destinations that
+    // BackupThenMkdir / Symlink{pre: Backup} would move under Backup/.
     if options.dry_run {
         return Ok(LinkReport {
             linked: would_link,
             conflicts,
-            backups: Vec::new(),
+            backups: planned_backups(&ops),
         });
     }
 
@@ -510,15 +511,23 @@ fn walk_unlink(
     Ok(())
 }
 
-/// Rewrite `record` as a relative symlink to `keg_path`, replacing whatever is
-/// there (Homebrew's `optlink`/linked-record behavior).
+/// Rewrite `record` as a relative symlink to `keg_path`, replacing a prior
+/// symlink or file (Homebrew's `optlink`/linked-record behavior).
+///
+/// A real directory at the record path is a typed conflict: never recursively
+/// delete it, so caller-owned bytes under `opt/` or `linked/` survive.
 fn write_record(record: &Utf8Path, keg_path: &Utf8Path) -> Result<(), PourError> {
     if let Ok(meta) = fs::symlink_metadata(record.as_std_path()) {
         if meta.file_type().is_symlink() || meta.is_file() {
             remove_file(record)?;
         } else if meta.is_dir() {
-            fs::remove_dir_all(record.as_std_path())
-                .map_err(|err| PourError::io("remove", record, err))?;
+            return Err(PourError::LinkConflict {
+                link_source: keg_path.to_owned(),
+                target: record.to_owned(),
+                reason: format!(
+                    "already exists and is a directory. You may want to remove it:\n  rm -r '{record}'\n"
+                ),
+            });
         }
     }
     if let Some(parent) = record.parent() {
@@ -746,16 +755,183 @@ fn remove_file(path: &Utf8Path) -> Result<(), PourError> {
     fs::remove_file(path.as_std_path()).map_err(|err| PourError::io("remove", path, err))
 }
 
+/// Collect destinations that overwrite would back up, without mutating.
+fn planned_backups(ops: &[Op]) -> Vec<Utf8PathBuf> {
+    let mut backups = Vec::new();
+    for op in ops {
+        match op {
+            Op::BackupThenMkdir(dst) => backups.push(dst.clone()),
+            Op::Symlink {
+                dst,
+                pre: Pre::Backup,
+                ..
+            } => backups.push(dst.clone()),
+            _ => {}
+        }
+    }
+    backups
+}
+
 /// Move `dst` (a conflict) under `backup_dir`, preserving its prefix-relative
 /// path.
+///
+/// Construction requires `dst.strip_prefix(prefix)` (no absolute-join fallback),
+/// verifies the Backup root and every ancestor are real directories (never
+/// symlinks), creates missing parents one segment at a time, and refuses a
+/// planted symlink at any Backup path component before `rename`.
 fn backup(dst: &Utf8Path, prefix_path: &Utf8Path, backup_dir: &Utf8Path) -> Result<(), PourError> {
-    let rel = dst.strip_prefix(prefix_path).unwrap_or(dst);
-    let target = backup_dir.join(rel);
-    if let Some(parent) = target.parent() {
-        create_dir_all(parent)?;
+    let rel = dst
+        .strip_prefix(prefix_path)
+        .map_err(|_| PourError::LinkConflict {
+            link_source: dst.to_owned(),
+            target: backup_dir.to_owned(),
+            reason: format!("is not under the prefix '{prefix_path}'"),
+        })?;
+
+    for component in rel.components() {
+        if !matches!(component, camino::Utf8Component::Normal(_)) {
+            return Err(PourError::LinkConflict {
+                link_source: dst.to_owned(),
+                target: backup_dir.join(rel),
+                reason: format!("backup relative path '{rel}' contains non-normal components"),
+            });
+        }
     }
+
+    ensure_real_backup_root(backup_dir)?;
+    let target = create_backup_parents(backup_dir, rel)?;
+
+    if is_symlink(&target) {
+        return Err(PourError::LinkConflict {
+            link_source: dst.to_owned(),
+            target: target.clone(),
+            reason: "refusing to rename onto a symlink under Backup".to_owned(),
+        });
+    }
+
     fs::rename(dst.as_std_path(), target.as_std_path())
         .map_err(|err| PourError::io("backup", dst, err))
+}
+
+/// Ensure `backup_dir` exists as a real directory; refuse a planted symlink.
+fn ensure_real_backup_root(backup_dir: &Utf8Path) -> Result<(), PourError> {
+    match fs::symlink_metadata(backup_dir.as_std_path()) {
+        Ok(meta) if meta.file_type().is_symlink() => Err(PourError::LinkConflict {
+            link_source: backup_dir.to_owned(),
+            target: backup_dir.to_owned(),
+            reason: "Backup root is a symlink; refusing to follow it".to_owned(),
+        }),
+        Ok(meta) if meta.is_dir() => Ok(()),
+        Ok(_) => Err(PourError::LinkConflict {
+            link_source: backup_dir.to_owned(),
+            target: backup_dir.to_owned(),
+            reason: "Backup root exists and is not a directory".to_owned(),
+        }),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            if let Some(parent) = backup_dir.parent() {
+                ensure_real_dir_or_create_all(parent)?;
+            }
+            fs::create_dir(backup_dir.as_std_path())
+                .map_err(|err| PourError::io("create", backup_dir, err))
+        }
+        Err(err) => Err(PourError::io("read", backup_dir, err)),
+    }
+}
+
+/// Create missing parents of `backup_dir/rel` one segment at a time, refusing
+/// any symlink along the way. Returns the final backup target path.
+fn create_backup_parents(backup_dir: &Utf8Path, rel: &Utf8Path) -> Result<Utf8PathBuf, PourError> {
+    let mut cur = backup_dir.to_owned();
+    let components: Vec<_> = rel.components().collect();
+    if components.is_empty() {
+        return Err(PourError::LinkConflict {
+            link_source: backup_dir.to_owned(),
+            target: backup_dir.to_owned(),
+            reason: "refusing to back up the prefix root into Backup".to_owned(),
+        });
+    }
+
+    for (index, component) in components.iter().enumerate() {
+        cur = cur.join(component.as_str());
+        let is_final = index + 1 == components.len();
+        match fs::symlink_metadata(cur.as_std_path()) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(PourError::LinkConflict {
+                    link_source: backup_dir.to_owned(),
+                    target: cur,
+                    reason: "refusing planted symlink under Backup before rename".to_owned(),
+                });
+            }
+            Ok(meta) if meta.is_dir() => {
+                if is_final {
+                    return Err(PourError::LinkConflict {
+                        link_source: backup_dir.to_owned(),
+                        target: cur,
+                        reason: "backup target already exists as a directory".to_owned(),
+                    });
+                }
+            }
+            Ok(_) => {
+                if !is_final {
+                    return Err(PourError::LinkConflict {
+                        link_source: backup_dir.to_owned(),
+                        target: cur,
+                        reason: "backup path ancestor exists and is not a directory".to_owned(),
+                    });
+                }
+                // Final leaf exists as a non-dir: rename will replace it.
+            }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                if !is_final {
+                    fs::create_dir(cur.as_std_path())
+                        .map_err(|err| PourError::io("create", &cur, err))?;
+                }
+            }
+            Err(err) => return Err(PourError::io("read", &cur, err)),
+        }
+    }
+    Ok(cur)
+}
+
+/// Ensure `dir` is a real directory, creating missing segments without
+/// following a symlink that already occupies a path component.
+fn ensure_real_dir_or_create_all(dir: &Utf8Path) -> Result<(), PourError> {
+    match fs::symlink_metadata(dir.as_std_path()) {
+        Ok(meta) if meta.file_type().is_symlink() => Err(PourError::LinkConflict {
+            link_source: dir.to_owned(),
+            target: dir.to_owned(),
+            reason: "refusing to create Backup under a symlink parent".to_owned(),
+        }),
+        Ok(meta) if meta.is_dir() => Ok(()),
+        Ok(_) => Err(PourError::LinkConflict {
+            link_source: dir.to_owned(),
+            target: dir.to_owned(),
+            reason: "Backup parent exists and is not a directory".to_owned(),
+        }),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            if let Some(parent) = dir.parent()
+                && parent != dir
+            {
+                ensure_real_dir_or_create_all(parent)?;
+            }
+            match fs::create_dir(dir.as_std_path()) {
+                Ok(()) => Ok(()),
+                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                    if is_real_dir(dir) {
+                        Ok(())
+                    } else {
+                        Err(PourError::LinkConflict {
+                            link_source: dir.to_owned(),
+                            target: dir.to_owned(),
+                            reason: "Backup parent path is not a real directory".to_owned(),
+                        })
+                    }
+                }
+                Err(err) => Err(PourError::io("create", dir, err)),
+            }
+        }
+        Err(err) => Err(PourError::io("read", dir, err)),
+    }
 }
 
 /// Remove `.DS_Store` if present, then rmdir; report whether the dir is gone.

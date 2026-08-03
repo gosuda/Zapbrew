@@ -5,6 +5,7 @@
 //! selected regular files, directories, and contained links unpacked under
 //! `Cellar/<name>/<version>/`.
 
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
@@ -17,12 +18,21 @@ use zapbrew_types::{FormulaName, PkgVersion};
 
 use crate::error::PourError;
 
+/// Archive entry kind recorded during preflight for nest-escape detection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EntryKind {
+    Directory,
+    File,
+    Symlink,
+    Hardlink,
+}
+
 /// Unpack a gzip bottle tarball into `cellar`, returning the installed [`Keg`].
 ///
 /// Preflight validates every tar entry (path prefix, traversal, link targets,
-/// and forbidden entry types) without writing. Only after a clean preflight
-/// does this reopen the archive and unpack regular files, directories, and
-/// contained hard/symbolic links. Extracted directories receive owner-write
+/// link nesting, and forbidden entry types) without writing. Only after a clean
+/// preflight does this reopen the archive and unpack regular files, directories,
+/// and contained hard/symbolic links. Extracted directories receive owner-write
 /// (`u+w`) while other mode bits are preserved.
 pub fn unpack(
     tarball: &Utf8Path,
@@ -80,25 +90,33 @@ fn preflight(
     let entries = archive
         .entries()
         .map_err(|source| PourError::io("read", tarball, source))?;
+    // Maps normalized archive paths to kinds so nested writes through an earlier
+    // symlink/hardlink entry (lexical nest escapes) are rejected before mutation.
+    let mut entry_kinds: HashMap<PathBuf, EntryKind> = HashMap::new();
 
     for entry in entries {
         let entry = entry.map_err(|source| PourError::io("read", tarball, source))?;
         let path = entry_path_utf8(&entry)?;
-        classify_entry(entry.header().entry_type(), path.as_str())?;
-        match entry.header().entry_type() {
+        let entry_type = entry.header().entry_type();
+        classify_entry(entry_type, path.as_str())?;
+        match entry_type {
             EntryType::Regular
             | EntryType::Continuous
             | EntryType::Directory
             | EntryType::Symlink
             | EntryType::Link => {
                 validate_entry_path(path.as_std_path(), name, version)?;
+                let kind = entry_kind(entry_type);
+                // Non-directory entries under a symlink/hardlink ancestor would be
+                // followed by extractors (and by `unpack_in` canonicalize).
+                if kind != EntryKind::Directory {
+                    reject_link_ancestor(path.as_std_path(), &entry_kinds)?;
+                }
                 validate_destination(cellar, keg_path, path.as_std_path())?;
-                if matches!(
-                    entry.header().entry_type(),
-                    EntryType::Symlink | EntryType::Link
-                ) {
+                if matches!(entry_type, EntryType::Symlink | EntryType::Link) {
                     validate_link(&entry, path.as_std_path(), cellar, keg_path, name, version)?;
                 }
+                entry_kinds.insert(normalize_archive_path(path.as_std_path()), kind);
             }
             EntryType::XHeader
             | EntryType::XGlobalHeader
@@ -147,6 +165,8 @@ fn extract(
                 if matches!(entry_type, EntryType::Symlink | EntryType::Link) {
                     validate_link(&entry, path.as_std_path(), cellar, keg_path, name, version)?;
                 }
+                // Never follow an archive-created symlink when placing a later entry.
+                reject_symlink_parents_on_disk(cellar, path.as_std_path())?;
 
                 let unpacked = entry
                     .unpack_in(cellar.as_std_path())
@@ -177,6 +197,90 @@ fn extract(
         }
     }
 
+    Ok(())
+}
+
+fn entry_kind(entry_type: EntryType) -> EntryKind {
+    match entry_type {
+        EntryType::Directory => EntryKind::Directory,
+        EntryType::Symlink => EntryKind::Symlink,
+        EntryType::Link => EntryKind::Hardlink,
+        _ => EntryKind::File,
+    }
+}
+
+fn normalize_archive_path(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        if let Component::Normal(part) = component {
+            out.push(part);
+        }
+    }
+    out
+}
+
+/// Reject a non-directory entry when any strict ancestor was recorded as a
+/// symlink or hardlink in the archive (lexical nest escape).
+fn reject_link_ancestor(
+    path: &Path,
+    entry_kinds: &HashMap<PathBuf, EntryKind>,
+) -> Result<(), PourError> {
+    let display = path.display().to_string();
+    let mut prefix = PathBuf::new();
+    let components: Vec<_> = path.components().collect();
+    for (index, component) in components.iter().enumerate() {
+        // The entry itself is not an ancestor.
+        if index + 1 == components.len() {
+            break;
+        }
+        let Component::Normal(part) = component else {
+            continue;
+        };
+        prefix.push(part);
+        match entry_kinds.get(&prefix) {
+            Some(EntryKind::Symlink) | Some(EntryKind::Hardlink) => {
+                return Err(invalid_archive(
+                    display,
+                    "entry nested under symlink or hardlink path is forbidden",
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Refuse to extract through an on-disk symlink parent created by an earlier entry.
+fn reject_symlink_parents_on_disk(cellar: &Utf8Path, entry_path: &Path) -> Result<(), PourError> {
+    let display = entry_path.display().to_string();
+    let mut cur = cellar.as_std_path().to_path_buf();
+    let components: Vec<_> = entry_path.components().collect();
+    for component in components.iter().take(components.len().saturating_sub(1)) {
+        let Component::Normal(part) = component else {
+            continue;
+        };
+        cur.push(part);
+        match fs::symlink_metadata(&cur) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(invalid_archive(
+                    display,
+                    "refusing to follow archive-created symlink during extraction",
+                ));
+            }
+            Ok(_) => {}
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                // Missing parents are created by unpack; nothing to follow yet.
+                break;
+            }
+            Err(source) => {
+                return Err(PourError::io(
+                    "metadata",
+                    Utf8PathBuf::from(cur.to_string_lossy().as_ref()),
+                    source,
+                ));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -323,12 +427,14 @@ fn validate_link<R: Read>(
 
     match entry.header().entry_type() {
         EntryType::Link => {
-            // Hard-link targets are archive-root-relative paths.
+            // Hard-link targets are archive-root-relative paths; require the exact
+            // staged keg `<name>/<version>`, not merely somewhere under cellar.
             validate_entry_path(link.as_ref(), name, version)?;
             validate_destination(cellar, keg_path, link.as_ref())?;
+            ensure_resolved_under_exact_keg(link.as_ref(), keg_path, name, version, &display)?;
         }
         EntryType::Symlink => {
-            validate_symlink_target(entry_path, link.as_ref(), cellar, keg_path)?;
+            validate_symlink_target(entry_path, link.as_ref(), cellar, keg_path, name, version)?;
         }
         _ => {}
     }
@@ -341,23 +447,80 @@ fn validate_symlink_target(
     link_target: &Path,
     cellar: &Utf8Path,
     keg_path: &Utf8Path,
+    name: &str,
+    version: &str,
 ) -> Result<(), PourError> {
     let display = entry_path.display().to_string();
 
-    let final_dest = if link_target.is_absolute() {
-        link_target.to_path_buf()
+    let (final_dest, resolved_rel) = if link_target.is_absolute() {
+        (link_target.to_path_buf(), None)
     } else {
         let parent = entry_path.parent().unwrap_or_else(|| Path::new(""));
         let resolved_rel = lexical_join(parent, link_target).ok_or_else(|| {
             invalid_archive(display.clone(), "symbolic link target escapes keg via `..`")
         })?;
-        cellar.as_std_path().join(resolved_rel)
+        (cellar.as_std_path().join(&resolved_rel), Some(resolved_rel))
     };
 
+    // Exact staged keg only — staying under the cellar root is not sufficient.
     if !final_dest.starts_with(keg_path.as_std_path()) {
         return Err(invalid_archive(
             display,
             "symbolic link target escapes keg prefix",
+        ));
+    }
+
+    if let Some(resolved_rel) = resolved_rel.as_deref() {
+        ensure_resolved_under_exact_keg(resolved_rel, keg_path, name, version, &display)?;
+    } else {
+        ensure_resolved_under_exact_keg(&final_dest, keg_path, name, version, &display)?;
+    }
+
+    Ok(())
+}
+
+/// Require a resolved path to stay under the exact `<name>/<version>` keg, not
+/// merely somewhere else inside the cellar (e.g. a sibling formula).
+fn ensure_resolved_under_exact_keg(
+    resolved: &Path,
+    keg_path: &Utf8Path,
+    name: &str,
+    version: &str,
+    display: &str,
+) -> Result<(), PourError> {
+    if resolved.is_absolute() {
+        if !resolved.starts_with(keg_path.as_std_path()) {
+            return Err(invalid_archive(
+                display,
+                "link target escapes exact keg prefix",
+            ));
+        }
+        return Ok(());
+    }
+
+    let normals: Vec<&std::ffi::OsStr> = resolved
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(part) => Some(part),
+            _ => None,
+        })
+        .collect();
+
+    if normals.len() < 2 {
+        return Err(invalid_archive(
+            display,
+            format!("link target must stay under `{name}/{version}`"),
+        ));
+    }
+
+    let first = normals[0].to_str().unwrap_or("");
+    let second = normals[1].to_str().unwrap_or("");
+    if first != name || second != version {
+        return Err(invalid_archive(
+            display,
+            format!(
+                "link target must stay under exact `{name}/{version}`, found `{first}/{second}`"
+            ),
         ));
     }
 

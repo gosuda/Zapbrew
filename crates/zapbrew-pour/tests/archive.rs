@@ -425,6 +425,86 @@ fn unpack_rejects_escaping_symlink_and_hardlink() {
 }
 
 #[test]
+fn unpack_rejects_nested_symlink_escape_before_mutation() {
+    let (_temp, root) = utf8_temp();
+    let cellar = root.join("Cellar");
+    let name = formula_name("foo");
+    let version = pkg_version("1.0.0");
+
+    // Sibling keg file that must remain byte-identical if preflight aborts.
+    let sibling = cellar.join("victim/9.9.9/keep");
+    if let Err(err) = fs::create_dir_all(sibling.parent().expect("sibling parent").as_std_path()) {
+        panic!("create sibling keg: {err}");
+    }
+    const SIBLING_BYTES: &[u8] = b"untouched-sibling-bytes\n";
+    if let Err(err) = fs::write(sibling.as_std_path(), SIBLING_BYTES) {
+        panic!("write sibling file: {err}");
+    }
+
+    let tarball = root.join("symlink-nest.bottle.tar.gz");
+    // Lexical nest: s1 -> . keeps targets looking in-keg; s2 -> ../.. then a
+    // later write would follow canonicalize out of the staged keg.
+    write_gzip_tarball(
+        tarball.as_std_path(),
+        &[
+            ("foo/1.0.0", TestEntry::Dir { mode: 0o755 }),
+            ("foo/1.0.0/nested", TestEntry::Dir { mode: 0o755 }),
+            ("foo/1.0.0/nested/s1", TestEntry::Symlink { target: "." }),
+            (
+                "foo/1.0.0/nested/s1/s2",
+                TestEntry::Symlink { target: "../.." },
+            ),
+            (
+                "foo/1.0.0/nested/s1/s2/pwned",
+                TestEntry::File {
+                    mode: 0o644,
+                    data: b"escaped\n",
+                },
+            ),
+        ],
+    );
+
+    match unpack(&tarball, &cellar, &name, &version) {
+        Ok(_) => panic!("nested symlink escape must be rejected"),
+        Err(err) => assert_invalid_archive(err),
+    }
+
+    assert!(
+        !cellar.join("foo").exists(),
+        "exploit fixture must fail before any extraction mutation"
+    );
+    let kept = match fs::read(sibling.as_std_path()) {
+        Ok(bytes) => bytes,
+        Err(err) => panic!("read sibling after reject: {err}"),
+    };
+    assert_eq!(
+        kept, SIBLING_BYTES,
+        "sibling keg file must stay byte-identical"
+    );
+
+    // No cellar-root symlink from the nest (e.g. s2 landing beside formula dirs).
+    let cellar_entries = match fs::read_dir(cellar.as_std_path()) {
+        Ok(entries) => entries,
+        Err(err) => panic!("read cellar after reject: {err}"),
+    };
+    for entry in cellar_entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(err) => panic!("read cellar entry: {err}"),
+        };
+        let meta = match fs::symlink_metadata(entry.path()) {
+            Ok(meta) => meta,
+            Err(err) => panic!("symlink_metadata {}: {err}", entry.path().display()),
+        };
+        assert!(
+            !meta.file_type().is_symlink(),
+            "no cellar-root symlink may appear ({})",
+            entry.path().display()
+        );
+    }
+}
+
+#[test]
 fn unpack_rejects_device_and_fifo_entries() {
     let (_temp, root) = utf8_temp();
     let cellar = root.join("Cellar");

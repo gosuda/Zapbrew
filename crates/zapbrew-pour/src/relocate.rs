@@ -16,7 +16,10 @@
 //! fits its slot is appended inside an extended final `PT_LOAD`, with
 //! `DT_STRTAB`/`DT_STRSZ` (and the `.dynstr` section header, when present)
 //! repointed. Structured ELF rewriting is 64-bit only (every Homebrew Linux
-//! bottle is ELF64); other binaries receive the generic NUL-padded pass alone.
+//! bottle is ELF64). Mach-O images get a structured load-command pass that
+//! rewrites `LC_ID_DYLIB`/`LC_LOAD_DYLIB`/`LC_RPATH` strings in place, using
+//! the trailing NUL padding inside each command's `cmdsize` as slot capacity;
+//! other binaries receive the generic NUL-padded pass alone.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -226,8 +229,8 @@ fn plan_file(
 }
 
 /// Transform a binary file: structured ELF rewrite (runpath/interp, fit-or-grow)
-/// first, then the generic NUL-padded placeholder pass, then a mandatory
-/// `object` reparse of the mutated bytes.
+/// or structured Mach-O load-command rewrite first, then the generic NUL-padded
+/// placeholder pass, then a mandatory `object` reparse of the mutated bytes.
 fn relocate_binary(
     original: &[u8],
     path: &Utf8Path,
@@ -259,6 +262,15 @@ fn relocate_binary(
         // generic pass off them so stale placeholders left in old slots (grow
         // case) are never re-substituted or falsely rejected.
         protected = elf_linkage_regions(original);
+    } else if matches!(format, Some(BinaryFormat::MachO)) {
+        if macho_relocate(&mut buf, original, subs).map_err(|reason| PourError::Relocation {
+            path: path.to_path_buf(),
+            reason,
+        })? {
+            changed = true;
+        }
+        // The load-command string slots are structured-owned.
+        protected = macho_linkage_regions(original);
     }
     // Anything appended past the original length (grown strtab/interp) is also
     // structured-owned.
@@ -517,8 +529,10 @@ fn write_atomic(path: &Utf8Path, bytes: &[u8], mode: u32) -> Result<(), PourErro
     handle
         .sync_all()
         .map_err(|source| PourError::io("sync", temp.clone(), source))?;
-    // `mode` at open is masked by umask; set it explicitly on the fd's path.
-    fs::set_permissions(temp.as_std_path(), fs::Permissions::from_mode(mode))
+    // `mode` at open is masked by umask; set it explicitly on the open handle,
+    // never by path, so a swapped directory entry cannot receive the chmod.
+    handle
+        .set_permissions(fs::Permissions::from_mode(mode))
         .map_err(|source| PourError::io("chmod", temp.clone(), source))?;
     drop(handle);
     fs::rename(temp.as_std_path(), path.as_std_path())
@@ -546,6 +560,10 @@ const PHDR64_LEN: usize = 56;
 const DYN64_LEN: usize = 16;
 const SHDR64_LEN: usize = 64;
 
+/// Upper bound on a credible `p_align`; larger values would demand a gigantic
+/// zero-fill pad before an appended payload and are rejected as malformed.
+const MAX_SEGMENT_ALIGN: u64 = 0x1000_0000;
+
 /// One decoded ELF64 program header plus the file offset of the header itself.
 #[derive(Clone, Copy)]
 struct Phdr64 {
@@ -554,6 +572,7 @@ struct Phdr64 {
     p_offset: u64,
     p_vaddr: u64,
     p_filesz: u64,
+    p_memsz: u64,
     p_align: u64,
 }
 
@@ -614,10 +633,13 @@ fn decode_elf64(buf: &[u8]) -> Option<(bool, Vec<Phdr64>)> {
     let mut phdrs = Vec::with_capacity(phnum);
     for index in 0..phnum {
         let base = phoff.checked_add(index.checked_mul(phentsize)?)?;
+        // The whole header must be addressable without wrapping.
+        base.checked_add(PHDR64_LEN)?;
         let p_type = rd_u32(buf, base, little)?;
         let p_offset = rd_u64(buf, base + 8, little)?;
         let p_vaddr = rd_u64(buf, base + 16, little)?;
         let p_filesz = rd_u64(buf, base + 32, little)?;
+        let p_memsz = rd_u64(buf, base + 40, little)?;
         let p_align = rd_u64(buf, base + 48, little)?;
         phdrs.push(Phdr64 {
             header_offset: base,
@@ -625,6 +647,7 @@ fn decode_elf64(buf: &[u8]) -> Option<(bool, Vec<Phdr64>)> {
             p_offset,
             p_vaddr,
             p_filesz,
+            p_memsz,
             p_align,
         });
     }
@@ -639,17 +662,26 @@ fn elf_linkage_regions(data: &[u8]) -> Vec<(usize, usize)> {
         return Vec::new();
     };
     let mut regions = Vec::new();
-    if let Some(interp) = phdrs.iter().find(|phdr| phdr.p_type == PT_INTERP) {
-        let start = interp.p_offset as usize;
-        regions.push((start, start + interp.p_filesz as usize));
+    if let Some(interp) = phdrs.iter().find(|phdr| phdr.p_type == PT_INTERP)
+        && let Ok(start) = usize::try_from(interp.p_offset)
+        && let Some(end) = interp
+            .p_offset
+            .checked_add(interp.p_filesz)
+            .and_then(|end| usize::try_from(end).ok())
+    {
+        regions.push((start, end));
     }
     if let Some(dynamic) = phdrs.iter().find(|phdr| phdr.p_type == PT_DYNAMIC) {
-        let dyn_offset = dynamic.p_offset as usize;
+        let Ok(dyn_offset) = usize::try_from(dynamic.p_offset) else {
+            return regions;
+        };
         let count = (dynamic.p_filesz as usize) / DYN64_LEN;
         let mut strtab_vaddr = None;
         let mut strsz = None;
         for index in 0..count {
-            let entry = dyn_offset + index * DYN64_LEN;
+            let Some(entry) = dyn_offset.checked_add(index * DYN64_LEN) else {
+                break;
+            };
             let Some(tag) = rd_u64(data, entry, little) else {
                 break;
             };
@@ -663,8 +695,10 @@ fn elf_linkage_regions(data: &[u8]) -> Vec<(usize, usize)> {
         }
         if let (Some(vaddr), Some(size)) = (strtab_vaddr, strsz)
             && let Some(offset) = vaddr_to_offset(&phdrs, vaddr)
+            && let Some(end) = offset.checked_add(size)
+            && let (Ok(start), Ok(end)) = (usize::try_from(offset), usize::try_from(end))
         {
-            regions.push((offset as usize, (offset + size) as usize));
+            regions.push((start, end));
         }
     }
     regions
@@ -684,10 +718,15 @@ fn rewrite_interp(
     let Some(interp) = phdrs.iter().find(|phdr| phdr.p_type == PT_INTERP) else {
         return Ok(false);
     };
-    let offset = interp.p_offset as usize;
-    let capacity = interp.p_filesz as usize;
+    let offset =
+        usize::try_from(interp.p_offset).map_err(|_| "PT_INTERP outside file".to_owned())?;
+    let capacity =
+        usize::try_from(interp.p_filesz).map_err(|_| "PT_INTERP outside file".to_owned())?;
+    let end = offset
+        .checked_add(capacity)
+        .ok_or_else(|| "PT_INTERP outside file".to_owned())?;
     let original_interp = original
-        .get(offset..offset + capacity)
+        .get(offset..end)
         .ok_or_else(|| "PT_INTERP outside file".to_owned())?;
     let current = cstr(original_interp);
 
@@ -736,7 +775,8 @@ fn rewrite_runpath(
     let Some(dynamic) = phdrs.iter().find(|phdr| phdr.p_type == PT_DYNAMIC) else {
         return Ok(false);
     };
-    let dyn_offset = dynamic.p_offset as usize;
+    let dyn_offset =
+        usize::try_from(dynamic.p_offset).map_err(|_| "PT_DYNAMIC outside file".to_owned())?;
     let count = (dynamic.p_filesz as usize) / DYN64_LEN;
 
     let mut strtab_vaddr: Option<u64> = None;
@@ -748,7 +788,9 @@ fn rewrite_runpath(
     let mut runpath_tag: Option<u64> = None;
 
     for index in 0..count {
-        let entry = dyn_offset + index * DYN64_LEN;
+        let entry = dyn_offset
+            .checked_add(index * DYN64_LEN)
+            .ok_or_else(|| "dynamic entry truncated".to_owned())?;
         let tag = rd_u64(buf, entry, little).ok_or_else(|| "dynamic entry truncated".to_owned())?;
         let value_offset = entry + 8;
         match tag {
@@ -788,12 +830,29 @@ fn rewrite_runpath(
     let Some(strtab_file) = vaddr_to_offset(phdrs, strtab_vaddr) else {
         return Ok(false);
     };
-    let runpath_file = (strtab_file + runpath_value) as usize;
-    let original_runpath = cstr(
-        original
-            .get(runpath_file..)
-            .ok_or_else(|| "DT_RUNPATH outside file".to_owned())?,
-    );
+    // The runpath span must lie inside the mapped string table, which must lie
+    // inside the file; anything else is a malformed image, rejected unwritten.
+    let strsz = strsz.ok_or_else(|| "DT_STRSZ missing".to_owned())?;
+    let table_start =
+        usize::try_from(strtab_file).map_err(|_| "string table outside file".to_owned())?;
+    let table_end = strtab_file
+        .checked_add(strsz)
+        .and_then(|end| usize::try_from(end).ok())
+        .ok_or_else(|| "string table span overflows".to_owned())?;
+    if table_end > original.len() {
+        return Err("string table outside file".to_owned());
+    }
+    if runpath_value >= strsz {
+        return Err("DT_RUNPATH offset outside string table".to_owned());
+    }
+    // runpath_value < strsz, so this stays within table_end (checked above).
+    let runpath_file = table_start + runpath_value as usize;
+    let table_tail = &original[runpath_file..table_end];
+    let nul = table_tail
+        .iter()
+        .position(|&byte| byte == 0)
+        .ok_or_else(|| "DT_RUNPATH not NUL-terminated inside string table".to_owned())?;
+    let original_runpath = &table_tail[..nul];
     let capacity = original_runpath.len();
 
     let substituted = replace_all(original_runpath, subs).0;
@@ -814,14 +873,13 @@ fn rewrite_runpath(
 
     // Grow: append a copied string table with the longer runpath appended, and
     // repoint DT_STRTAB/DT_STRSZ/DT_RUNPATH (and the .dynstr section header).
-    let strsz = strsz.ok_or_else(|| "DT_STRSZ missing for grow".to_owned())?;
     let strsz_value_offset =
         strsz_value_offset.ok_or_else(|| "DT_STRSZ offset missing".to_owned())?;
     let strtab_value_offset =
         strtab_value_offset.ok_or_else(|| "DT_STRTAB offset missing".to_owned())?;
 
     let old_table = buf
-        .get(strtab_file as usize..(strtab_file + strsz) as usize)
+        .get(table_start..table_end)
         .ok_or_else(|| "string table outside file".to_owned())?
         .to_vec();
     let new_runpath_offset = old_table.len() as u64;
@@ -903,32 +961,47 @@ fn append_into_last_load(
         .max_by_key(|phdr| phdr.p_vaddr)
         .ok_or_else(|| "no PT_LOAD segment to extend".to_owned())?;
 
+    // Growing is only safe when the segment carries no BSS and its file extent
+    // is exactly the current end of file: raising p_filesz over a
+    // p_memsz > p_filesz tail would overwrite bytes the loader must zero-fill,
+    // and extending a non-terminal extent would fold later file bytes into
+    // this mapping.
+    if last.p_memsz != last.p_filesz {
+        return Err("final PT_LOAD has BSS (p_memsz != p_filesz), cannot extend".to_owned());
+    }
+    let extent_end = last
+        .p_offset
+        .checked_add(last.p_filesz)
+        .ok_or_else(|| "final PT_LOAD extent overflows".to_owned())?;
+    if extent_end != buf.len() as u64 {
+        return Err("final PT_LOAD is not the terminal file extent".to_owned());
+    }
+
     let align = if last.p_align > 1 { last.p_align } else { 16 };
-    let file_offset = round_up(buf.len() as u64, align);
+    if align > MAX_SEGMENT_ALIGN {
+        return Err("unreasonable final PT_LOAD alignment".to_owned());
+    }
+    let file_offset = round_up(buf.len() as u64, align)
+        .ok_or_else(|| "aligned append offset overflows".to_owned())?;
     while (buf.len() as u64) < file_offset {
         buf.push(0);
     }
     // vaddr - offset is invariant for the segment, so congruence mod p_align is
     // preserved for any appended file offset.
-    let vaddr = last.p_vaddr + (file_offset - last.p_offset);
+    let delta = file_offset
+        .checked_sub(last.p_offset)
+        .ok_or_else(|| "append offset precedes final PT_LOAD".to_owned())?;
+    let vaddr = last
+        .p_vaddr
+        .checked_add(delta)
+        .ok_or_else(|| "appended vaddr overflows".to_owned())?;
     buf.extend_from_slice(payload);
 
-    let new_end = file_offset + payload.len() as u64;
-    let new_size = new_end - last.p_offset;
-    let current_filesz = rd_u64(buf, last.header_offset + 32, little).unwrap_or(0);
-    let current_memsz = rd_u64(buf, last.header_offset + 40, little).unwrap_or(0);
-    write_u64(
-        buf,
-        last.header_offset + 32,
-        little,
-        new_size.max(current_filesz),
-    )?;
-    write_u64(
-        buf,
-        last.header_offset + 40,
-        little,
-        new_size.max(current_memsz),
-    )?;
+    let new_size = (buf.len() as u64)
+        .checked_sub(last.p_offset)
+        .ok_or_else(|| "extended PT_LOAD size overflows".to_owned())?;
+    write_u64(buf, last.header_offset + 32, little, new_size)?; // p_filesz
+    write_u64(buf, last.header_offset + 40, little, new_size)?; // p_memsz
     Ok((file_offset, vaddr))
 }
 
@@ -968,8 +1041,14 @@ fn vaddr_to_offset(phdrs: &[Phdr64], vaddr: u64) -> Option<u64> {
     phdrs
         .iter()
         .filter(|phdr| phdr.p_type == PT_LOAD)
-        .find(|phdr| vaddr >= phdr.p_vaddr && vaddr < phdr.p_vaddr + phdr.p_filesz)
-        .map(|phdr| phdr.p_offset + (vaddr - phdr.p_vaddr))
+        .find_map(|phdr| {
+            let end = phdr.p_vaddr.checked_add(phdr.p_filesz)?;
+            if vaddr >= phdr.p_vaddr && vaddr < end {
+                phdr.p_offset.checked_add(vaddr - phdr.p_vaddr)
+            } else {
+                None
+            }
+        })
 }
 
 /// Bytes up to the first NUL.
@@ -980,31 +1059,38 @@ fn cstr(bytes: &[u8]) -> &[u8] {
     }
 }
 
-fn round_up(value: u64, align: u64) -> u64 {
+/// Round `value` up to a multiple of `align`; `None` on overflow.
+fn round_up(value: u64, align: u64) -> Option<u64> {
     if align == 0 {
-        return value;
+        return Some(value);
     }
-    value.div_ceil(align) * align
+    value.div_ceil(align).checked_mul(align)
 }
 
 fn zero_range(buf: &mut [u8], offset: usize, len: usize) -> Result<(), String> {
+    let end = offset
+        .checked_add(len)
+        .ok_or_else(|| "write range outside file".to_owned())?;
     let slice = buf
-        .get_mut(offset..offset + len)
+        .get_mut(offset..end)
         .ok_or_else(|| "write range outside file".to_owned())?;
     slice.fill(0);
     Ok(())
 }
 
 fn write_bytes(buf: &mut [u8], offset: usize, bytes: &[u8]) -> Result<(), String> {
+    let end = offset
+        .checked_add(bytes.len())
+        .ok_or_else(|| "write range outside file".to_owned())?;
     let slice = buf
-        .get_mut(offset..offset + bytes.len())
+        .get_mut(offset..end)
         .ok_or_else(|| "write range outside file".to_owned())?;
     slice.copy_from_slice(bytes);
     Ok(())
 }
 
 fn rd_u16(buf: &[u8], offset: usize, little: bool) -> Option<u16> {
-    let bytes = buf.get(offset..offset + 2)?;
+    let bytes = buf.get(offset..offset.checked_add(2)?)?;
     let array = [bytes[0], bytes[1]];
     Some(if little {
         u16::from_le_bytes(array)
@@ -1014,7 +1100,7 @@ fn rd_u16(buf: &[u8], offset: usize, little: bool) -> Option<u16> {
 }
 
 fn rd_u32(buf: &[u8], offset: usize, little: bool) -> Option<u32> {
-    let bytes = buf.get(offset..offset + 4)?;
+    let bytes = buf.get(offset..offset.checked_add(4)?)?;
     let array = [bytes[0], bytes[1], bytes[2], bytes[3]];
     Some(if little {
         u32::from_le_bytes(array)
@@ -1024,7 +1110,7 @@ fn rd_u32(buf: &[u8], offset: usize, little: bool) -> Option<u32> {
 }
 
 fn rd_u64(buf: &[u8], offset: usize, little: bool) -> Option<u64> {
-    let bytes = buf.get(offset..offset + 8)?;
+    let bytes = buf.get(offset..offset.checked_add(8)?)?;
     let mut array = [0u8; 8];
     array.copy_from_slice(bytes);
     Some(if little {
@@ -1041,6 +1127,130 @@ fn write_u64(buf: &mut [u8], offset: usize, little: bool, value: u64) -> Result<
         value.to_be_bytes()
     };
     write_bytes(buf, offset, &encoded)
+}
+
+// ---------------------------------------------------------------------------
+// Mach-O structured relocation. `LC_ID_DYLIB`/`LC_LOAD_DYLIB`/`LC_RPATH`
+// strings are rewritten in place; the slot capacity is everything from the
+// string's start to the end of its load command (`cmdsize`), so a replacement
+// may grow into the command's trailing NUL padding. 32- and 64-bit thin images
+// (either endianness); universal/fat binaries and anything malformed fall back
+// to the generic size-preserving pass, which cannot move bytes.
+// ---------------------------------------------------------------------------
+
+const MH_MAGIC: u32 = 0xfeed_face;
+/// `MH_MAGIC` as seen through an opposite-endian read.
+const MH_CIGAM: u32 = 0xcefa_edfe;
+const MH_MAGIC_64: u32 = 0xfeed_facf;
+/// `MH_MAGIC_64` as seen through an opposite-endian read.
+const MH_CIGAM_64: u32 = 0xcffa_edfe;
+const MACHO_HEADER32_LEN: usize = 28;
+const MACHO_HEADER64_LEN: usize = 32;
+const LC_LOAD_DYLIB: u32 = 0xc;
+const LC_ID_DYLIB: u32 = 0xd;
+const LC_RPATH: u32 = 0x8000_001c;
+/// Smallest `lc_str` offset: an `rpath_command` is 12 bytes before its string.
+const MIN_LC_STR_OFFSET: usize = 12;
+
+/// One rewritable load-command string slot: from the string's start to the end
+/// of its command.
+struct MachSlot {
+    start: usize,
+    end: usize,
+}
+
+/// Decode the rewritable load-command string slots of a thin Mach-O image.
+/// `None` when the input is not thin Mach-O or its command table is malformed
+/// (left to the size-preserving generic pass). Load commands are laid out
+/// identically in 32- and 64-bit images; only the header length differs.
+fn macho_string_slots(data: &[u8]) -> Option<Vec<MachSlot>> {
+    let (little, header_len) = match rd_u32(data, 0, true)? {
+        MH_MAGIC => (true, MACHO_HEADER32_LEN),
+        MH_CIGAM => (false, MACHO_HEADER32_LEN),
+        MH_MAGIC_64 => (true, MACHO_HEADER64_LEN),
+        MH_CIGAM_64 => (false, MACHO_HEADER64_LEN),
+        _ => return None,
+    };
+    let ncmds = rd_u32(data, 16, little)? as usize;
+    let sizeofcmds = rd_u32(data, 20, little)? as usize;
+    let cmds_end = header_len.checked_add(sizeofcmds)?;
+    if cmds_end > data.len() {
+        return None;
+    }
+
+    let mut slots = Vec::new();
+    let mut cursor = header_len;
+    for _ in 0..ncmds {
+        let cmd = rd_u32(data, cursor, little)?;
+        let cmdsize = rd_u32(data, cursor.checked_add(4)?, little)? as usize;
+        let cmd_end = cursor.checked_add(cmdsize)?;
+        if cmdsize < 8 || cmd_end > cmds_end {
+            return None;
+        }
+        if matches!(cmd, LC_ID_DYLIB | LC_LOAD_DYLIB | LC_RPATH) {
+            let str_off = rd_u32(data, cursor.checked_add(8)?, little)? as usize;
+            let start = cursor.checked_add(str_off)?;
+            if str_off < MIN_LC_STR_OFFSET || start >= cmd_end {
+                return None;
+            }
+            slots.push(MachSlot {
+                start,
+                end: cmd_end,
+            });
+        }
+        cursor = cmd_end;
+    }
+    Some(slots)
+}
+
+/// Rewrite the dylib/rpath load-command strings of `buf` in place, reading the
+/// original strings (and slot capacities) from `original`. `Err` when a
+/// replacement cannot fit its command slot (rejected before any write).
+fn macho_relocate(
+    buf: &mut [u8],
+    original: &[u8],
+    subs: &[(Vec<u8>, Vec<u8>)],
+) -> Result<bool, String> {
+    let Some(slots) = macho_string_slots(original) else {
+        return Ok(false);
+    };
+    let mut changed = false;
+    for slot in slots {
+        let slot_bytes = original
+            .get(slot.start..slot.end)
+            .ok_or_else(|| "load command outside file".to_owned())?;
+        let current = cstr(slot_bytes);
+        let (replaced, slot_changed) = replace_all(current, subs);
+        if !slot_changed {
+            continue;
+        }
+        let capacity = slot_bytes.len();
+        // The replacement plus its NUL terminator must fit the command slot;
+        // the trailing padding inside cmdsize is legitimate capacity.
+        if replaced.len() >= capacity {
+            return Err(format!(
+                "relocated load-command string needs {} bytes plus NUL but its \
+                 command slot holds {capacity}",
+                replaced.len()
+            ));
+        }
+        zero_range(buf, slot.start, capacity)?;
+        write_bytes(buf, slot.start, &replaced)?;
+        changed = true;
+    }
+    Ok(changed)
+}
+
+/// Load-command string slots as protected byte ranges for the generic pass.
+fn macho_linkage_regions(data: &[u8]) -> Vec<(usize, usize)> {
+    macho_string_slots(data)
+        .map(|slots| {
+            slots
+                .into_iter()
+                .map(|slot| (slot.start, slot.end))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -1415,5 +1625,196 @@ mod tests {
     fn runpath_drops_foreign_segments_and_ensures_lib() {
         let out = compute_runpath("/opt/hb/lib/foo:/usr/lib:$ORIGIN/../lib", "/opt/hb", false);
         assert_eq!(out, "/opt/hb/lib/foo:$ORIGIN/../lib:/opt/hb/lib");
+    }
+
+    // ---- Task 5 relocation-hardening regressions ----
+
+    #[test]
+    fn write_atomic_preserves_exact_mode() {
+        let temp = okr(tempfile::TempDir::new(), "temp");
+        let root = some(
+            Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).ok(),
+            "utf8 temp",
+        );
+        let target = root.join("bin/tool");
+        okr(
+            fs::create_dir_all(some(target.parent(), "parent").as_std_path()),
+            "mkdir",
+        );
+        okr(fs::write(target.as_std_path(), b"old"), "seed");
+        okr(write_atomic(&target, b"new", 0o755), "write_atomic");
+        let meta = okr(fs::metadata(target.as_std_path()), "stat");
+        assert_eq!(meta.mode() & 0o7777, 0o755, "mode must survive umask");
+        assert_eq!(okr(fs::read(target.as_std_path()), "read"), b"new");
+    }
+
+    /// File offset of the DT_RUNPATH value word inside the fixture's dynamic
+    /// segment, recovered via the decoder rather than hardcoded layout math.
+    fn runpath_value_offset(elf: &[u8]) -> usize {
+        let (little, phdrs) = some(decode_elf64(elf), "elf64");
+        let dynamic = some(phdrs.iter().find(|p| p.p_type == PT_DYNAMIC), "dynamic");
+        let dyn_off = dynamic.p_offset as usize;
+        for i in 0..(dynamic.p_filesz as usize) / DYN64_LEN {
+            let entry = dyn_off + i * DYN64_LEN;
+            if some(rd_u64(elf, entry, little), "tag") == DT_RUNPATH {
+                return entry + 8;
+            }
+        }
+        panic!("fixture has no DT_RUNPATH");
+    }
+
+    #[test]
+    fn elf_runpath_offset_outside_string_table_rejected_unchanged() {
+        let mut elf = build_elf64(
+            "@@HOMEBREW_PREFIX@@/lib/ld.so",
+            "@@HOMEBREW_PREFIX@@/lib/foo",
+        );
+        let value_at = runpath_value_offset(&elf);
+        // Point DT_RUNPATH past DT_STRSZ: the span leaves the mapped table.
+        wr64(&mut elf, value_at, 1 << 20);
+        let before = elf.clone();
+        let result = relocate_bytes(&elf, "/opt/hb", false);
+        assert!(matches!(result, Err(PourError::Relocation { .. })));
+        assert_eq!(elf, before, "rejected input must stay byte-unchanged");
+    }
+
+    #[test]
+    fn elf_string_table_past_end_of_file_rejected_unchanged() {
+        let mut elf = build_elf64(
+            "@@HOMEBREW_PREFIX@@/lib/ld.so",
+            "@@HOMEBREW_PREFIX@@/lib/foo",
+        );
+        let (little, phdrs) = some(decode_elf64(&elf), "elf64");
+        let dynamic = some(phdrs.iter().find(|p| p.p_type == PT_DYNAMIC), "dynamic");
+        let dyn_off = dynamic.p_offset as usize;
+        let total = elf.len() as u64;
+        for i in 0..(dynamic.p_filesz as usize) / DYN64_LEN {
+            let entry = dyn_off + i * DYN64_LEN;
+            if some(rd_u64(&elf, entry, little), "tag") == DT_STRSZ {
+                // Inflate DT_STRSZ so the table span leaves the file.
+                wr64(&mut elf, entry + 8, total);
+                break;
+            }
+        }
+        let before = elf.clone();
+        let result = relocate_bytes(&elf, "/opt/hb", false);
+        assert!(matches!(result, Err(PourError::Relocation { .. })));
+        assert_eq!(elf, before);
+    }
+
+    #[test]
+    fn elf_grow_with_bss_in_final_load_rejected_unchanged() {
+        let mut elf = build_elf64(
+            "@@HOMEBREW_PREFIX@@/lib/ld.so",
+            "@@HOMEBREW_PREFIX@@/lib/foo",
+        );
+        // Give the sole PT_LOAD a BSS tail: p_memsz = p_filesz + 64.
+        let phoff = EHDR_MIN_LEN;
+        let filesz = some(rd_u64(&elf, phoff + 32, true), "filesz");
+        wr64(&mut elf, phoff + 40, filesz + 64);
+        let before = elf.clone();
+        let prefix = "/a/very/long/custom/homebrew/prefix/location/deep";
+        let result = relocate_bytes(&elf, prefix, false);
+        assert!(matches!(result, Err(PourError::Relocation { .. })));
+        assert_eq!(elf, before);
+    }
+
+    #[test]
+    fn elf_grow_with_nonterminal_final_load_rejected_unchanged() {
+        let mut elf = build_elf64(
+            "@@HOMEBREW_PREFIX@@/lib/ld.so",
+            "@@HOMEBREW_PREFIX@@/lib/foo",
+        );
+        // Truncate the PT_LOAD file extent (memsz kept equal) so it no longer
+        // ends the file.
+        let phoff = EHDR_MIN_LEN;
+        let filesz = some(rd_u64(&elf, phoff + 32, true), "filesz");
+        wr64(&mut elf, phoff + 32, filesz - 8);
+        wr64(&mut elf, phoff + 40, filesz - 8);
+        let before = elf.clone();
+        let prefix = "/a/very/long/custom/homebrew/prefix/location/deep";
+        let result = relocate_bytes(&elf, prefix, false);
+        assert!(matches!(result, Err(PourError::Relocation { .. })));
+        assert_eq!(elf, before);
+    }
+
+    /// Hand-assemble a thin Mach-O 64 header with one `LC_RPATH` whose string
+    /// slot has `pad` spare bytes after the NUL terminator.
+    fn build_macho_rpath(rpath: &str, pad: usize) -> Vec<u8> {
+        let str_off = MIN_LC_STR_OFFSET;
+        let raw = str_off + rpath.len() + 1 + pad;
+        let cmdsize = raw.div_ceil(8) * 8;
+        let mut buf = vec![0u8; MACHO_HEADER64_LEN + cmdsize];
+        wr32(&mut buf, 0, MH_MAGIC_64);
+        wr32(&mut buf, 4, 0x0100_0007); // cputype x86_64
+        wr32(&mut buf, 8, 0x3); // cpusubtype
+        wr32(&mut buf, 12, 0x2); // filetype MH_EXECUTE
+        wr32(&mut buf, 16, 1); // ncmds
+        wr32(&mut buf, 20, cmdsize as u32); // sizeofcmds
+        let base = MACHO_HEADER64_LEN;
+        wr32(&mut buf, base, LC_RPATH);
+        wr32(&mut buf, base + 4, cmdsize as u32);
+        wr32(&mut buf, base + 8, str_off as u32);
+        buf[base + str_off..base + str_off + rpath.len()].copy_from_slice(rpath.as_bytes());
+        buf
+    }
+
+    #[test]
+    fn macho_rpath_grows_into_trailing_nul_capacity() {
+        // "/opt/homebrew-longer" (20 bytes) replaces the 19-byte placeholder:
+        // longer than the original string, but inside the command slot.
+        let macho = build_macho_rpath("@@HOMEBREW_PREFIX@@/lib", 8);
+        let subs = subs_for("/opt/homebrew-longer");
+        let mut buf = macho.clone();
+        assert!(okr(macho_relocate(&mut buf, &macho, &subs), "relocate"));
+        assert_eq!(buf.len(), macho.len(), "in-place rewrite only");
+        let slots = some(macho_string_slots(&buf), "slots");
+        assert_eq!(slots.len(), 1);
+        assert_eq!(
+            cstr(&buf[slots[0].start..slots[0].end]),
+            b"/opt/homebrew-longer/lib"
+        );
+    }
+
+    #[test]
+    fn macho_rpath_exceeding_command_slot_rejected_unchanged() {
+        let macho = build_macho_rpath("@@HOMEBREW_PREFIX@@/lib", 0);
+        let subs = subs_for("/a/very/long/custom/homebrew/prefix/location/deep");
+        let mut buf = macho.clone();
+        let result = macho_relocate(&mut buf, &macho, &subs);
+        assert!(result.is_err(), "overflow past cmdsize must be rejected");
+        assert_eq!(buf, macho, "rejected image must stay byte-unchanged");
+    }
+
+    #[test]
+    fn macho_rpath_rewrites_through_full_binary_pass() {
+        let macho = build_macho_rpath("@@HOMEBREW_PREFIX@@/lib", 16);
+        match relocate_bytes(&macho, "/opt/homebrew-longer", false) {
+            Ok(Some((bytes, codesign))) => {
+                assert!(codesign, "modified Mach-O must be re-signed");
+                assert_eq!(bytes.len(), macho.len());
+                let slots = some(macho_string_slots(&bytes), "slots");
+                assert_eq!(
+                    cstr(&bytes[slots[0].start..slots[0].end]),
+                    b"/opt/homebrew-longer/lib"
+                );
+            }
+            other => panic!("expected changed Mach-O, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn malformed_macho_command_table_falls_back_to_generic_pass() {
+        let mut macho = build_macho_rpath("@@HOMEBREW_PREFIX@@/lib", 8);
+        // Corrupt sizeofcmds so the command table leaves the file: the
+        // structured pass must decline rather than read out of bounds.
+        wr32(&mut macho, 20, u32::MAX);
+        assert!(macho_string_slots(&macho).is_none());
+        let mut buf = macho.clone();
+        assert!(!okr(
+            macho_relocate(&mut buf, &macho, &subs_for("/opt/hb")),
+            "fallback"
+        ));
+        assert_eq!(buf, macho);
     }
 }
