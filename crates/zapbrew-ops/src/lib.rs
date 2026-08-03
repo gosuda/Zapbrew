@@ -3,13 +3,18 @@
 pub mod autoremove;
 mod context;
 pub mod dependency;
+pub mod desc;
 mod error;
 pub mod fetch;
+pub mod info;
 pub mod install;
 mod install_steps;
+pub mod list;
 pub mod outdated;
 pub mod platform;
 pub mod reinstall;
+mod render;
+pub mod search;
 pub mod state;
 mod transaction;
 pub mod uninstall;

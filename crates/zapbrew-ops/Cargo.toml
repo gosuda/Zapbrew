@@ -10,9 +10,11 @@ workspace = true
 
 [dependencies]
 camino.workspace = true
+regex.workspace = true
 reqwest.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
+serde.workspace = true
 tokio.workspace = true
 zapbrew-api = { path = "../zapbrew-api" }
 zapbrew-net = { path = "../zapbrew-net" }
@@ -22,6 +24,7 @@ zapbrew-types = { path = "../zapbrew-types" }
 
 [dev-dependencies]
 tempfile.workspace = true
+insta.workspace = true
 flate2.workspace = true
 sha2.workspace = true
 tar.workspace = true

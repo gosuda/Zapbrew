@@ -2747,7 +2747,10 @@ version = "0.1.0"
 dependencies = [
  "camino",
  "flate2",
+ "insta",
+ "regex",
  "reqwest",
+ "serde",
  "serde_json",
  "sha2 0.11.0",
  "tar",
