@@ -2745,6 +2745,10 @@ dependencies = [
 name = "zapbrew-ops"
 version = "0.1.0"
 dependencies = [
+ "camino",
+ "reqwest",
+ "tempfile",
+ "thiserror",
  "zapbrew-api",
  "zapbrew-net",
  "zapbrew-pour",

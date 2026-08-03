@@ -9,8 +9,14 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+camino.workspace = true
+reqwest.workspace = true
+thiserror.workspace = true
 zapbrew-api = { path = "../zapbrew-api" }
 zapbrew-net = { path = "../zapbrew-net" }
 zapbrew-pour = { path = "../zapbrew-pour" }
 zapbrew-prefix = { path = "../zapbrew-prefix" }
 zapbrew-types = { path = "../zapbrew-types" }
+
+[dev-dependencies]
+tempfile.workspace = true
