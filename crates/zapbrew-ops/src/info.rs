@@ -85,7 +85,7 @@ fn render_formula(ctx: &Ctx, formula: &Formula, installed: Option<&InstalledForm
             .print(&format!("Old Names: {}", formula.oldnames.join(", ")));
     }
 
-    match installed.and_then(InstalledFormula::latest) {
+    match installed.and_then(intent_keg) {
         Some(keg) if keg.tab().installed_on_request => {
             ctx.reporter.print("Installed (on request)");
         }
@@ -109,6 +109,19 @@ fn render_formula(ctx: &Ctx, formula: &Formula, installed: Option<&InstalledForm
         ctx.reporter.ohai("Caveats");
         ctx.reporter.print(&substitute_prefixes(ctx, caveats));
     }
+}
+
+/// Keg whose receipt reports install intent, with Homebrew `Tab.for_formula`
+/// precedence: opt-linked, then linked, then the sole installed keg, then latest.
+fn intent_keg(installed: &InstalledFormula) -> Option<&InstalledKeg> {
+    installed
+        .optlinked()
+        .or_else(|| installed.linked())
+        .or_else(|| match installed.kegs() {
+            [keg] => Some(keg),
+            _ => None,
+        })
+        .or_else(|| installed.latest())
 }
 
 fn render_installed(ctx: &Ctx, formula: &Formula, installed: &InstalledFormula) {

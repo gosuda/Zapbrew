@@ -165,6 +165,37 @@ fn keg(env: &Env, version: &str, installed_on_request: bool, bytes: &[u8]) -> Ke
     keg
 }
 
+fn link_keg(environment: &Env, keg: &Keg) {
+    std::fs::create_dir_all(&environment.linked).expect("linked dir");
+    symlink(keg.path(), environment.linked.join("sample")).expect("linked keg");
+}
+
+fn optlink_keg(environment: &Env, keg: &Keg) {
+    std::fs::create_dir_all(environment.prefix.join("opt")).expect("opt dir");
+    symlink(keg.path(), environment.prefix.join("opt").join("sample")).expect("opt-linked keg");
+}
+
+async fn render_sample(environment: &Env) -> String {
+    let root = environment.prefix.clone();
+    let (ctx, reporter) = context(environment.clone(), &formulae());
+    let before = fingerprint(&root);
+    info::run(
+        &ctx,
+        Args {
+            names: vec!["sample".to_owned()],
+            json_v2: false,
+        },
+    )
+    .await
+    .expect("text info");
+    assert_eq!(
+        fingerprint(&root),
+        before,
+        "info must not mutate installed state"
+    );
+    events(&reporter, &root)
+}
+
 fn events(reporter: &RecordingReporter, root: &Utf8Path) -> String {
     reporter
         .take()
@@ -265,8 +296,8 @@ async fn installed_revision_link_selection_status_and_multiple_name_separator_ar
     let environment = env(&temp);
     let linked = keg(&environment, "1.0", true, b"old");
     keg(&environment, "2.0_2", false, b"new-version");
-    std::fs::create_dir_all(&environment.linked).expect("linked dir");
-    symlink(linked.path(), environment.linked.join("sample")).expect("linked keg");
+    optlink_keg(&environment, &linked);
+    link_keg(&environment, &linked);
     let root = environment.prefix.clone();
     let (ctx, reporter) = context(environment, &formulae());
     let before = fingerprint(&root);
@@ -296,7 +327,7 @@ async fn installed_revision_link_selection_status_and_multiple_name_separator_ar
     ---
     print:Old Names: sample-old
     ---
-    print:Installed (as dependency)
+    print:Installed (on request)
     ---
     print:From: https://github.com/Homebrew/homebrew-core/blob/HEAD/Formula/s/sample.rb
     ---
@@ -333,6 +364,226 @@ async fn installed_revision_link_selection_status_and_multiple_name_separator_ar
     print:Not installed
     ---
     print:From: https://github.com/vendor/homebrew-tools/blob/HEAD/Formula/plain.rb
+    ");
+}
+
+#[tokio::test]
+async fn status_prefers_optlinked_over_linked_when_flags_disagree() {
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    let opt = keg(&environment, "1.0", true, b"old-opt");
+    let linked = keg(&environment, "2.0_2", false, b"new-version");
+    optlink_keg(&environment, &opt);
+    link_keg(&environment, &linked);
+    insta::assert_snapshot!(render_sample(&environment).await, @r"
+    ohai:homebrew/core/sample: stable 2.0 (bottled) [keg-only]
+    ---
+    print:Host description
+    ---
+    print:https://example.test/sample
+    ---
+    print:Aliases: samp
+    ---
+    print:Old Names: sample-old
+    ---
+    print:Installed (on request)
+    ---
+    print:From: https://github.com/Homebrew/homebrew-core/blob/HEAD/Formula/s/sample.rb
+    ---
+    print:License: MIT
+    ---
+    ohai:Installed Versions
+    ---
+    print:homebrew/core/sample 2.0_2 (2 files, 654B) [Linked]
+    ---
+    ohai:Dependencies
+    ---
+    print:Build (1): build-dep
+    ---
+    print:Required (1): required-dep
+    ---
+    print:Recommended (1): recommended-dep
+    ---
+    print:Optional (1): optional-dep
+    ---
+    ohai:Caveats
+    ---
+    print:Use <ROOT>/bin and <ROOT>/share.
+    ");
+}
+
+#[tokio::test]
+async fn status_falls_back_to_linked_when_no_optlink() {
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    let linked = keg(&environment, "1.0", false, b"old");
+    keg(&environment, "2.0_2", true, b"new-version");
+    link_keg(&environment, &linked);
+    insta::assert_snapshot!(render_sample(&environment).await, @r"
+    ohai:homebrew/core/sample: stable 2.0 (bottled) [keg-only]
+    ---
+    print:Host description
+    ---
+    print:https://example.test/sample
+    ---
+    print:Aliases: samp
+    ---
+    print:Old Names: sample-old
+    ---
+    print:Installed (as dependency)
+    ---
+    print:From: https://github.com/Homebrew/homebrew-core/blob/HEAD/Formula/s/sample.rb
+    ---
+    print:License: MIT
+    ---
+    ohai:Installed Versions
+    ---
+    print:homebrew/core/sample 2.0_2 (2 files, 653B)
+    ---
+    print:homebrew/core/sample 1.0   (2 files, 646B) [Linked]
+    ---
+    ohai:Dependencies
+    ---
+    print:Build (1): build-dep
+    ---
+    print:Required (1): required-dep
+    ---
+    print:Recommended (1): recommended-dep
+    ---
+    print:Optional (1): optional-dep
+    ---
+    ohai:Caveats
+    ---
+    print:Use <ROOT>/bin and <ROOT>/share.
+    ");
+}
+
+#[tokio::test]
+async fn status_uses_sole_installed_keg() {
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    keg(&environment, "1.0", true, b"sole");
+    insta::assert_snapshot!(render_sample(&environment).await, @r"
+    ohai:homebrew/core/sample: stable 2.0 (bottled) [keg-only]
+    ---
+    print:Host description
+    ---
+    print:https://example.test/sample
+    ---
+    print:Aliases: samp
+    ---
+    print:Old Names: sample-old
+    ---
+    print:Installed (on request)
+    ---
+    print:From: https://github.com/Homebrew/homebrew-core/blob/HEAD/Formula/s/sample.rb
+    ---
+    print:License: MIT
+    ---
+    ohai:Installed Versions
+    ---
+    print:homebrew/core/sample 1.0 (2 files, 646B)
+    ---
+    ohai:Dependencies
+    ---
+    print:Build (1): build-dep
+    ---
+    print:Required (1): required-dep
+    ---
+    print:Recommended (1): recommended-dep
+    ---
+    print:Optional (1): optional-dep
+    ---
+    ohai:Caveats
+    ---
+    print:Use <ROOT>/bin and <ROOT>/share.
+    ");
+}
+
+#[tokio::test]
+async fn status_falls_back_to_latest_when_nothing_linked() {
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    keg(&environment, "1.0", false, b"old");
+    keg(&environment, "2.0_2", true, b"new-version");
+    insta::assert_snapshot!(render_sample(&environment).await, @r"
+    ohai:homebrew/core/sample: stable 2.0 (bottled) [keg-only]
+    ---
+    print:Host description
+    ---
+    print:https://example.test/sample
+    ---
+    print:Aliases: samp
+    ---
+    print:Old Names: sample-old
+    ---
+    print:Installed (on request)
+    ---
+    print:From: https://github.com/Homebrew/homebrew-core/blob/HEAD/Formula/s/sample.rb
+    ---
+    print:License: MIT
+    ---
+    ohai:Installed Versions
+    ---
+    print:homebrew/core/sample 2.0_2 (2 files, 653B)
+    ---
+    ohai:Dependencies
+    ---
+    print:Build (1): build-dep
+    ---
+    print:Required (1): required-dep
+    ---
+    print:Recommended (1): recommended-dep
+    ---
+    print:Optional (1): optional-dep
+    ---
+    ohai:Caveats
+    ---
+    print:Use <ROOT>/bin and <ROOT>/share.
+    ");
+}
+
+#[tokio::test]
+async fn status_uses_optlinked_intent_for_keg_only_formula() {
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    let opt = keg(&environment, "1.0", true, b"old-opt");
+    keg(&environment, "2.0_2", false, b"new-version");
+    optlink_keg(&environment, &opt);
+    insta::assert_snapshot!(render_sample(&environment).await, @r"
+    ohai:homebrew/core/sample: stable 2.0 (bottled) [keg-only]
+    ---
+    print:Host description
+    ---
+    print:https://example.test/sample
+    ---
+    print:Aliases: samp
+    ---
+    print:Old Names: sample-old
+    ---
+    print:Installed (on request)
+    ---
+    print:From: https://github.com/Homebrew/homebrew-core/blob/HEAD/Formula/s/sample.rb
+    ---
+    print:License: MIT
+    ---
+    ohai:Installed Versions
+    ---
+    print:homebrew/core/sample 2.0_2 (2 files, 654B)
+    ---
+    ohai:Dependencies
+    ---
+    print:Build (1): build-dep
+    ---
+    print:Required (1): required-dep
+    ---
+    print:Recommended (1): recommended-dep
+    ---
+    print:Optional (1): optional-dep
+    ---
+    ohai:Caveats
+    ---
+    print:Use <ROOT>/bin and <ROOT>/share.
     ");
 }
 
