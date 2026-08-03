@@ -7,7 +7,7 @@ use zapbrew_net::{DownloadRequest, download_all, select_bottle};
 use zapbrew_prefix::{Keg, RuntimeDependency, Source, SourceVersions, Tab};
 use zapbrew_types::{Arch, BottleTag, FormulaName};
 
-use crate::dependency::{DependencyMode, DependencyOptions, expand};
+use crate::dependency::{DependencyMode, DependencyOptions, EdgeFilter, expand};
 use crate::install_steps::InstallSteps;
 use crate::state::{InstalledFormula, InstalledKeg, InstalledState, scan_selected};
 use crate::transaction::{
@@ -206,6 +206,7 @@ pub(crate) fn make_tab(
         &DependencyOptions {
             target: ctx.env.bottle_tag,
             mode: DependencyMode::Pour,
+            filter: EdgeFilter::ALL,
         },
     )?;
     let direct: HashSet<String> = formula
@@ -372,6 +373,7 @@ fn dependency_candidates<'a>(
         &DependencyOptions {
             target: ctx.env.bottle_tag,
             mode: DependencyMode::Pour,
+            filter: EdgeFilter::ALL,
         },
     )?;
     dependencies

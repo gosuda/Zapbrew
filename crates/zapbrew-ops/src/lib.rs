@@ -3,12 +3,14 @@
 pub mod autoremove;
 mod context;
 pub mod dependency;
+pub mod deps;
 pub mod desc;
 mod error;
 pub mod fetch;
 pub mod info;
 pub mod install;
 mod install_steps;
+pub mod leaves;
 pub mod list;
 pub mod outdated;
 pub mod platform;
@@ -19,6 +21,7 @@ pub mod state;
 mod transaction;
 pub mod uninstall;
 pub mod upgrade;
+pub mod uses;
 
 pub use context::{Ctx, Reporter};
 pub use error::OpError;

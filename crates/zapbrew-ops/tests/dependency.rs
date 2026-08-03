@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use zapbrew_api::Catalog;
 use zapbrew_ops::OpError;
 use zapbrew_ops::dependency::{
-    DependencyMode, DependencyOptions, Necessity, UsesOptions, expand, uses,
+    DependencyMode, DependencyOptions, EdgeFilter, Necessity, UsesOptions, expand, uses,
 };
 use zapbrew_types::BottleTag;
 
@@ -29,9 +29,7 @@ fn uses_options(host: BottleTag) -> UsesOptions {
     UsesOptions {
         host,
         recursive: false,
-        include_build: false,
-        include_test: false,
-        include_optional: false,
+        filter: EdgeFilter::default(),
     }
 }
 
@@ -55,6 +53,7 @@ fn expansion_is_post_order_and_merges_every_occurrence() {
         &DependencyOptions {
             target,
             mode: DependencyMode::All,
+            filter: EdgeFilter::ALL,
         },
     ));
 
@@ -87,6 +86,7 @@ fn pour_filter_runs_after_duplicate_tag_merge() {
         &DependencyOptions {
             target,
             mode: DependencyMode::Pour,
+            filter: EdgeFilter::ALL,
         },
     ));
 
@@ -115,6 +115,7 @@ fn active_stack_reports_the_closed_cycle() {
         &DependencyOptions {
             target,
             mode: DependencyMode::All,
+            filter: EdgeFilter::ALL,
         },
     ) {
         Ok(_) => panic!("expected a dependency cycle"),
@@ -144,6 +145,7 @@ fn uses_from_macos_obeys_linux_and_since_bound_hosts() {
         &DependencyOptions {
             target: linux,
             mode: DependencyMode::All,
+            filter: EdgeFilter::ALL,
         },
     ));
     assert_eq!(
@@ -162,6 +164,7 @@ fn uses_from_macos_obeys_linux_and_since_bound_hosts() {
         &DependencyOptions {
             target: ventura,
             mode: DependencyMode::All,
+            filter: EdgeFilter::ALL,
         },
     ));
     assert_eq!(before_bound.len(), 1);
@@ -175,6 +178,7 @@ fn uses_from_macos_obeys_linux_and_since_bound_hosts() {
         &DependencyOptions {
             target: sonoma,
             mode: DependencyMode::All,
+            filter: EdgeFilter::ALL,
         },
     ));
     assert!(at_bound.is_empty());
@@ -190,6 +194,7 @@ fn missing_formula_is_typed_for_roots_and_edges() {
     let options = DependencyOptions {
         target,
         mode: DependencyMode::All,
+        filter: EdgeFilter::ALL,
     };
 
     for requested in ["missing-root", "root"] {
@@ -228,6 +233,7 @@ fn recommended_outranks_optional_within_one_tagged_occurrence() {
         &DependencyOptions {
             target,
             mode: DependencyMode::All,
+            filter: EdgeFilter::ALL,
         },
     ));
 
@@ -333,7 +339,7 @@ fn inverse_uses_filters_edge_classes_until_selected() {
             &catalog,
             ["optional"],
             &UsesOptions {
-                include_optional: true,
+                filter: EdgeFilter::query(false, false, true, false),
                 ..default
             },
         )),
@@ -344,7 +350,7 @@ fn inverse_uses_filters_edge_classes_until_selected() {
             &catalog,
             ["build"],
             &UsesOptions {
-                include_build: true,
+                filter: EdgeFilter::query(true, false, false, false),
                 ..default
             },
         )),
@@ -355,7 +361,7 @@ fn inverse_uses_filters_edge_classes_until_selected() {
             &catalog,
             ["test"],
             &UsesOptions {
-                include_test: true,
+                filter: EdgeFilter::query(false, true, false, false),
                 ..default
             },
         )),
@@ -440,4 +446,139 @@ fn inverse_uses_rejects_the_universal_host_tag() {
         }
         other => panic!("expected invalid state, got {other:?}"),
     }
+}
+
+fn query_names(
+    catalog: &Catalog,
+    host: BottleTag,
+    filter: EdgeFilter,
+) -> std::collections::BTreeSet<String> {
+    ok(expand(
+        catalog,
+        ["root"],
+        &DependencyOptions {
+            target: host,
+            mode: DependencyMode::All,
+            filter,
+        },
+    ))
+    .into_iter()
+    .map(|dependency| dependency.name)
+    .collect()
+}
+
+#[test]
+fn query_filter_truth_table_is_disjunctive_after_recommended_ignore() {
+    let host = tag("linux", None);
+    let catalog = catalog(
+        r#"[
+          {"name":"root","full_name":"root","versions":{"stable":"1"},
+           "dependencies":["required"],"recommended_dependencies":["recommended"],
+           "optional_dependencies":["optional"],"build_dependencies":["build"],
+           "test_dependencies":["test"],
+           "uses_from_macos":[
+             {"recommended-build":["recommended","build"]},
+             {"recommended-test":["recommended","test"]},
+             {"recommended-optional":["recommended","optional"]},
+             {"build-optional":["build","optional"]}
+           ]},
+          {"name":"required","full_name":"required","versions":{"stable":"1"}},
+          {"name":"recommended","full_name":"recommended","versions":{"stable":"1"}},
+          {"name":"optional","full_name":"optional","versions":{"stable":"1"}},
+          {"name":"build","full_name":"build","versions":{"stable":"1"}},
+          {"name":"test","full_name":"test","versions":{"stable":"1"}},
+          {"name":"recommended-build","full_name":"recommended-build","versions":{"stable":"1"}},
+          {"name":"recommended-test","full_name":"recommended-test","versions":{"stable":"1"}},
+          {"name":"recommended-optional","full_name":"recommended-optional","versions":{"stable":"1"}},
+          {"name":"build-optional","full_name":"build-optional","versions":{"stable":"1"}}
+        ]"#,
+        host,
+    );
+    let cases = [
+        (
+            EdgeFilter::default(),
+            vec![
+                "recommended",
+                "recommended-build",
+                "recommended-optional",
+                "recommended-test",
+                "required",
+            ],
+        ),
+        (
+            EdgeFilter::query(true, false, false, false),
+            vec![
+                "build",
+                "build-optional",
+                "recommended",
+                "recommended-build",
+                "recommended-optional",
+                "recommended-test",
+                "required",
+            ],
+        ),
+        (
+            EdgeFilter::query(false, true, false, false),
+            vec![
+                "recommended",
+                "recommended-build",
+                "recommended-optional",
+                "recommended-test",
+                "required",
+                "test",
+            ],
+        ),
+        (
+            EdgeFilter::query(false, false, true, false),
+            vec![
+                "build-optional",
+                "optional",
+                "recommended",
+                "recommended-build",
+                "recommended-optional",
+                "recommended-test",
+                "required",
+            ],
+        ),
+        (
+            EdgeFilter::query(false, false, false, true),
+            vec!["required"],
+        ),
+        (
+            EdgeFilter::query(true, true, true, true),
+            vec!["build", "build-optional", "optional", "required", "test"],
+        ),
+    ];
+
+    for (filter, expected) in cases {
+        assert_eq!(
+            query_names(&catalog, host, filter),
+            expected.into_iter().map(str::to_owned).collect()
+        );
+    }
+}
+
+#[test]
+fn query_test_edges_are_root_only_and_excluded_edges_are_pruned() {
+    let host = tag("linux", None);
+    let catalog = catalog(
+        r#"[
+          {"name":"root","full_name":"root","versions":{"stable":"1"},
+           "dependencies":["child"],"test_dependencies":["root-test"],
+           "optional_dependencies":["missing-optional"]},
+          {"name":"child","full_name":"child","versions":{"stable":"1"},
+           "test_dependencies":["indirect-test"]},
+          {"name":"root-test","full_name":"root-test","versions":{"stable":"1"}},
+          {"name":"indirect-test","full_name":"indirect-test","versions":{"stable":"1"}}
+        ]"#,
+        host,
+    );
+
+    assert_eq!(
+        query_names(&catalog, host, EdgeFilter::query(false, true, false, false)),
+        ["child", "root-test"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+    );
 }

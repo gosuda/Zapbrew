@@ -1,12 +1,8 @@
 use std::collections::HashSet;
-use std::str::FromStr;
+use zapbrew_net::download_all;
 
-use zapbrew_api::Formula;
-use zapbrew_net::{DownloadRequest, download_all, select_bottle};
-use zapbrew_types::FormulaName;
-
-use crate::dependency::{DependencyMode, DependencyOptions, expand};
-use crate::install::resolve_formula;
+use crate::dependency::{DependencyMode, DependencyOptions, EdgeFilter, expand};
+use crate::install::{request_for_formula, resolve_formula};
 use crate::{Ctx, OpError};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -33,6 +29,7 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
             &DependencyOptions {
                 target: ctx.env.bottle_tag,
                 mode: DependencyMode::Pour,
+                filter: EdgeFilter::ALL,
             },
         )? {
             let formula =
@@ -50,7 +47,7 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
 
     let requests = formulae
         .iter()
-        .map(|formula| request_for(ctx, formula))
+        .map(|formula| request_for_formula(ctx, formula).map(|(_, request)| request))
         .collect::<Result<Vec<_>, OpError>>()?;
     for request in &requests {
         ctx.reporter
@@ -71,23 +68,4 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
             .print(&format!("SHA-256: {}", request.bottle.sha256));
     }
     Ok(())
-}
-
-fn request_for(ctx: &Ctx, formula: &Formula) -> Result<DownloadRequest, OpError> {
-    let name = FormulaName::from_str(&formula.name).map_err(|source| OpError::InvalidState {
-        reason: format!("catalog formula name {} is invalid: {source}", formula.name),
-    })?;
-    let bottle = formula
-        .bottle
-        .as_ref()
-        .ok_or_else(|| zapbrew_net::NetError::NoBottle {
-            name: formula.name.clone(),
-            tag: ctx.env.bottle_tag,
-        })?;
-    Ok(DownloadRequest {
-        bottle: select_bottle(&ctx.env, &name, &bottle.files)?.clone(),
-        name,
-        pkg_version: formula.pkg_version.clone(),
-        rebuild: bottle.rebuild,
-    })
 }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -7,6 +7,7 @@ use camino::Utf8PathBuf;
 use tempfile::TempDir;
 use zapbrew_api::{CaskCatalog, Catalog};
 use zapbrew_ops::autoremove::{self, Args};
+use zapbrew_ops::state::scan;
 use zapbrew_ops::{Ctx, Reporter};
 use zapbrew_prefix::{
     CommandOutput, CommandRunner, CommandSpec, Env, EnvDetectInput, Keg, RuntimeDependency, Tab,
@@ -199,6 +200,68 @@ async fn requested_formula_and_its_dependency_are_not_candidates() {
     assert!(app.path().exists());
     assert!(dep.path().exists());
     assert!(reporter.take().is_empty());
+}
+
+#[tokio::test]
+async fn real_removal_matches_leaf_rounds_of_the_fixpoint() {
+    let temp = TempDir::new().expect("temp");
+    let (ctx, reporter) = context(&temp);
+    let root = keg(&ctx.env, "root", false, &["middle"]);
+    let middle = keg(&ctx.env, "middle", false, &["leaf"]);
+    let leaf = keg(&ctx.env, "leaf", false, &[]);
+    let app = keg(&ctx.env, "app", true, &["kept"]);
+    let kept = keg(&ctx.env, "kept", false, &[]);
+
+    autoremove::run(&ctx, Args { dry_run: true })
+        .await
+        .expect("dry-run plan");
+    assert_eq!(
+        reporter.take(),
+        [
+            "oh1:Would autoremove 3 unneeded formulae:",
+            "print:leaf\nmiddle\nroot",
+        ]
+    );
+
+    let state = scan(&ctx.env).expect("installed state");
+    let planned = ["leaf", "middle", "root"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+    let mut excluded = BTreeSet::new();
+    let mut rounds = Vec::new();
+    while excluded != planned {
+        let round = planned
+            .difference(&excluded)
+            .filter(|name| {
+                state
+                    .dependents_of(name)
+                    .into_iter()
+                    .all(|dependent| excluded.contains(dependent.name().name()))
+            })
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        assert!(!round.is_empty(), "every fixpoint round must expose a leaf");
+        excluded.extend(round.iter().cloned());
+        rounds.push(round);
+    }
+    assert_eq!(
+        rounds,
+        [
+            ["root"].into_iter().map(str::to_owned).collect(),
+            ["middle"].into_iter().map(str::to_owned).collect(),
+            ["leaf"].into_iter().map(str::to_owned).collect(),
+        ]
+    );
+
+    autoremove::run(&ctx, Args::default())
+        .await
+        .expect("real autoremove");
+    assert!(!root.path().exists());
+    assert!(!middle.path().exists());
+    assert!(!leaf.path().exists());
+    assert!(app.path().exists());
+    assert!(kept.path().exists());
 }
 
 #[tokio::test]

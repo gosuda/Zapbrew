@@ -13,11 +13,74 @@ pub enum DependencyMode {
     Pour,
 }
 
+/// Dependency edge classes selected for a graph query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EdgeFilter {
+    pub include_build: bool,
+    pub include_test: bool,
+    pub include_optional: bool,
+    pub skip_recommended: bool,
+    root_only_test: bool,
+}
+
+impl EdgeFilter {
+    /// Preserve the complete graph for install/fetch expansion before the pour filter is applied.
+    pub const ALL: Self = Self {
+        include_build: true,
+        include_test: true,
+        include_optional: true,
+        skip_recommended: false,
+        root_only_test: false,
+    };
+
+    /// Homebrew query defaults plus the caller-selected additions and ignore.
+    #[must_use]
+    pub const fn query(
+        include_build: bool,
+        include_test: bool,
+        include_optional: bool,
+        skip_recommended: bool,
+    ) -> Self {
+        Self {
+            include_build,
+            include_test,
+            include_optional,
+            skip_recommended,
+            root_only_test: true,
+        }
+    }
+
+    fn includes(self, tags: &[DependencyTag], root_edge: bool) -> bool {
+        let recommended = tags.contains(&DependencyTag::Recommended);
+        if self.skip_recommended && recommended {
+            return false;
+        }
+
+        let build = tags.contains(&DependencyTag::Build);
+        let test = tags.contains(&DependencyTag::Test);
+        let optional = tags.contains(&DependencyTag::Optional);
+        let required = !recommended && !build && !test && !optional;
+
+        required
+            || recommended
+            || (build && self.include_build)
+            || (test && self.include_test && (!self.root_only_test || root_edge))
+            || (optional && self.include_optional)
+    }
+}
+
+impl Default for EdgeFilter {
+    fn default() -> Self {
+        Self::query(false, false, false, false)
+    }
+}
+
 /// Host and filtering inputs for dependency expansion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DependencyOptions {
     pub target: BottleTag,
     pub mode: DependencyMode,
+    pub filter: EdgeFilter,
 }
 
 /// Runtime necessity after every occurrence of a dependency is merged.
@@ -42,9 +105,14 @@ pub struct ExpandedDependency {
 pub struct UsesOptions {
     pub host: BottleTag,
     pub recursive: bool,
-    pub include_build: bool,
-    pub include_test: bool,
-    pub include_optional: bool,
+    pub filter: EdgeFilter,
+}
+
+/// A rendered dependency tree and the first cycle encountered while rendering it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DependencyTree {
+    pub(crate) lines: Vec<String>,
+    pub(crate) cycle: Option<Vec<String>>,
 }
 
 /// Expand all dependencies of `roots` in stable post-order.
@@ -57,21 +125,12 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    if matches!(options.target, BottleTag::All) {
-        return Err(OpError::InvalidState {
-            reason: "the universal bottle tag is not a host platform".to_owned(),
-        });
-    }
+    validate_host(options.target)?;
 
     let mut root_names = Vec::new();
     let mut root_set = HashSet::new();
     for root in roots {
-        let requested = root.as_ref();
-        let formula = catalog
-            .get(requested)
-            .ok_or_else(|| OpError::MissingFormula {
-                name: requested.to_owned(),
-            })?;
+        let formula = formula(catalog, root.as_ref())?;
         if root_set.insert(formula.name.clone()) {
             root_names.push(formula.name.clone());
         }
@@ -109,6 +168,28 @@ where
     Ok(expanded)
 }
 
+/// Render one dependency tree without collapsing shared subtrees.
+pub(crate) fn tree(
+    catalog: &Catalog,
+    root: &str,
+    options: &DependencyOptions,
+) -> Result<DependencyTree, OpError> {
+    validate_host(options.target)?;
+    let root = formula(catalog, root)?;
+    let mut renderer = TreeRenderer {
+        catalog,
+        options,
+        active: Vec::new(),
+        lines: vec![root.name.clone()],
+        cycle: None,
+    };
+    renderer.visit(root, "", true)?;
+    Ok(DependencyTree {
+        lines: renderer.lines,
+        cycle: renderer.cycle,
+    })
+}
+
 /// Find formulae that reach every target through the selected dependency edges.
 pub fn uses<I, S>(
     catalog: &Catalog,
@@ -119,33 +200,23 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    if matches!(options.host, BottleTag::All) {
-        return Err(OpError::InvalidState {
-            reason: "the universal bottle tag is not a host platform".to_owned(),
-        });
-    }
+    validate_host(options.host)?;
 
     let mut sought = HashSet::new();
     for target in targets {
-        let requested = target.as_ref();
-        let formula = catalog
-            .get(requested)
-            .ok_or_else(|| OpError::MissingFormula {
-                name: requested.to_owned(),
-            })?;
-        sought.insert(formula.name.clone());
+        sought.insert(formula(catalog, target.as_ref())?.name.clone());
     }
     if sought.is_empty() {
         return Ok(Vec::new());
     }
 
     let mut matches = Vec::new();
-    for formula in catalog.iter() {
-        if sought.contains(&formula.name) {
+    for candidate in catalog.iter() {
+        if sought.contains(&candidate.name) {
             continue;
         }
-        if formula_reaches_all(catalog, formula, &sought, options)? {
-            matches.push(formula.name.clone());
+        if formula_reaches_all(catalog, candidate, &sought, options)? {
+            matches.push(candidate.name.clone());
         }
     }
     matches.sort();
@@ -196,45 +267,118 @@ impl Traversal<'_> {
             return Ok(());
         }
 
-        let formula = self
-            .catalog
-            .get(name)
-            .ok_or_else(|| OpError::MissingFormula {
-                name: name.to_owned(),
-            })?;
-        self.active.push(formula.name.clone());
+        let current = formula(self.catalog, name)?;
+        self.active.push(current.name.clone());
+        let root_edge = self.roots.contains(&current.name);
 
-        for dependency in &formula.dependencies {
-            self.visit_dependency(&dependency.name, &dependency.tags)?;
-        }
-        for dependency in &formula.uses_from_macos {
-            if include_uses_from_macos(dependency, self.options.target)? {
-                self.visit_dependency(&dependency.name, &dependency.tags)?;
+        for edge in edges(current, self.options.target)? {
+            if !self.options.filter.includes(edge.tags, root_edge) {
+                continue;
             }
+            let dependency = formula(self.catalog, edge.name)?;
+            let name = dependency.name.clone();
+            let occurrence = MergedTags::from_tags(edge.tags);
+            self.merged
+                .entry(name.clone())
+                .and_modify(|merged| merged.merge(occurrence))
+                .or_insert(occurrence);
+            self.visit(&name)?;
         }
 
         self.active.pop();
-        self.complete.insert(formula.name.clone());
-        if !self.roots.contains(&formula.name) {
-            self.order.push(formula.name.clone());
+        self.complete.insert(current.name.clone());
+        if !root_edge {
+            self.order.push(current.name.clone());
         }
         Ok(())
     }
+}
 
-    fn visit_dependency(&mut self, requested: &str, tags: &[DependencyTag]) -> Result<(), OpError> {
-        let formula = self
-            .catalog
-            .get(requested)
-            .ok_or_else(|| OpError::MissingFormula {
-                name: requested.to_owned(),
-            })?;
-        let name = formula.name.clone();
-        let occurrence = MergedTags::from_tags(tags);
-        self.merged
-            .entry(name.clone())
-            .and_modify(|merged| merged.merge(occurrence))
-            .or_insert(occurrence);
-        self.visit(&name)
+struct TreeRenderer<'a> {
+    catalog: &'a Catalog,
+    options: &'a DependencyOptions,
+    active: Vec<String>,
+    lines: Vec<String>,
+    cycle: Option<Vec<String>>,
+}
+
+impl TreeRenderer<'_> {
+    fn visit(&mut self, current: &Formula, prefix: &str, root_edge: bool) -> Result<(), OpError> {
+        self.active.push(current.name.clone());
+        let children = edges(current, self.options.target)?
+            .into_iter()
+            .filter(|edge| self.options.filter.includes(edge.tags, root_edge))
+            .map(|edge| formula(self.catalog, edge.name).map(|child| (child, edge.tags)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let last = children.len().saturating_sub(1);
+
+        for (index, (child, _tags)) in children.into_iter().enumerate() {
+            let final_child = index == last;
+            let branch = if final_child {
+                "└── "
+            } else {
+                "├── "
+            };
+            let mut line = format!("{prefix}{branch}{}", child.name);
+            if let Some(cycle_start) = self.active.iter().position(|active| active == &child.name) {
+                line.push_str(" (CIRCULAR DEPENDENCY)");
+                if self.cycle.is_none() {
+                    let mut cycle = self.active[cycle_start..].to_vec();
+                    cycle.push(child.name.clone());
+                    self.cycle = Some(cycle);
+                }
+                self.lines.push(line);
+                continue;
+            }
+
+            self.lines.push(line);
+            let continuation = if final_child { "    " } else { "│   " };
+            self.visit(child, &format!("{prefix}{continuation}"), false)?;
+        }
+        self.active.pop();
+        Ok(())
+    }
+}
+
+struct Edge<'a> {
+    name: &'a str,
+    tags: &'a [DependencyTag],
+}
+
+fn edges(formula: &Formula, target: BottleTag) -> Result<Vec<Edge<'_>>, OpError> {
+    let mut result = Vec::with_capacity(formula.dependencies.len() + formula.uses_from_macos.len());
+    for dependency in &formula.dependencies {
+        result.push(Edge {
+            name: &dependency.name,
+            tags: &dependency.tags,
+        });
+    }
+    for dependency in &formula.uses_from_macos {
+        if include_uses_from_macos(dependency, target)? {
+            result.push(Edge {
+                name: &dependency.name,
+                tags: &dependency.tags,
+            });
+        }
+    }
+    Ok(result)
+}
+
+fn formula<'a>(catalog: &'a Catalog, requested: &str) -> Result<&'a Formula, OpError> {
+    catalog
+        .get(requested)
+        .ok_or_else(|| OpError::MissingFormula {
+            name: requested.to_owned(),
+        })
+}
+
+fn validate_host(target: BottleTag) -> Result<(), OpError> {
+    if matches!(target, BottleTag::All) {
+        Err(OpError::InvalidState {
+            reason: "the universal bottle tag is not a host platform".to_owned(),
+        })
+    } else {
+        Ok(())
     }
 }
 
@@ -271,65 +415,41 @@ fn include_uses_from_macos(dependency: &UsesFromMacos, target: BottleTag) -> Res
 
 fn formula_reaches_all(
     catalog: &Catalog,
-    formula: &Formula,
+    current: &Formula,
     sought: &HashSet<String>,
     options: &UsesOptions,
 ) -> Result<bool, OpError> {
     let mut reached = HashSet::new();
     if options.recursive {
-        let mut visited = HashSet::from([formula.name.clone()]);
-        collect_reachable(catalog, formula, options, &mut visited, &mut reached)?;
+        let mut visited = HashSet::from([current.name.clone()]);
+        collect_reachable(catalog, current, options, true, &mut visited, &mut reached)?;
     } else {
-        for_each_dependency(catalog, formula, options, |dependency| {
-            reached.insert(dependency.name.clone());
-            Ok(())
-        })?;
+        for edge in edges(current, options.host)? {
+            if options.filter.includes(edge.tags, true) {
+                reached.insert(formula(catalog, edge.name)?.name.clone());
+            }
+        }
     }
     Ok(sought.is_subset(&reached))
 }
 
 fn collect_reachable(
     catalog: &Catalog,
-    formula: &Formula,
+    current: &Formula,
     options: &UsesOptions,
+    root_edge: bool,
     visited: &mut HashSet<String>,
     reached: &mut HashSet<String>,
 ) -> Result<(), OpError> {
-    for_each_dependency(catalog, formula, options, |dependency| {
+    for edge in edges(current, options.host)? {
+        if !options.filter.includes(edge.tags, root_edge) {
+            continue;
+        }
+        let dependency = formula(catalog, edge.name)?;
         reached.insert(dependency.name.clone());
         if visited.insert(dependency.name.clone()) {
-            collect_reachable(catalog, dependency, options, visited, reached)?;
-        }
-        Ok(())
-    })
-}
-
-fn for_each_dependency(
-    catalog: &Catalog,
-    formula: &Formula,
-    options: &UsesOptions,
-    mut visit: impl FnMut(&Formula) -> Result<(), OpError>,
-) -> Result<(), OpError> {
-    for dependency in &formula.dependencies {
-        if include_tags(&dependency.tags, options)
-            && let Some(dependency) = catalog.get(&dependency.name)
-        {
-            visit(dependency)?;
-        }
-    }
-    for dependency in &formula.uses_from_macos {
-        if include_tags(&dependency.tags, options)
-            && include_uses_from_macos(dependency, options.host)?
-            && let Some(dependency) = catalog.get(&dependency.name)
-        {
-            visit(dependency)?;
+            collect_reachable(catalog, dependency, options, false, visited, reached)?;
         }
     }
     Ok(())
-}
-
-fn include_tags(tags: &[DependencyTag], options: &UsesOptions) -> bool {
-    (options.include_build || !tags.contains(&DependencyTag::Build))
-        && (options.include_test || !tags.contains(&DependencyTag::Test))
-        && (options.include_optional || necessity(tags) != Necessity::Optional)
 }
