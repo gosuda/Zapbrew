@@ -49,13 +49,17 @@ fn assert_comp(left: &str, comp: Comp, right: &str) {
 
 /// Every Version↔Version comparison assertion from `version_spec.rb`.
 ///
-/// Transcribed oracle row count: 75.
+/// Transcribed oracle row count: 77 (every unique Version↔Version triple in
+/// `version_spec.rb`, including the `create("2")`/`create("p194")` null rows at
+/// lines 20/25 and 21/26 and the `null_version` rows at lines 80-81).
 #[test]
 fn version_spec_comparison_oracle() {
     // (left, rel, right) — empty string denotes Version::null()
     let rows: &[(&str, Comp, &str)] = &[
         ("", Comp::Lt, "1"),                        // version_spec.rb:80
         ("", Comp::Lt, "0"),                        // version_spec.rb:81
+        ("2", Comp::Gt, ""),                        // version_spec.rb:20,25
+        ("p194", Comp::Gt, ""),                     // version_spec.rb:21,26
         ("0.1", Comp::Eq, "0.1.0"),                 // version_spec.rb:130
         ("0.1", Comp::Lt, "0.2"),                   // version_spec.rb:131
         ("1.2.3", Comp::Gt, "1.2.2"),               // version_spec.rb:132
@@ -130,7 +134,7 @@ fn version_spec_comparison_oracle() {
         ("2-p194", Comp::Lt, "2.1-p195"),           // version_spec.rb:252
         ("2.1.0-p194", Comp::Gt, ""),               // version_spec.rb:260
     ];
-    assert_eq!(rows.len(), 75, "oracle row count drift");
+    assert_eq!(rows.len(), 77, "oracle row count drift");
     for (left, comp, right) in rows {
         assert_comp(left, *comp, right);
     }
