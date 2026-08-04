@@ -173,7 +173,7 @@ async fn uninstalls_formula_absent_from_catalog_and_cleans_records() {
     assert!(!ctx.env.linked.join("foo").exists());
     assert_eq!(
         reporter.take(),
-        vec![format!("print:Uninstalling {}... (645B)", old.path())]
+        vec![format!("print:Uninstalling {}... (643B)", old.path())]
     );
 }
 
@@ -241,7 +241,7 @@ async fn non_force_removes_active_keg_and_force_removes_every_version() {
     assert_eq!(
         reporter.take(),
         vec![
-            format!("print:Uninstalling {}... (645B)", first.path()),
+            format!("print:Uninstalling {}... (643B)", first.path()),
             "print:foo 2.0 is still installed.\nTo remove all versions, run:\n  brew uninstall --force foo".to_owned(),
         ]
     );
@@ -274,7 +274,7 @@ async fn reports_leftover_configuration_paths_exactly() {
     assert_eq!(
         reporter.take(),
         vec![
-            format!("print:Uninstalling {}... (645B)", installed.path()),
+            format!("print:Uninstalling {}... (643B)", installed.path()),
             format!(
                 "opoo:The following foo configuration files have not been removed!\nIf desired, remove them manually with rm -rf:\n  {config}"
             ),

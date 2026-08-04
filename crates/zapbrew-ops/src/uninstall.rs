@@ -224,7 +224,7 @@ fn preflight(
         let installed = state.formula(name).ok_or_else(|| OpError::InvalidState {
             reason: format!("installed formula {name} disappeared during pin preflight"),
         })?;
-        if installed.pinned().is_some() {
+        if !args.force && installed.pinned().is_some() {
             return Err(OpError::Refusal {
                 message: format!("{name} is pinned. You must unpin it to uninstall."),
             });

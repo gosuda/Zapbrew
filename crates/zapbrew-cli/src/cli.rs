@@ -179,7 +179,7 @@ pub struct InstallArgs {
 pub struct UninstallArgs {
     /// Formula or cask names to uninstall.
     pub names: Vec<String>,
-    /// Uninstall even if other formulae depend on these.
+    /// Delete all installed versions, not just the active one.
     #[arg(short = 'f', long)]
     pub force: bool,
     /// Do not check for dependents before uninstalling.
