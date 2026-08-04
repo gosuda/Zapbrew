@@ -37,31 +37,123 @@ impl CommandRunner for RecordingRunner {
     }
 }
 
-fn receipt(fixture: &Fixture, token: &str, raw: &Value) {
-    let version = fixture.env.caskroom.join(token).join("1.0");
-    fs::create_dir_all(&version).expect("version");
-    write_state(fixture, token, "/Applications");
-    let path = fixture
+/// Seed one installed version tree: raw receipt under `.metadata/<version>` plus
+/// the typed install record a real install promotes into the version tree.
+/// Deployed targets and directives are derived from the fixture cask payload,
+/// mirroring `InstallRecord::from_plan`.
+fn seed_version(fixture: &Fixture, token: &str, version: &str, raw: &Value, appdir: &str) {
+    let version_dir = fixture.env.caskroom.join(token).join(version);
+    fs::create_dir_all(&version_dir).expect("version");
+    let receipt_path = fixture
         .env
         .caskroom
         .join(token)
-        .join(".metadata/1.0/20260804010203/Casks")
+        .join(format!(".metadata/{version}/20260804010203/Casks"))
         .join(format!("{token}.json"));
-    fs::create_dir_all(path.parent().expect("parent")).expect("receipt parent");
-    fs::write(path, serde_json::to_vec_pretty(raw).expect("raw")).expect("receipt");
+    fs::create_dir_all(receipt_path.parent().expect("parent")).expect("receipt parent");
+    fs::write(receipt_path, serde_json::to_vec_pretty(raw).expect("raw")).expect("receipt");
+
+    let mut artifacts = Vec::new();
+    let mut uninstall = Vec::new();
+    let mut zap = Vec::new();
+    for artifact in raw["artifacts"].as_array().expect("artifacts") {
+        let object = artifact.as_object().expect("artifact object");
+        for (kind, value) in object {
+            match kind.as_str() {
+                // `target` is artifact metadata read alongside the kind key.
+                "target" => {}
+                "uninstall" => uninstall.push(value.clone()),
+                "zap" => zap.push(value.clone()),
+                "app" | "suite" => {
+                    let (source, target) = source_and_target(value, artifact);
+                    artifacts.push(json!({
+                        "kind": "path",
+                        "target": target.unwrap_or_else(|| format!("{appdir}/{}", leaf(&source))),
+                    }));
+                }
+                "binary" | "manpage" => {
+                    let (source, target) = source_and_target(value, artifact);
+                    let name = target
+                        .as_deref()
+                        .map_or_else(|| leaf(&source).to_owned(), |value| leaf(value).to_owned());
+                    let dir = if kind == "manpage" {
+                        let section = source
+                            .trim_end_matches(".gz")
+                            .rsplit('.')
+                            .next()
+                            .expect("man section");
+                        format!("{}/share/man/man{section}", fixture.env.prefix)
+                    } else {
+                        format!("{}/bin", fixture.env.prefix)
+                    };
+                    artifacts.push(json!({"kind": "symlink", "target": format!("{dir}/{name}")}));
+                }
+                "pkg" => {
+                    let (source, _) = source_and_target(value, artifact);
+                    artifacts.push(json!({"kind": "pkg", "source": source}));
+                }
+                "artifact" => {
+                    let (source, target) = source_and_target(value, artifact);
+                    artifacts.push(json!({
+                        "kind": "path",
+                        "target": target.unwrap_or_else(|| format!("{appdir}/{}", leaf(&source))),
+                    }));
+                }
+                _ => {
+                    // Copy-family kinds (font, prefpane, completions, ...) land in
+                    // Library or prefix dirs; none of the uninstall fixtures use
+                    // them, so seeding panics loudly if one appears.
+                    panic!("fixture kind '{kind}' has no seeded target mapping");
+                }
+            }
+        }
+    }
+    let record = json!({
+        "schema": 1,
+        "token": token,
+        "version": version,
+        "appdir": appdir,
+        "artifacts": artifacts,
+        "uninstall": uninstall,
+        "zap": zap,
+    });
+    let mut bytes = serde_json::to_vec_pretty(&record).expect("record json");
+    bytes.push(b'\n');
+    fs::write(version_dir.join(".zapbrew-record.json"), bytes).expect("record");
 }
 
-/// Write the install-state sidecar that a real install promotes into the version
-/// tree; uninstall reads the install-time appdir from it.
-fn write_state(fixture: &Fixture, token: &str, appdir: &str) {
-    let path = fixture
-        .env
-        .caskroom
-        .join(token)
-        .join("1.0")
-        .join(".zapbrew-install-state.json");
-    fs::create_dir_all(path.parent().expect("state parent")).expect("state dir");
-    fs::write(path, format!("{{\"appdir\":\"{appdir}\"}}\n")).expect("state");
+/// Seed a 1.0 install, the shape every pre-existing uninstall fixture uses.
+fn receipt(fixture: &Fixture, token: &str, raw: &Value) {
+    seed_version(fixture, token, "1.0", raw, "/Applications");
+}
+
+fn source_and_target(value: &Value, artifact: &Value) -> (String, Option<String>) {
+    let source = match value {
+        Value::String(source) => source.clone(),
+        Value::Array(values) => values[0].as_str().expect("source").to_owned(),
+        _ => panic!("artifact source shape"),
+    };
+    let target = artifact
+        .get("target")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| {
+            value
+                .as_array()
+                .and_then(|values| values.get(1))
+                .and_then(Value::as_object)
+                .and_then(|object| object.get("target"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
+    (source, target)
+}
+
+fn leaf(path: &str) -> &str {
+    path.trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(path)
 }
 
 fn cask(fixture: &Fixture) -> Value {
@@ -191,8 +283,8 @@ async fn missing_install_and_missing_receipt_refuse() {
         matches!(missing, Err(OpError::Refusal { message }) if message == "Cask 'ghost' is unavailable.")
     );
 
+    // A version dir with no typed record aborts before any mutation.
     fs::create_dir_all(fixture.env.caskroom.join("broken/1.0")).expect("version");
-    write_state(&fixture, "broken", "/Applications");
     let broken = uninstall::run(
         &ctx,
         Args {
@@ -202,8 +294,10 @@ async fn missing_install_and_missing_receipt_refuse() {
     )
     .await;
     assert!(
-        matches!(broken, Err(OpError::InvalidState { reason }) if reason == "Cask 'broken' has no stored receipt.")
+        matches!(broken, Err(OpError::InvalidState { ref reason }) if reason.contains("record") && reason.contains("is missing")),
+        "expected missing-record refusal, got {broken:?}"
     );
+    assert!(fixture.env.caskroom.join("broken/1.0").is_dir());
 }
 
 #[tokio::test]
@@ -407,6 +501,98 @@ async fn symlink_token_refuses_and_preserves_target() {
         fixture.env.caskroom.join("real/1.0").is_dir(),
         "real install survives"
     );
+}
+
+#[tokio::test]
+async fn uninstall_removes_all_installed_versions_in_one_run() {
+    let fixture = Fixture::new().macos();
+    fs::create_dir_all(&fixture.env.home).expect("home");
+    let raw1 = json!({
+        "token": "multi", "version": "1.0", "sha256": "no_check",
+        "url": "https://example.test/a.zip",
+        "artifacts": [
+            {"artifact": ["s.txt"], "target": format!("{}/shared.txt", fixture.env.home)},
+            {"artifact": ["o.txt"], "target": format!("{}/one.txt", fixture.env.home)}
+        ]
+    });
+    let raw2 = json!({
+        "token": "multi", "version": "2.0", "sha256": "no_check",
+        "url": "https://example.test/b.zip",
+        "artifacts": [
+            {"artifact": ["s.txt"], "target": format!("{}/shared.txt", fixture.env.home)},
+            {"artifact": ["t.txt"], "target": format!("{}/two.txt", fixture.env.home)}
+        ]
+    });
+    seed_version(&fixture, "multi", "1.0", &raw1, fixture.env.home.as_str());
+    seed_version(&fixture, "multi", "2.0", &raw2, fixture.env.home.as_str());
+    fs::write(fixture.env.home.join("shared.txt"), b"s").expect("shared");
+    fs::write(fixture.env.home.join("one.txt"), b"1").expect("one");
+    fs::write(fixture.env.home.join("two.txt"), b"2").expect("two");
+
+    let runner = Arc::new(RecordingRunner::default());
+    let (ctx, _r) = fixture.context_casks(vec![], runner, reqwest::Client::new());
+    uninstall::run(
+        &ctx,
+        Args {
+            tokens: vec!["multi".to_owned()],
+            zap: false,
+        },
+    )
+    .await
+    .expect("uninstall every installed version in one run");
+
+    // Both versions' targets (shared deduped) removed; token dir pruned.
+    assert!(!fixture.env.home.join("shared.txt").exists());
+    assert!(!fixture.env.home.join("one.txt").exists());
+    assert!(!fixture.env.home.join("two.txt").exists());
+    assert!(
+        !fixture.env.caskroom.join("multi").exists(),
+        "token dir pruned after all versions removed"
+    );
+}
+
+#[tokio::test]
+async fn multi_version_preflight_failure_removes_nothing() {
+    let fixture = Fixture::new().macos();
+    fs::create_dir_all(&fixture.env.home).expect("home");
+    // The older version carries an out-of-root delete directive; preflight of the
+    // whole set must abort before any target or directive runs.
+    let raw1 = json!({
+        "token": "guard", "version": "1.0", "sha256": "no_check",
+        "url": "https://example.test/a.zip",
+        "artifacts": [
+            {"artifact": ["o.txt"], "target": format!("{}/one.txt", fixture.env.home)},
+            {"uninstall": [{"delete": "/etc"}]}
+        ]
+    });
+    let raw2 = json!({
+        "token": "guard", "version": "2.0", "sha256": "no_check",
+        "url": "https://example.test/b.zip",
+        "artifacts": [
+            {"artifact": ["t.txt"], "target": format!("{}/two.txt", fixture.env.home)}
+        ]
+    });
+    seed_version(&fixture, "guard", "1.0", &raw1, fixture.env.home.as_str());
+    seed_version(&fixture, "guard", "2.0", &raw2, fixture.env.home.as_str());
+    fs::write(fixture.env.home.join("one.txt"), b"1").expect("one");
+    fs::write(fixture.env.home.join("two.txt"), b"2").expect("two");
+
+    let runner = Arc::new(RecordingRunner::default());
+    let (ctx, _r) = fixture.context_casks(vec![], runner.clone(), reqwest::Client::new());
+    let result = uninstall::run(
+        &ctx,
+        Args {
+            tokens: vec!["guard".to_owned()],
+            zap: false,
+        },
+    )
+    .await;
+    assert!(result.is_err(), "unsafe directive must abort the whole run");
+    assert!(runner.calls().is_empty(), "no host command may run");
+    assert!(fixture.env.home.join("one.txt").exists());
+    assert!(fixture.env.home.join("two.txt").exists());
+    assert!(fixture.env.caskroom.join("guard/1.0").is_dir());
+    assert!(fixture.env.caskroom.join("guard/2.0").is_dir());
 }
 
 fn _path(_path: &Utf8Path) {}

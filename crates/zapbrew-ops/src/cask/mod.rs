@@ -15,7 +15,6 @@ mod archive;
 mod artifact;
 pub mod install;
 pub mod list;
-mod state;
 mod transaction;
 pub mod uninstall;
 

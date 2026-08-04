@@ -148,6 +148,25 @@ fn err(result: Result<(), OpError>) -> OpError {
     }
 }
 
+/// Seed a typed install record into a promoted version tree, mirroring what a
+/// real install writes before the atomic promote. `artifacts` are the persisted
+/// `DeployedArtifact` JSON entries in application order.
+fn seed_record(fixture: &Fixture, token: &str, version: &str, appdir: &str, artifacts: &[Value]) {
+    let version_dir = fixture.env.caskroom.join(token).join(version);
+    std::fs::create_dir_all(&version_dir).expect("version dir");
+    let record = json!({
+        "schema": 1,
+        "token": token,
+        "version": version,
+        "appdir": appdir,
+        "artifacts": artifacts,
+        "uninstall": [],
+        "zap": [],
+    });
+    let mut bytes = serde_json::to_vec_pretty(&record).expect("record json");
+    bytes.push(b'\n');
+    std::fs::write(version_dir.join(".zapbrew-record.json"), bytes).expect("seed record");
+}
 #[tokio::test]
 async fn linux_refuses_all_cask_verbs() {
     let fixture = Fixture::new();
@@ -407,9 +426,14 @@ async fn receipt_written_then_already_installed_noops() {
         "missing receipt: {entries:?}"
     );
     let receipt = find_receipt(&meta);
-    let raw: Value =
-        serde_json::from_slice(&std::fs::read(&receipt).expect("receipt")).expect("json");
+    let bytes = std::fs::read(&receipt).expect("receipt");
+    let raw: Value = serde_json::from_slice(&bytes).expect("json");
     assert_eq!(raw["token"], "solo");
+    // Byte-identity: the raw receipt stays exactly pretty JSON + trailing newline
+    // for brew interop, unchanged by the typed-record rebuild.
+    let mut expected = serde_json::to_vec_pretty(&raw).expect("reserialize");
+    expected.push(b'\n');
+    assert_eq!(bytes, expected, "raw receipt must be byte-identical");
 
     reporter.take();
     install::run(&ctx, install_args(&["solo"], &appdir, false))
@@ -518,14 +542,13 @@ async fn force_reinstall_failure_restores_old_artifact_and_version() {
     )
     .expect("write receipt");
     std::fs::create_dir_all(fixture.env.caskroom.join("editor/1.0")).expect("version dir");
-    std::fs::write(
-        fixture
-            .env
-            .caskroom
-            .join("editor/1.0/.zapbrew-install-state.json"),
-        format!("{{\"appdir\":\"{appdir}\"}}\n"),
-    )
-    .expect("old install state");
+    seed_record(
+        &fixture,
+        "editor",
+        "1.0",
+        appdir.as_str(),
+        &[json!({"kind": "path", "target": appdir.join("Editor.app").to_string()})],
+    );
     std::fs::create_dir_all(appdir.join("Editor.app")).expect("old app");
     std::fs::write(appdir.join("Editor.app/run"), b"old-editor").expect("old run");
     // Unrelated occupant at the second app's target: the reinstall must refuse it.
@@ -746,6 +769,216 @@ async fn force_reinstall_with_changed_appdir_uses_each_plan_own_appdir() {
     let staging = fixture.env.caskroom.join(".staging");
     let leftovers = std::fs::read_dir(&staging).map(|e| e.count()).unwrap_or(0);
     assert_eq!(leftovers, 0, "staging empty after success");
+}
+
+#[tokio::test]
+async fn force_cross_version_upgrade_backs_up_and_replaces_old_version() {
+    let server = MockServer::start().await;
+    let v1 = tar_gz(&[("Editor.app/run", b"one")]);
+    let v1_sha = sha_hex(&v1);
+    let v1_url = serve(&server, "/Editor1.tar.gz", v1).await;
+    let v2 = tar_gz(&[("Editor.app/run", b"two")]);
+    let v2_sha = sha_hex(&v2);
+    let v2_url = serve(&server, "/Editor2.tar.gz", v2).await;
+
+    let fixture = Fixture::new().macos();
+    let appdir = fixture.env.home.join("Applications");
+
+    let (ctx1, _r1) = fixture.context_casks(
+        vec![cask(
+            "editor",
+            &v1_url,
+            &v1_sha,
+            vec![json!({"app": ["Editor.app"]})],
+        )],
+        Arc::new(PanicRunner),
+        reqwest::Client::new(),
+    );
+    install::run(&ctx1, install_args(&["editor"], &appdir, false))
+        .await
+        .expect("v1 install");
+    assert_eq!(
+        std::fs::read(appdir.join("Editor.app/run")).expect("v1 run"),
+        b"one"
+    );
+
+    // Force-install a DIFFERENT version: the whole-token machine must back up and
+    // drop v1.0 (terminal defect #1), not skip it because the new dir differs.
+    let mut value = cask(
+        "editor",
+        &v2_url,
+        &v2_sha,
+        vec![json!({"app": ["Editor.app"]})],
+    );
+    value["version"] = json!("2.0");
+    let (ctx2, _r2) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+    install::run(&ctx2, install_args(&["editor"], &appdir, true))
+        .await
+        .expect("v2 force install");
+
+    assert_eq!(
+        std::fs::read(appdir.join("Editor.app/run")).expect("v2 run"),
+        b"two"
+    );
+    assert!(fixture.env.caskroom.join("editor/2.0").is_dir());
+    assert!(
+        !fixture.env.caskroom.join("editor/1.0").exists(),
+        "old version removed"
+    );
+    assert!(!fixture.env.caskroom.join("editor/.metadata/1.0").exists());
+    assert!(fixture.env.caskroom.join("editor/.metadata/2.0").is_dir());
+    let staging = fixture.env.caskroom.join(".staging");
+    assert_eq!(
+        std::fs::read_dir(&staging).map(|e| e.count()).unwrap_or(0),
+        0,
+        "staging drained after success"
+    );
+}
+
+#[tokio::test]
+async fn force_cross_version_failure_restores_old_version_and_artifacts() {
+    let server = MockServer::start().await;
+    let v1 = tar_gz(&[("Editor.app/run", b"old-one")]);
+    let v1_sha = sha_hex(&v1);
+    let v1_url = serve(&server, "/CV1.tar.gz", v1).await;
+    let v2 = tar_gz(&[
+        ("Editor.app/run", b"new-two"),
+        ("Second.app/run", b"new-second"),
+    ]);
+    let v2_sha = sha_hex(&v2);
+    let v2_url = serve(&server, "/CV2.tar.gz", v2).await;
+
+    let fixture = Fixture::new().macos();
+    let appdir = fixture.env.home.join("Applications");
+
+    let (ctx1, _r1) = fixture.context_casks(
+        vec![cask(
+            "editor",
+            &v1_url,
+            &v1_sha,
+            vec![json!({"app": ["Editor.app"]})],
+        )],
+        Arc::new(PanicRunner),
+        reqwest::Client::new(),
+    );
+    install::run(&ctx1, install_args(&["editor"], &appdir, false))
+        .await
+        .expect("v1 install");
+
+    // An unrelated occupant blocks the v2 second-app target, so the v2 apply
+    // fails after v1.0 is already backed up. Rollback must restore v1.0 exactly.
+    std::fs::write(appdir.join("Second.app"), b"blocker").expect("blocker");
+
+    let mut value = cask(
+        "editor",
+        &v2_url,
+        &v2_sha,
+        vec![
+            json!({"app": ["Editor.app"]}),
+            json!({"app": ["Second.app"]}),
+        ],
+    );
+    value["version"] = json!("2.0");
+    let (ctx2, _r2) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+    let result = install::run(&ctx2, install_args(&["editor"], &appdir, true)).await;
+    assert!(
+        result.is_err(),
+        "expected the v2 apply to refuse the collision"
+    );
+
+    // v1.0 dir, record, metadata, and deployed artifact are all restored; no 2.0.
+    assert_eq!(
+        std::fs::read(appdir.join("Editor.app/run")).expect("restored run"),
+        b"old-one"
+    );
+    assert_eq!(
+        std::fs::read(appdir.join("Second.app")).expect("blocker survives"),
+        b"blocker"
+    );
+    assert!(fixture.env.caskroom.join("editor/1.0").is_dir());
+    assert!(
+        fixture
+            .env
+            .caskroom
+            .join("editor/1.0/.zapbrew-record.json")
+            .is_file()
+    );
+    assert!(
+        !fixture.env.caskroom.join("editor/2.0").exists(),
+        "no new version residue"
+    );
+    assert!(fixture.env.caskroom.join("editor/.metadata/1.0").is_dir());
+    assert!(!fixture.env.caskroom.join("editor/.metadata/2.0").exists());
+    let staging = fixture.env.caskroom.join(".staging");
+    assert_eq!(
+        std::fs::read_dir(&staging).map(|e| e.count()).unwrap_or(0),
+        0,
+        "staging drained after rollback"
+    );
+}
+
+#[tokio::test]
+async fn force_replace_backs_up_all_when_multiple_versions_present() {
+    let server = MockServer::start().await;
+    let body = tar_gz(&[("Three.app/run", b"three")]);
+    let sha = sha_hex(&body);
+    let url = serve(&server, "/Three.tar.gz", body).await;
+
+    let fixture = Fixture::new().macos();
+    let appdir = fixture.env.home.join("Applications");
+    std::fs::create_dir_all(&appdir).expect("appdir");
+
+    // Two pre-existing installed versions sharing one deployed target.
+    for (version, unique) in [("1.0", "One.app"), ("2.0", "Two.app")] {
+        seed_record(
+            &fixture,
+            "multi",
+            version,
+            appdir.as_str(),
+            &[
+                json!({"kind": "path", "target": appdir.join("Shared.app").to_string()}),
+                json!({"kind": "path", "target": appdir.join(unique).to_string()}),
+            ],
+        );
+        let meta = fixture
+            .env
+            .caskroom
+            .join(format!("multi/.metadata/{version}/20260101/Casks"));
+        std::fs::create_dir_all(&meta).expect("meta");
+        std::fs::write(meta.join("multi.json"), b"{}\n").expect("receipt");
+    }
+    std::fs::create_dir_all(appdir.join("Shared.app")).expect("shared");
+    std::fs::write(appdir.join("Shared.app/run"), b"shared").expect("shared run");
+    std::fs::create_dir_all(appdir.join("One.app")).expect("one");
+    std::fs::create_dir_all(appdir.join("Two.app")).expect("two");
+
+    let mut value = cask("multi", &url, &sha, vec![json!({"app": ["Three.app"]})]);
+    value["version"] = json!("3.0");
+    let (ctx, _r) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+    install::run(&ctx, install_args(&["multi"], &appdir, true))
+        .await
+        .expect("force replace-all");
+
+    // Both old versions and every old deployed target (shared deduped) are gone.
+    assert!(!appdir.join("Shared.app").exists());
+    assert!(!appdir.join("One.app").exists());
+    assert!(!appdir.join("Two.app").exists());
+    assert!(appdir.join("Three.app/run").is_file());
+    assert!(!fixture.env.caskroom.join("multi/1.0").exists());
+    assert!(!fixture.env.caskroom.join("multi/2.0").exists());
+    assert!(fixture.env.caskroom.join("multi/3.0").is_dir());
+    assert!(!fixture.env.caskroom.join("multi/.metadata/1.0").exists());
+    assert!(!fixture.env.caskroom.join("multi/.metadata/2.0").exists());
+    assert!(fixture.env.caskroom.join("multi/.metadata/3.0").is_dir());
+    let staging = fixture.env.caskroom.join(".staging");
+    assert_eq!(
+        std::fs::read_dir(&staging).map(|e| e.count()).unwrap_or(0),
+        0,
+        "staging drained after replace-all"
+    );
 }
 
 fn _use_ctx(_ctx: &Ctx) {}

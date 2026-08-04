@@ -3,11 +3,9 @@ use std::fs;
 
 use camino::{Utf8Path, Utf8PathBuf};
 use serde_json::Value;
-use zapbrew_api::CaskCatalog;
 use zapbrew_prefix::CommandSpec;
 
-use super::artifact::{Action, Plan};
-use super::transaction::installed_version_dirs;
+use super::transaction::{installed_version_dirs, read_record};
 use super::{
     acquire_locks, checked_command, confined_caskroom_child, expand_path, path_exists,
     remove_entry, require_macos, string_values,
@@ -41,7 +39,7 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
 ///
 /// Live catalog first, so an old-token alias maps to its canonical install; then
 /// the raw token when its Caskroom directory exists, preserving
-/// uninstall-from-stored-receipt after a cask leaves the catalog.
+/// uninstall-from-record after a cask leaves the catalog.
 fn resolve_installed(ctx: &Ctx, requested: &str) -> Result<String, OpError> {
     if let Some(cask) = ctx.casks.get(requested) {
         return Ok(cask.token.clone());
@@ -55,67 +53,57 @@ fn resolve_installed(ctx: &Ctx, requested: &str) -> Result<String, OpError> {
     })
 }
 
+/// Remove every installed version of `token` in one run. Every record is loaded
+/// and every uninstall (and optional zap) directive is preflighted before any
+/// command or filesystem mutation; a bad record or directive in any version
+/// aborts the whole operation with nothing removed.
 pub(super) fn remove(ctx: &Ctx, token: &str, zap: bool) -> Result<(), OpError> {
     let token_dir = ctx.env.caskroom.join(token);
     let versions = installed_version_dirs(&token_dir)?;
-    let version_dir = versions.last().ok_or_else(|| not_installed(token))?;
-    let version = version_dir
-        .file_name()
-        .ok_or_else(|| OpError::InvalidState {
-            reason: format!("installed cask version has no basename: {version_dir}"),
-        })?;
-    let appdir = super::state::read(version_dir)?;
-    let plan = stored_plan(ctx, token, version, &appdir)?;
-
-    preflight_directives(ctx, &plan.uninstall, &appdir)?;
-    if zap {
-        preflight_directives(ctx, &plan.zap, &appdir)?;
+    if versions.is_empty() {
+        return Err(not_installed(token));
+    }
+    let mut records = Vec::new();
+    for version_dir in &versions {
+        records.push(read_record(ctx, token, version_dir)?);
     }
 
-    reverse_actions(&plan, version_dir)?;
-    run_directives(ctx, &plan.uninstall, &appdir)?;
-    if zap {
-        run_directives(ctx, &plan.zap, &appdir)?;
-    }
-    remove_entry(version_dir)?;
-    remove_version_receipts(&token_dir, version)?;
-    prune_empty(&token_dir)?;
-    Ok(())
-}
-
-/// Build an install plan from the newest stored receipt for `version`.
-///
-/// Actions come from the receipt, never the live catalog, so uninstall and force
-/// reinstall operate on what was actually deployed.
-pub(super) fn stored_plan(
-    ctx: &Ctx,
-    token: &str,
-    version: &str,
-    appdir: &Utf8Path,
-) -> Result<Plan, OpError> {
-    let token_dir = ctx.env.caskroom.join(token);
-    let receipt =
-        newest_receipt(&token_dir, version, token)?.ok_or_else(|| OpError::InvalidState {
-            reason: format!("Cask '{token}' has no stored receipt."),
-        })?;
-    let bytes = fs::read(&receipt).map_err(|source| OpError::io("read", &receipt, source))?;
-    let wrapped = format!("[{}]", String::from_utf8_lossy(&bytes));
-    let catalog = CaskCatalog::from_payload(wrapped.as_bytes(), &ctx.env.bottle_tag)?;
-    let cask = catalog.get(token).ok_or_else(|| OpError::InvalidState {
-        reason: format!("receipt {receipt} does not contain Cask '{token}'"),
-    })?;
-    super::artifact::plan(ctx, cask, appdir)
-}
-
-fn reverse_actions(plan: &Plan, _version_dir: &Utf8Path) -> Result<(), OpError> {
-    for action in plan.actions.iter().rev() {
-        match action {
-            Action::Move { target, .. }
-            | Action::Copy { target, .. }
-            | Action::Symlink { target, .. } => remove_entry(target)?,
-            Action::Pkg { .. } => {}
+    for record in &records {
+        preflight_directives(ctx, &record.uninstall, &record.appdir())?;
+        if zap {
+            preflight_directives(ctx, &record.zap, &record.appdir())?;
         }
     }
+
+    // Remove every deployed target across all versions, deduplicated, in reverse
+    // application order (later versions reverse first).
+    let mut seen = BTreeSet::new();
+    let mut targets = Vec::new();
+    for record in records.iter().rev() {
+        for target in record.targets().collect::<Vec<_>>().into_iter().rev() {
+            if seen.insert(target.clone()) {
+                targets.push(target);
+            }
+        }
+    }
+    for target in &targets {
+        remove_entry(target)?;
+    }
+
+    for (record, version_dir) in records.iter().zip(&versions) {
+        run_directives(ctx, &record.uninstall, &record.appdir())?;
+        if zap {
+            run_directives(ctx, &record.zap, &record.appdir())?;
+        }
+        remove_entry(version_dir)?;
+        let version = version_dir
+            .file_name()
+            .ok_or_else(|| OpError::InvalidState {
+                reason: format!("installed cask version has no basename: {version_dir}"),
+            })?;
+        remove_version_receipts(&token_dir, version)?;
+    }
+    prune_empty(&token_dir)?;
     Ok(())
 }
 
@@ -247,7 +235,7 @@ fn ensure_removal_root(ctx: &Ctx, path: &Utf8Path, appdir: &Utf8Path) -> Result<
 /// Validate a stored `launchctl` label before it builds a plist path or runs a
 /// command. A launchd label is a nonempty string of ASCII letters, digits, `.`,
 /// `_`, and `-`; any slash, separator, parent component, control byte, or other
-/// character is invalid stored receipt data.
+/// character is invalid stored record data.
 fn validate_launchctl_label(label: &str) -> Result<(), OpError> {
     let valid = !label.is_empty()
         && label
@@ -272,40 +260,6 @@ fn launch_agent_plist(ctx: &Ctx, label: &str) -> Result<Utf8PathBuf, OpError> {
         .home
         .join("Library/LaunchAgents")
         .join(format!("{label}.plist")))
-}
-
-fn newest_receipt(
-    token_dir: &Utf8Path,
-    version: &str,
-    token: &str,
-) -> Result<Option<Utf8PathBuf>, OpError> {
-    let root = token_dir.join(".metadata").join(version);
-    let entries = match fs::read_dir(&root) {
-        Ok(entries) => entries,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(source) => return Err(OpError::io("read", &root, source)),
-    };
-    let mut receipts = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|source| OpError::io("read", &root, source))?;
-        let timestamp =
-            Utf8PathBuf::from_path_buf(entry.path()).map_err(|path| OpError::InvalidState {
-                reason: format!("non-UTF-8 receipt path: {}", path.display()),
-            })?;
-        let metadata = fs::symlink_metadata(&timestamp)
-            .map_err(|source| OpError::io("inspect", &timestamp, source))?;
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
-            continue;
-        }
-        let receipt = timestamp.join("Casks").join(format!("{token}.json"));
-        if fs::symlink_metadata(&receipt)
-            .is_ok_and(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
-        {
-            receipts.push(receipt);
-        }
-    }
-    receipts.sort();
-    Ok(receipts.pop())
 }
 
 fn remove_version_receipts(token_dir: &Utf8Path, version: &str) -> Result<(), OpError> {

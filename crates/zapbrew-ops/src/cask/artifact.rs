@@ -43,6 +43,12 @@ pub(super) enum Reverse {
         backup: Utf8PathBuf,
         target: Utf8PathBuf,
     },
+    /// Move a whole backed-up tree (old version dir or metadata receipt tree)
+    /// from `backup` back to its `original` location.
+    RestoreDir {
+        backup: Utf8PathBuf,
+        original: Utf8PathBuf,
+    },
     Irreversible(String),
 }
 
@@ -207,35 +213,42 @@ pub(super) fn apply(
     Ok(())
 }
 
-/// Move every reversible target of a prior install into `backup_root`, recording
-/// a restore entry for each so a failed replacement can put them back.
-///
-/// `pkg` artifacts leave no reversible target, so they are skipped. Targets that
-/// are already absent are left untouched.
-pub(super) fn backup_old_targets(
-    old_plan: &Plan,
+/// Move every prior deployed target into `backup_root`, recording a restore
+/// entry for each so a failed replacement can put it back. `targets` comes from
+/// the persisted install records (already deduplicated by the caller), so
+/// replacement operates on what was actually deployed. Targets that are already
+/// absent are left untouched.
+pub(super) fn backup_targets<'a>(
+    targets: impl Iterator<Item = &'a Utf8Path>,
     backup_root: &Utf8Path,
     journal: &mut Vec<Reverse>,
 ) -> Result<(), OpError> {
-    for (index, action) in old_plan.actions.iter().enumerate() {
-        let target = match action {
-            Action::Move { target, .. }
-            | Action::Copy { target, .. }
-            | Action::Symlink { target, .. } => target,
-            Action::Pkg { .. } => continue,
-        };
+    for (index, target) in targets.enumerate() {
         if !path_exists(target) {
             continue;
         }
-        let backup = backup_root.join(index.to_string());
+        let backup = backup_root.join(format!("target-{index}"));
         ensure_parent(&backup)?;
         move_path(target, &backup)?;
         journal.push(Reverse::Restore {
             backup,
-            target: target.clone(),
+            target: target.to_path_buf(),
         });
     }
     Ok(())
+}
+
+/// Remove every drained backup tree after a committed replacement. All backups
+/// are siblings under one `.staging` root; cleanup is best-effort and failures
+/// are ignored because leftovers are inert.
+pub(super) fn drain_backups(journal: &[Reverse]) {
+    for reverse in journal {
+        let backup = match reverse {
+            Reverse::Restore { backup, .. } | Reverse::RestoreDir { backup, .. } => backup,
+            Reverse::Remove(_) | Reverse::Irreversible(_) => continue,
+        };
+        let _ = remove_entry(backup);
+    }
 }
 
 /// Replay journalled reverse actions, returning any irreversible/failed leftovers.
@@ -252,6 +265,13 @@ pub(super) fn rollback(journal: &[Reverse]) -> Vec<String> {
                 if path_exists(target) && remove_entry(target).is_err() {
                     leftovers.push(target.to_string());
                 } else if move_path(backup, target).is_err() && path_exists(backup) {
+                    leftovers.push(backup.to_string());
+                }
+            }
+            Reverse::RestoreDir { backup, original } => {
+                if path_exists(original) && remove_entry(original).is_err() {
+                    leftovers.push(original.to_string());
+                } else if move_path(backup, original).is_err() && path_exists(backup) {
                     leftovers.push(backup.to_string());
                 }
             }
