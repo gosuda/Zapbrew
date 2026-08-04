@@ -30,6 +30,10 @@ pub struct Cli {
     #[arg(long, num_args = 0..=1, value_name = "formula")]
     pub cellar: Option<Option<String>>,
 
+    /// Print the Caskroom path, optionally for a cask token. Resolved later.
+    #[arg(long, num_args = 0..=1, value_name = "cask")]
+    pub caskroom: Option<Option<String>>,
+
     /// Print the download cache path, optionally for a formula. Resolved later.
     #[arg(long, num_args = 0..=1, value_name = "formula")]
     pub cache: Option<Option<String>>,
@@ -37,6 +41,10 @@ pub struct Cli {
     /// Print the repository path, optionally for a tap. Resolved later.
     #[arg(long, num_args = 0..=1, value_name = "tap")]
     pub repository: Option<Option<String>>,
+
+    /// Print the Taps directory path.
+    #[arg(long)]
+    pub taps: bool,
 
     #[command(subcommand)]
     pub command: Option<Commands>,

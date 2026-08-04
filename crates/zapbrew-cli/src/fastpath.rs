@@ -13,7 +13,7 @@ use zapbrew_prefix::Env;
 use crate::cli::Cli;
 
 /// Message refusing more than one simultaneous path query.
-const MULTIPLE: &str = "only one of --prefix, --cellar, --cache, --repository may be given";
+const MULTIPLE: &str = "only one of --prefix, --cellar, --caskroom, --cache, --repository, --taps may be given";
 
 /// Message refusing `--cache <formula>`; the download path needs catalog
 /// metadata the approved plan does not require here.
@@ -33,13 +33,15 @@ pub enum FastPath {
 /// Resolve the top-level fast paths against the detected environment.
 ///
 /// A present path query always wins over any parsed subcommand. At most one of
-/// the four may be given; more than one is a single refusal.
+/// the six may be given; more than one is a single refusal.
 pub fn resolve(cli: &Cli, env: &Env) -> FastPath {
     let count = [
         cli.prefix.is_some(),
         cli.cellar.is_some(),
+        cli.caskroom.is_some(),
         cli.cache.is_some(),
         cli.repository.is_some(),
+        cli.taps,
     ]
     .into_iter()
     .filter(|present| *present)
@@ -58,6 +60,9 @@ pub fn resolve(cli: &Cli, env: &Env) -> FastPath {
     if let Some(query) = &cli.cellar {
         return FastPath::Print(cellar_line(env, query.as_deref()));
     }
+    if let Some(query) = &cli.caskroom {
+        return FastPath::Print(caskroom_line(env, query.as_deref()));
+    }
     if let Some(query) = &cli.cache {
         return match query {
             Some(_) => FastPath::Refuse(CACHE_FORMULA.to_owned()),
@@ -66,6 +71,9 @@ pub fn resolve(cli: &Cli, env: &Env) -> FastPath {
     }
     if let Some(query) = &cli.repository {
         return repository_line(env, query.as_deref());
+    }
+    if cli.taps {
+        return FastPath::Print(taps_line(env));
     }
     FastPath::None
 }
@@ -97,6 +105,19 @@ fn repository_line(env: &Env, tap: Option<&str>) -> FastPath {
             Err(err) => FastPath::Refuse(err.to_string()),
         },
     }
+}
+
+/// Bare `--caskroom` prints the Caskroom; `--caskroom <cask>` prints its token path.
+fn caskroom_line(env: &Env, cask: Option<&str>) -> String {
+    match cask {
+        Some(token) => env.caskroom.join(token).into_string(),
+        None => env.caskroom.to_string(),
+    }
+}
+
+/// `--taps` prints the Taps directory under the repository.
+fn taps_line(env: &Env) -> String {
+    env.repository.join("Library").join("Taps").into_string()
 }
 
 #[cfg(test)]
@@ -215,6 +236,23 @@ mod tests {
         assert_eq!(
             resolve(&cli(&["zapbrew", "--prefix", "--cellar"]), &env),
             FastPath::Refuse(MULTIPLE.to_owned())
+        );
+    }
+
+    #[test]
+    fn bare_caskroom_and_taps_print_env_paths() {
+        let env = scratch_env();
+        assert_eq!(
+            resolve(&cli(&["zapbrew", "--caskroom"]), &env),
+            FastPath::Print(env.caskroom.to_string())
+        );
+        assert_eq!(
+            resolve(&cli(&["zapbrew", "--caskroom", "firefox"]), &env),
+            FastPath::Print(env.caskroom.join("firefox").into_string())
+        );
+        assert_eq!(
+            resolve(&cli(&["zapbrew", "--taps"]), &env),
+            FastPath::Print(env.repository.join("Library").join("Taps").into_string())
         );
     }
 }
