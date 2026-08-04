@@ -422,6 +422,25 @@ async fn non_directory_cache_root_is_typed_invalid_state() {
     );
 }
 
+#[tokio::test]
+async fn missing_prefix_is_allowed_without_recreation() {
+    let fixture = Fixture::new();
+    fs::remove_dir_all(&fixture.env.prefix).expect("remove prefix");
+    let (ctx, _reporter) = fixture.context(Vec::new());
+
+    cleanup::run(
+        &ctx,
+        Args {
+            dry_run: true,
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("missing prefix");
+
+    assert!(!ctx.env.prefix.exists());
+}
+
 #[test]
 fn candidate_name_set_is_deterministic() {
     let names = BTreeSet::from(["b", "a"]);

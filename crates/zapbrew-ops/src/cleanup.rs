@@ -804,12 +804,8 @@ fn ensure_no_symlink_components(root: &Utf8Path, path: &Utf8Path) -> Result<(), 
     let relative = path.strip_prefix(root).map_err(|_| OpError::InvalidState {
         reason: format!("path escaped {root}: {path}"),
     })?;
-    let root_metadata = fs::symlink_metadata(root)
-        .map_err(|source| OpError::io("inspect", root.to_path_buf(), source))?;
-    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
-        return Err(OpError::InvalidState {
-            reason: format!("cleanup root is not a real directory: {root}"),
-        });
+    if !present_real_directory(root)? {
+        return Ok(());
     }
     let mut current = root.to_path_buf();
     for component in relative.components() {
