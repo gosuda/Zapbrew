@@ -843,9 +843,43 @@ mod tests {
             })
         );
         assert_eq!(
+            planned(&["zapbrew", "services"]).kind,
+            OpKind::Services(zapbrew_ops::services::Args {
+                action: zapbrew_ops::services::ServiceAction::List,
+                names: Vec::new(),
+            })
+        );
+        assert_eq!(
             planned(&["zapbrew", "shim", "install"]).kind,
             OpKind::Shim(zapbrew_ops::shim::Args {
                 action: zapbrew_ops::shim::ShimAction::Install,
+            })
+        );
+    }
+
+    #[test]
+    fn install_include_test_mapping() {
+        assert_eq!(
+            planned(&["zapbrew", "install", "wget", "--include-test"]).kind,
+            OpKind::Install(zapbrew_ops::install::Args {
+                names: vec!["wget".to_owned()],
+                only_dependencies: false,
+                force: false,
+                dry_run: false,
+                build_from_source: false,
+                head: false,
+                interactive: false,
+                include_test: true,
+            })
+        );
+    }
+
+    #[test]
+    fn postinstall_plans_with_formula_names() {
+        assert_eq!(
+            planned(&["zapbrew", "postinstall", "wget", "curl"]).kind,
+            OpKind::Postinstall(zapbrew_ops::postinstall::Args {
+                names: vec!["wget".to_owned(), "curl".to_owned()],
             })
         );
     }
@@ -894,6 +928,7 @@ mod tests {
     fn catalog_reading_commands_load_formula() {
         for args in [
             &["zapbrew", "install", "wget"][..],
+            &["zapbrew", "install", "wget", "--include-test"][..],
             &["zapbrew", "reinstall", "wget"][..],
             &["zapbrew", "upgrade"][..],
             &["zapbrew", "outdated"][..],
@@ -905,6 +940,7 @@ mod tests {
             &["zapbrew", "cleanup"][..],
             &["zapbrew", "desc", "wget"][..],
             &["zapbrew", "doctor"][..],
+            &["zapbrew", "postinstall", "wget"][..],
             &["zapbrew", "services", "list"][..],
         ] {
             assert_eq!(classify(args), (true, false), "args: {args:?}");

@@ -98,6 +98,62 @@ fn pour_filter_runs_after_duplicate_tag_merge() {
 }
 
 #[test]
+fn pour_filter_keeps_test_dependencies_when_include_test_is_set() {
+    let target = tag("linux", None);
+    let catalog = catalog(
+        r#"[
+          {"name":"root","full_name":"root","versions":{"stable":"1"},
+           "test_dependencies":["testonly"]},
+          {"name":"testonly","full_name":"testonly","versions":{"stable":"1"}}
+        ]"#,
+        target,
+    );
+    let expanded = ok(expand(
+        &catalog,
+        ["root"],
+        &DependencyOptions {
+            target,
+            mode: DependencyMode::Pour,
+            filter: EdgeFilter::query(false, true, false, false),
+        },
+    ));
+
+    let names: Vec<&str> = expanded
+        .iter()
+        .map(|dependency| dependency.name.as_str())
+        .collect();
+    assert_eq!(names, ["testonly"]);
+}
+
+#[test]
+fn pour_filter_drops_test_dependencies_when_include_test_is_false() {
+    let target = tag("linux", None);
+    let catalog = catalog(
+        r#"[
+          {"name":"root","full_name":"root","versions":{"stable":"1"},
+           "test_dependencies":["testonly"]},
+          {"name":"testonly","full_name":"testonly","versions":{"stable":"1"}}
+        ]"#,
+        target,
+    );
+    let expanded = ok(expand(
+        &catalog,
+        ["root"],
+        &DependencyOptions {
+            target,
+            mode: DependencyMode::Pour,
+            filter: EdgeFilter::default(),
+        },
+    ));
+
+    let names: Vec<&str> = expanded
+        .iter()
+        .map(|dependency| dependency.name.as_str())
+        .collect();
+    assert!(names.is_empty());
+}
+
+#[test]
 fn active_stack_reports_the_closed_cycle() {
     let target = tag("linux", None);
     let catalog = catalog(

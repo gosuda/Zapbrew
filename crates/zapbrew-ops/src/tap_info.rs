@@ -34,6 +34,17 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
     taps.sort();
 
     if args.json {
+        let mut missing = 0_usize;
+        for tap in &taps {
+            if !is_installed(&ctx.env, tap)? {
+                missing += 1;
+            }
+        }
+        if missing > 0 {
+            return Err(OpError::Refusal {
+                message: "One or more requested taps are not installed.".to_owned(),
+            });
+        }
         return print_json(ctx, &taps);
     }
 
@@ -122,13 +133,13 @@ fn formula_files(root: &Utf8Path) -> Result<FormulaFiles, OpError> {
     };
     let mut files = Vec::new();
     let mut names = Vec::new();
-    for entry in sorted_rb_files(&dir)? {
+    for (relative, _) in sorted_rb_files(&dir, !prefix.is_empty())? {
         if prefix.is_empty() {
-            files.push(entry.clone());
+            files.push(relative.clone());
         } else {
-            files.push(format!("{prefix}/{entry}"));
+            files.push(format!("{prefix}/{relative}"));
         }
-        names.push(rb_basename(&entry));
+        names.push(rb_basename(file_name(&relative)));
     }
     Ok((prefix.to_owned().into(), files, names))
 }
@@ -140,9 +151,9 @@ fn cask_files(root: &Utf8Path) -> Result<(Vec<String>, Vec<String>), OpError> {
     }
     let mut files = Vec::new();
     let mut tokens = Vec::new();
-    for entry in sorted_rb_files(&dir)? {
-        files.push(format!("Casks/{entry}"));
-        tokens.push(rb_basename(&entry));
+    for (relative, _) in sorted_rb_files(&dir, true)? {
+        files.push(format!("Casks/{relative}"));
+        tokens.push(rb_basename(file_name(&relative)));
     }
     Ok((files, tokens))
 }
@@ -153,32 +164,54 @@ fn command_files(root: &Utf8Path) -> Result<Vec<String>, OpError> {
         return Ok(Vec::new());
     }
     let mut files = Vec::new();
-    for entry in sorted_rb_files(&dir)? {
-        if entry.starts_with("brew-") {
-            files.push(format!("cmd/{entry}"));
+    for (relative, name) in sorted_rb_files(&dir, false)? {
+        if name.starts_with("brew-") {
+            files.push(format!("cmd/{relative}"));
         }
     }
     Ok(files)
 }
 
-fn sorted_rb_files(dir: &Utf8Path) -> Result<Vec<String>, OpError> {
+fn sorted_rb_files(dir: &Utf8Path, recursive: bool) -> Result<Vec<(String, String)>, OpError> {
     let mut entries = Vec::new();
-    if let Ok(read_dir) = std::fs::read_dir(dir.as_std_path()) {
-        for entry in read_dir.flatten() {
-            let Ok(metadata) = entry.metadata() else {
-                continue;
-            };
-            if !metadata.is_file() {
-                continue;
-            }
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.ends_with(".rb") {
-                entries.push(name);
-            }
+    collect_rb_files(dir, dir, recursive, &mut entries)?;
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(entries)
+}
+
+fn collect_rb_files(
+    root: &Utf8Path,
+    dir: &Utf8Path,
+    recursive: bool,
+    out: &mut Vec<(String, String)>,
+) -> Result<(), OpError> {
+    let read_dir = std::fs::read_dir(dir.as_std_path())
+        .map_err(|source| OpError::io("read directory", dir.to_path_buf(), source))?;
+    for entry in read_dir.flatten() {
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if metadata.is_dir() && recursive {
+            let child = dir.join(&name);
+            collect_rb_files(root, &child, recursive, out)?;
+        } else if metadata.is_file() && name.ends_with(".rb") {
+            let relative = entry
+                .path()
+                .strip_prefix(root.as_std_path())
+                .map_err(|_| OpError::InvalidState {
+                    reason: format!("path not under root: {}", entry.path().display()),
+                })?
+                .to_string_lossy()
+                .into_owned();
+            out.push((relative, name));
         }
     }
-    entries.sort();
-    Ok(entries)
+    Ok(())
+}
+
+fn file_name(path: &str) -> &str {
+    path.rsplit_once('/').map_or(path, |(_, name)| name)
 }
 
 fn is_dir(path: &Utf8Path) -> bool {
