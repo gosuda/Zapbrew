@@ -25,6 +25,7 @@ mod render;
 pub mod search;
 pub mod services;
 pub mod shellenv;
+pub mod shim;
 mod size;
 pub mod state;
 pub mod tap;
@@ -158,5 +159,20 @@ pub mod update_test_support {
 
     pub fn run_with_report(ctx: &Ctx, report: &RefreshReport) -> Result<(), OpError> {
         update::run_with_report(ctx, report)
+    }
+}
+
+#[doc(hidden)]
+pub mod shim_test_support {
+    use camino::Utf8Path;
+
+    use crate::{Ctx, OpError, shim};
+
+    pub fn run_with_exe(
+        ctx: &Ctx,
+        action: shim::ShimAction,
+        exe: &Utf8Path,
+    ) -> Result<(), OpError> {
+        shim::run_with_exe(ctx, shim::Args { action }, exe)
     }
 }

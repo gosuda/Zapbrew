@@ -11,6 +11,13 @@ pub trait Reporter: Send + Sync {
     fn onoe(&self, message: &str);
     fn print(&self, message: &str);
     fn eprint(&self, message: &str);
+
+    /// Program name used in self-referential hints such as
+    /// `<prog> reinstall foo`. Defaults to `zapbrew`; a terminal reporter that
+    /// was invoked through the brew shim overrides it with `brew`.
+    fn hint_program(&self) -> &str {
+        "zapbrew"
+    }
 }
 
 /// Shared dependencies for every operation entry point.

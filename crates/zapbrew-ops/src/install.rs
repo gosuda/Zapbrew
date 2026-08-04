@@ -475,10 +475,11 @@ fn select_unmet<'a>(
         if current_and_linked && !force {
             if candidate.requested {
                 ctx.reporter.opoo(&format!(
-                    "{} {} is already installed and up-to-date.\nTo reinstall {}, run:\n  zapbrew reinstall {}",
+                    "{} {} is already installed and up-to-date.\nTo reinstall {}, run:\n  {} reinstall {}",
                     candidate.formula.name,
                     candidate.formula.pkg_version,
                     candidate.formula.pkg_version,
+                    ctx.reporter.hint_program(),
                     candidate.formula.name
                 ));
             }

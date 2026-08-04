@@ -96,8 +96,12 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
             selected.push((formula, installed));
         } else if named {
             ctx.reporter.opoo(&format!(
-                "{} {} is already installed and up-to-date.\nTo reinstall {}, run:\n  zapbrew reinstall {}",
-                formula.name, formula.pkg_version, formula.pkg_version, formula.name
+                "{} {} is already installed and up-to-date.\nTo reinstall {}, run:\n  {} reinstall {}",
+                formula.name,
+                formula.pkg_version,
+                formula.pkg_version,
+                ctx.reporter.hint_program(),
+                formula.name
             ));
         }
     }

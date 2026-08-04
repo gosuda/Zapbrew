@@ -157,8 +157,10 @@ fn start(ctx: &Ctx, target: &Target) -> Result<(), OpError> {
     let active = active(ctx, target)?;
     if active {
         ctx.reporter.print(&format!(
-            "Service `{}` already started, use zapbrew restart {} to restart.",
-            target.name, target.name
+            "Service `{}` already started, use {} restart {} to restart.",
+            target.name,
+            ctx.reporter.hint_program(),
+            target.name
         ));
         return Ok(());
     }

@@ -25,19 +25,38 @@ impl CommandRunner for PanicRunner {
     }
 }
 
-#[derive(Default)]
-pub struct RecordingReporter(Mutex<Vec<String>>);
+pub struct RecordingReporter {
+    log: Mutex<Vec<String>>,
+    hint: String,
+}
+
+impl Default for RecordingReporter {
+    fn default() -> Self {
+        Self {
+            log: Mutex::new(Vec::new()),
+            hint: "zapbrew".to_owned(),
+        }
+    }
+}
 
 impl RecordingReporter {
+    /// A reporter whose self-referential hints use `hint` (e.g. `brew`).
+    pub fn with_hint(hint: &str) -> Self {
+        Self {
+            log: Mutex::new(Vec::new()),
+            hint: hint.to_owned(),
+        }
+    }
+
     fn push(&self, channel: &str, message: &str) {
-        self.0
+        self.log
             .lock()
             .expect("reporter lock")
             .push(format!("{channel}:{message}"));
     }
 
     pub fn take(&self) -> Vec<String> {
-        std::mem::take(&mut *self.0.lock().expect("reporter lock"))
+        std::mem::take(&mut *self.log.lock().expect("reporter lock"))
     }
 }
 
@@ -59,6 +78,9 @@ impl Reporter for RecordingReporter {
     }
     fn eprint(&self, message: &str) {
         self.push("eprint", message);
+    }
+    fn hint_program(&self) -> &str {
+        &self.hint
     }
 }
 
@@ -145,6 +167,29 @@ impl Fixture {
             },
             recording,
         )
+    }
+
+    /// Build a context around a caller-owned reporter, so a `brew`-hint reporter
+    /// can be threaded through operations that emit self-referential hints.
+    pub fn context_with_reporter(
+        &self,
+        formulae: Vec<Value>,
+        recording: Arc<RecordingReporter>,
+    ) -> Ctx {
+        let payload = serde_json::to_vec(&formulae).expect("catalog payload");
+        let catalog =
+            Arc::new(Catalog::from_payload(&payload, &self.env.bottle_tag).expect("catalog"));
+        let casks =
+            Arc::new(CaskCatalog::from_payload(b"[]", &self.env.bottle_tag).expect("casks"));
+        let reporter: Arc<dyn Reporter> = recording;
+        Ctx {
+            env: self.env.clone(),
+            http: reqwest::Client::new(),
+            catalog,
+            casks,
+            commands: Arc::new(PanicRunner),
+            reporter,
+        }
     }
 
     pub fn keg(&self, name: &str, version: &str, scheme: u32) -> Keg {
