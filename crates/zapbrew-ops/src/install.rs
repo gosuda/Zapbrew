@@ -263,9 +263,11 @@ pub(crate) fn make_tab(
         .and_then(|duration| i64::try_from(duration.as_secs()).ok());
 
     Ok(Tab {
-        // Homebrew-compatible version string (task plan: receipts write
-        // `5.1.0-zapbrew`; real brew parses it for display/minimum checks).
-        homebrew_version: Some("5.1.0-zapbrew".to_owned()),
+        // Homebrew-compatible version string matching the reference tree
+        // (6.0.14). Must be >= 5.1.15: real brew's Linux
+        // `BottleSpecification#skip_relocation?` gates on
+        // `tab.parsed_homebrew_version >= "5.1.15"` when reading receipts.
+        homebrew_version: Some("6.0.14-zapbrew".to_owned()),
         built_as_bottle: true,
         poured_from_bottle: true,
         loaded_from_api: true,
