@@ -2,6 +2,14 @@
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
+/// Decode URL-safe base64 tolerating optional `=` padding, mirroring brew's
+/// `urlsafe_decode64` (api.rb), which pads to the 4-boundary before decoding.
+/// Live Homebrew envelopes carry padded signatures; the fixture KATs are
+/// unpadded. Both must verify.
+fn urlsafe_decode(value: &str) -> Result<Vec<u8>, base64::DecodeError> {
+    URL_SAFE_NO_PAD.decode(value.trim_end_matches('=').as_bytes())
+}
 use rsa::pkcs8::DecodePublicKey;
 use rsa::sha2::{Digest, Sha512};
 use rsa::{Pss, RsaPublicKey};
@@ -151,7 +159,7 @@ impl HomebrewVerifier {
             _ => return SigOutcome::Malformed,
         };
 
-        let protected_bytes = match URL_SAFE_NO_PAD.decode(protected_b64.as_bytes()) {
+        let protected_bytes = match urlsafe_decode(protected_b64) {
             Ok(bytes) => bytes,
             Err(_) => return SigOutcome::Malformed,
         };
@@ -166,7 +174,7 @@ impl HomebrewVerifier {
             Err(HeaderReject::Malformed) => return SigOutcome::Malformed,
         }
 
-        let signature_bytes = match URL_SAFE_NO_PAD.decode(signature_b64.as_bytes()) {
+        let signature_bytes = match urlsafe_decode(signature_b64) {
             Ok(bytes) => bytes,
             // Header was a supported PS512/b64:false candidate; treat decode failure
             // as a failed verification attempt (not "unsupported algorithm").
@@ -272,6 +280,25 @@ PDOT0wTMkCJCLBCQ8M8Fcq3C8yytCLSBdfcmH+Ew/rzryl566QVxpg3VVQG6mvgX\n\
         let payload = match verifier.verify(&bytes) {
             Ok(p) => p,
             Err(err) => panic!("expected valid signature, got {err}"),
+        };
+        assert_eq!(payload, PAYLOAD.as_bytes());
+    }
+
+    #[test]
+    fn verifies_padded_urlsafe_signature_like_live_envelopes() {
+        // Live Homebrew envelopes pad the URL-safe signature to the 4-boundary
+        // (`...cFXPapg=`); brew's urlsafe_decode64 tolerates it, so must we.
+        let padded = format!("{FIXED_SIGNATURE_B64}==");
+        let entry = serde_json::json!({
+            "header": { "kid": "homebrew-1" },
+            "protected": PROTECTED_B64,
+            "signature": padded,
+        });
+        let verifier = test_verifier();
+        let bytes = envelope(PAYLOAD, serde_json::json!([entry]));
+        let payload = match verifier.verify(&bytes) {
+            Ok(p) => p,
+            Err(err) => panic!("expected padded signature to verify, got {err}"),
         };
         assert_eq!(payload, PAYLOAD.as_bytes());
     }
