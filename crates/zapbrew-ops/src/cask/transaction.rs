@@ -124,22 +124,23 @@ pub(super) fn read_record(
         });
     }
     let path = version_dir.join(RECORD_FILE);
-    let bytes = match fs::read(&path) {
-        Ok(bytes) => bytes,
+    // Reject a symlinked/non-regular record before opening it so a hostile
+    // record path can never be dereferenced (FIFO/device DoS or disclosure).
+    let record_meta = match fs::symlink_metadata(&path) {
+        Ok(meta) => meta,
         Err(source) if source.kind() == io::ErrorKind::NotFound => {
             return Err(OpError::InvalidState {
                 reason: format!("cask install record {path} is missing"),
             });
         }
-        Err(source) => return Err(OpError::io("read", &path, source)),
+        Err(source) => return Err(OpError::io("inspect", &path, source)),
     };
-    let record_meta =
-        fs::symlink_metadata(&path).map_err(|source| OpError::io("inspect", &path, source))?;
     if record_meta.file_type().is_symlink() || !record_meta.is_file() {
         return Err(OpError::InvalidState {
             reason: format!("cask install record {path} is not a regular file"),
         });
     }
+    let bytes = fs::read(&path).map_err(|source| OpError::io("read", &path, source))?;
     let text = std::str::from_utf8(&bytes).map_err(|source| OpError::InvalidState {
         reason: format!("cask install record {path} is not UTF-8: {source}"),
     })?;
@@ -177,7 +178,7 @@ impl InstallRecord {
             )));
         }
         let appdir = self.appdir();
-        if !appdir.is_absolute() || !safe_lexical(appdir.as_std_path()) {
+        if !crate::cask::approved_appdir(&ctx.env, &appdir) {
             return Err(invalid(format!("unsafe appdir '{appdir}'")));
         }
         for target in self.targets() {

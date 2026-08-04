@@ -595,4 +595,73 @@ async fn multi_version_preflight_failure_removes_nothing() {
     assert!(fixture.env.caskroom.join("guard/2.0").is_dir());
 }
 
+#[tokio::test]
+async fn tampered_record_appdir_cannot_widen_removal_roots() {
+    let fixture = Fixture::new().macos();
+    fs::create_dir_all(&fixture.env.home).expect("home");
+    let raw = json!({
+        "token": "evil", "version": "1.0", "sha256": "no_check",
+        "url": "https://example.test/a.zip",
+        "artifacts": [
+            {"artifact": ["v.txt"], "target": format!("{}/victim.txt", fixture.env.home)}
+        ]
+    });
+    // A tampered record points appdir at `/` so every absolute target would
+    // lexically "fit" inside the appdir root; validation must reject it before
+    // any removal so the victim survives.
+    seed_version(&fixture, "evil", "1.0", &raw, "/");
+    fs::write(fixture.env.home.join("victim.txt"), b"v").expect("victim");
+
+    let runner = Arc::new(RecordingRunner::default());
+    let (ctx, _r) = fixture.context_casks(vec![], runner.clone(), reqwest::Client::new());
+    let result = uninstall::run(
+        &ctx,
+        Args {
+            tokens: vec!["evil".to_owned()],
+            zap: false,
+        },
+    )
+    .await;
+    assert!(result.is_err(), "broad appdir record must refuse");
+    assert!(runner.calls().is_empty(), "no host command may run");
+    assert!(
+        fixture.env.home.join("victim.txt").exists(),
+        "victim survives"
+    );
+    assert!(fixture.env.caskroom.join("evil/1.0").is_dir());
+}
+
+#[tokio::test]
+async fn symlinked_record_file_refuses_before_read() {
+    use std::os::unix::fs::symlink;
+    let fixture = Fixture::new().macos();
+    fs::create_dir_all(&fixture.env.home).expect("home");
+    let raw = json!({
+        "token": "linky", "version": "1.0", "sha256": "no_check",
+        "url": "https://example.test/a.zip",
+        "artifacts": [{"artifact": ["o.txt"], "target": format!("{}/one.txt", fixture.env.home)}]
+    });
+    seed_version(&fixture, "linky", "1.0", &raw, fixture.env.home.as_str());
+    fs::write(fixture.env.home.join("one.txt"), b"1").expect("one");
+    // Replace the record file with a symlink to an external payload; the no-follow
+    // check must reject it without dereferencing the link target.
+    let record = fixture.env.caskroom.join("linky/1.0/.zapbrew-record.json");
+    fs::remove_file(&record).expect("remove record");
+    symlink(fixture.env.home.join("one.txt"), &record).expect("record symlink");
+
+    let runner = Arc::new(RecordingRunner::default());
+    let (ctx, _r) = fixture.context_casks(vec![], runner.clone(), reqwest::Client::new());
+    let result = uninstall::run(
+        &ctx,
+        Args {
+            tokens: vec!["linky".to_owned()],
+            zap: false,
+        },
+    )
+    .await;
+    assert!(result.is_err(), "symlinked record must refuse");
+    assert!(runner.calls().is_empty(), "no host command may run");
+    assert!(fixture.env.home.join("one.txt").exists());
+}
+
 fn _path(_path: &Utf8Path) {}

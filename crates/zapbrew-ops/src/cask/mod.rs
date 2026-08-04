@@ -118,6 +118,23 @@ fn expand_path(ctx: &Ctx, raw: &str, appdir: &Utf8Path) -> Result<Utf8PathBuf, O
     Ok(path)
 }
 
+/// The fixed default application directory, mirroring Homebrew's `--appdir`.
+pub(super) const DEFAULT_APPDIR: &str = "/Applications";
+
+/// Validate an install-time `--appdir` value. The appdir is a record-trust
+/// root: uninstall and force-replace treat it as a removal/confinement root,
+/// so a broad value like `/` would make a tampered record able to delete
+/// arbitrary user-writable paths. Only the fixed `/Applications` tree plus
+/// roots under the user's home or prefix are accepted.
+pub(super) fn approved_appdir(env: &zapbrew_prefix::Env, appdir: &Utf8Path) -> bool {
+    if !appdir.is_absolute() || !safe_lexical(appdir.as_std_path()) {
+        return false;
+    }
+    appdir.starts_with(Utf8Path::new(DEFAULT_APPDIR))
+        || appdir.starts_with(&env.home)
+        || appdir.starts_with(&env.prefix)
+}
+
 fn safe_relative(raw: &str) -> bool {
     !raw.is_empty() && !Path::new(raw).is_absolute() && safe_lexical(Path::new(raw))
 }

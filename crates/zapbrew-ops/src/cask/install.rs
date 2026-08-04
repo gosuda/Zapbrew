@@ -28,7 +28,12 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
     let _locks = acquire_locks(ctx, &canonical)?;
     let appdir = args
         .appdir
-        .unwrap_or_else(|| Utf8PathBuf::from("/Applications"));
+        .unwrap_or_else(|| Utf8PathBuf::from(crate::cask::DEFAULT_APPDIR));
+    if !crate::cask::approved_appdir(&ctx.env, &appdir) {
+        return Err(OpError::Refusal {
+            message: format!("Cask appdir '{appdir}' is outside approved roots."),
+        });
+    }
 
     // Full artifact and download preflight for every token before any I/O.
     let prepared = casks

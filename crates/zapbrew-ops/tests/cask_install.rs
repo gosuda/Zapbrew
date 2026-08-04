@@ -615,6 +615,35 @@ impl CommandRunner for DmgSymlinkRunner {
 }
 
 #[tokio::test]
+async fn unapproved_appdir_refuses_before_any_io() {
+    let server = MockServer::start().await;
+    let body = b"never-downloaded".to_vec();
+    let sha = sha_hex(&body);
+    let url = serve(&server, "/Blocked.tar.gz", body).await;
+    let value = cask("blocked", &url, &sha, vec![json!({"app": ["Blocked.app"]})]);
+    let fixture = Fixture::new().macos();
+    // An appdir outside {home, prefix, /Applications} would become a record
+    // removal root broad enough to defeat target confinement; refuse up front.
+    let outside = Utf8PathBuf::from("/opt/apps");
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+    let result = install::run(&ctx, install_args(&["blocked"], &outside, false)).await;
+    let error = err(result);
+    assert!(
+        matches!(&error, OpError::Refusal { message } if message.contains("appdir")),
+        "expected appdir refusal, got {error:?}"
+    );
+    assert!(!fixture.env.caskroom.join("blocked").exists());
+    assert!(
+        server
+            .received_requests()
+            .await
+            .is_none_or(|requests| requests.is_empty()),
+        "no download may be attempted"
+    );
+}
+
+#[tokio::test]
 async fn dmg_source_through_staging_symlink_refuses_before_mutation() {
     let server = MockServer::start().await;
     let body = b"dmg-bytes".to_vec();
