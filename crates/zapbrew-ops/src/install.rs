@@ -24,6 +24,7 @@ pub struct Args {
     pub build_from_source: bool,
     pub head: bool,
     pub interactive: bool,
+    pub include_test: bool,
 }
 
 struct Candidate<'a> {
@@ -34,9 +35,8 @@ struct Candidate<'a> {
 
 pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
     refuse_ruby_modes(&args)?;
-
     let roots = resolve_roots(ctx, &args.names).await?;
-    let mut candidates = dependency_candidates(ctx, &roots)?;
+    let mut candidates = dependency_candidates(ctx, &roots, &args)?;
     if !args.only_dependencies {
         candidates.extend(
             roots
@@ -214,7 +214,7 @@ pub(crate) fn make_tab(
         &DependencyOptions {
             target: ctx.env.bottle_tag,
             mode: DependencyMode::Pour,
-            filter: EdgeFilter::ALL,
+            filter: EdgeFilter::default(),
         },
     )?;
     let direct: HashSet<String> = formula
@@ -383,6 +383,7 @@ async fn resolve_roots<'a>(ctx: &'a Ctx, names: &[String]) -> Result<Vec<&'a For
 fn dependency_candidates<'a>(
     ctx: &'a Ctx,
     roots: &[&Formula],
+    args: &Args,
 ) -> Result<Vec<Candidate<'a>>, OpError> {
     let dependencies = expand(
         ctx.catalog.as_ref(),
@@ -390,7 +391,7 @@ fn dependency_candidates<'a>(
         &DependencyOptions {
             target: ctx.env.bottle_tag,
             mode: DependencyMode::Pour,
-            filter: EdgeFilter::ALL,
+            filter: EdgeFilter::query(false, args.include_test, false, false),
         },
     )?;
     dependencies

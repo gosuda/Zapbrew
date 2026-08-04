@@ -86,7 +86,7 @@ fn pour_filter_runs_after_duplicate_tag_merge() {
         &DependencyOptions {
             target,
             mode: DependencyMode::Pour,
-            filter: EdgeFilter::ALL,
+            filter: EdgeFilter::default(),
         },
     ));
 
@@ -94,7 +94,7 @@ fn pour_filter_runs_after_duplicate_tag_merge() {
         .iter()
         .map(|dependency| dependency.name.as_str())
         .collect();
-    assert_eq!(names, ["middle"]);
+    assert_eq!(names, ["middle", "shared"]);
 }
 
 #[test]

@@ -160,7 +160,10 @@ where
             build: merged.build,
             test: merged.test,
         };
-        if matches!(options.mode, DependencyMode::Pour) && (dependency.build || dependency.test) {
+        if matches!(options.mode, DependencyMode::Pour)
+            && ((dependency.build && !options.filter.include_build)
+                || (dependency.test && !options.filter.include_test))
+        {
             continue;
         }
         expanded.push(dependency);

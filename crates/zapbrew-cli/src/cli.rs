@@ -223,6 +223,9 @@ pub struct InstallArgs {
     /// Run the installation interactively.
     #[arg(short = 'i', long)]
     pub interactive: bool,
+    /// Include test dependencies during expansion.
+    #[arg(long)]
+    pub include_test: bool,
     /// Treat the named arguments as casks.
     #[arg(long, conflicts_with = "formula")]
     pub cask: bool,
@@ -472,7 +475,7 @@ pub struct TapInfoArgs {
 #[derive(Debug, Args)]
 pub struct ServicesArgs {
     #[command(subcommand)]
-    pub command: ServicesCommand,
+    pub command: Option<ServicesCommand>,
 }
 
 /// Service management actions.
@@ -952,12 +955,12 @@ mod tests {
         let Commands::Services(list) = command(&["zapbrew", "services", "list"]) else {
             panic!("expected services");
         };
-        assert!(matches!(list.command, ServicesCommand::List));
+        assert!(matches!(list.command, Some(ServicesCommand::List)));
 
         let Commands::Services(start) = command(&["zapbrew", "services", "start", "a", "b"]) else {
             panic!("expected services");
         };
-        let ServicesCommand::Start { names } = start.command else {
+        let Some(ServicesCommand::Start { names }) = start.command else {
             panic!("expected start");
         };
         assert_eq!(names, vec!["a", "b"]);
@@ -965,7 +968,7 @@ mod tests {
         let Commands::Services(run) = command(&["zapbrew", "services", "run", "a"]) else {
             panic!("expected services");
         };
-        let ServicesCommand::Run { names } = run.command else {
+        let Some(ServicesCommand::Run { names }) = run.command else {
             panic!("expected run");
         };
         assert_eq!(names, vec!["a"]);
@@ -973,7 +976,7 @@ mod tests {
         let Commands::Services(info) = command(&["zapbrew", "services", "info", "a"]) else {
             panic!("expected services");
         };
-        let ServicesCommand::Info { names } = info.command else {
+        let Some(ServicesCommand::Info { names }) = info.command else {
             panic!("expected info");
         };
         assert_eq!(names, vec!["a"]);
@@ -981,7 +984,7 @@ mod tests {
         let Commands::Services(kill) = command(&["zapbrew", "services", "kill", "a"]) else {
             panic!("expected services");
         };
-        let ServicesCommand::Kill { names } = kill.command else {
+        let Some(ServicesCommand::Kill { names }) = kill.command else {
             panic!("expected kill");
         };
         assert_eq!(names, vec!["a"]);
@@ -989,12 +992,12 @@ mod tests {
         let Commands::Services(cleanup) = command(&["zapbrew", "services", "cleanup"]) else {
             panic!("expected services");
         };
-        assert!(matches!(cleanup.command, ServicesCommand::Cleanup));
+        assert!(matches!(cleanup.command, Some(ServicesCommand::Cleanup)));
 
-        assert_eq!(
-            parse_kind(&["zapbrew", "services"]),
-            ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
-        );
+        let Commands::Services(default) = command(&["zapbrew", "services"]) else {
+            panic!("expected services");
+        };
+        assert!(default.command.is_none());
     }
 
     #[test]

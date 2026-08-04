@@ -100,6 +100,7 @@ pub fn plan(command: Commands, globals: &GlobalArgs, width: usize) -> Result<Pla
                         build_from_source: args.build_from_source,
                         head: args.head,
                         interactive: args.interactive,
+                        include_test: args.include_test,
                     }),
                 }
             }
@@ -339,7 +340,7 @@ pub fn plan(command: Commands, globals: &GlobalArgs, width: usize) -> Result<Pla
         Commands::Services(args) => Plan {
             needs_formula: true,
             needs_cask: false,
-            kind: OpKind::Services(services_args(args.command)),
+            kind: OpKind::Services(services_args(args.command.unwrap_or(ServicesCommand::List))),
         },
         Commands::Update => Plan {
             needs_formula: false,
@@ -598,6 +599,7 @@ mod tests {
                 build_from_source: true,
                 head: true,
                 interactive: true,
+                include_test: false,
             })
         );
         assert_eq!((plan.needs_formula, plan.needs_cask), (true, false));
