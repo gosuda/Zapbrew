@@ -262,6 +262,36 @@ async fn unsupported_artifact_preflights_before_io() {
 }
 
 #[tokio::test]
+async fn explicit_target_outside_approved_roots_preflights_before_io() {
+    let fixture = Fixture::new().macos();
+    for artifacts in [
+        vec![json!({"artifact": ["payload.txt", {"target": "/etc/evil.txt"}]})],
+        vec![json!({"app": ["Demo.app", {"target": "/opt/evil/Demo.app"}]})],
+    ] {
+        let value = cask(
+            "escape",
+            "https://example.test/App.zip",
+            "no_check",
+            artifacts,
+        );
+        let (ctx, _reporter) =
+            fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+        let result = install::run(
+            &ctx,
+            install_args(&["escape"], &fixture.env.home.join("Applications"), false),
+        )
+        .await;
+        let error = err(result);
+        assert!(
+            matches!(&error, OpError::Refusal { message } if message.contains("outside approved roots")),
+            "expected outside-roots refusal, got {error}"
+        );
+        // No download or staging happened.
+        assert!(!fixture.env.caskroom.join(".staging").exists());
+    }
+}
+
+#[tokio::test]
 async fn zip_and_tar_and_bare_extract_place_app() {
     for (route, body) in [
         ("/App.zip", zip_bytes(&[("Config.app/Contents/info", b"x")])),

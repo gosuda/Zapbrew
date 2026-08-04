@@ -97,6 +97,7 @@ pub(super) fn plan(ctx: &Ctx, cask: &Cask, appdir: &Utf8Path) -> Result<Plan, Op
             "app" | "suite" => {
                 let source = source_of(artifact, token)?;
                 let target = move_target(ctx, artifact, &source, appdir)?;
+                ensure_target_root(ctx, &target, appdir)?;
                 actions.push(Action::Move { source, target });
             }
             "binary" | "manpage" => {
@@ -115,6 +116,7 @@ pub(super) fn plan(ctx: &Ctx, cask: &Cask, appdir: &Utf8Path) -> Result<Plan, Op
                 let source = source_of(artifact, token)?;
                 let raw = artifact_target(artifact).ok_or_else(|| unsupported(token, kind))?;
                 let target = expand_path(ctx, &raw, appdir)?;
+                ensure_target_root(ctx, &target, appdir)?;
                 actions.push(Action::Copy { source, target });
             }
             _ => {
@@ -320,6 +322,21 @@ pub(super) const DIRECTIVE_KEYS: &[&str] = &[
     "quit",
     "signal",
 ];
+
+/// Refuse a deploy target outside the approved roots, mirroring
+/// `InstallRecord::validate` on the removal path so an installed cask can
+/// always be uninstalled and replaced.
+fn ensure_target_root(ctx: &Ctx, target: &Utf8Path, appdir: &Utf8Path) -> Result<(), OpError> {
+    if target.starts_with(&ctx.env.home)
+        || target.starts_with(&ctx.env.prefix)
+        || target.starts_with(appdir)
+    {
+        return Ok(());
+    }
+    Err(OpError::Refusal {
+        message: format!("Cask target '{target}' is outside approved roots."),
+    })
+}
 
 fn move_target(
     ctx: &Ctx,
