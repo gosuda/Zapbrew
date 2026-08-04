@@ -24,7 +24,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt, symlink};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -57,6 +57,11 @@ pub fn relocate(
     homebrew_version: Option<&str>,
     runner: &dyn CommandRunner,
 ) -> Result<RelocationReport, PourError> {
+    // brew's `setup_preferred_gcc_libs`: ensure the brewed glibc's ldconfig
+    // indexes the preferred GCC runtime libs via `<prefix>/etc/ld.so.conf.d`.
+    // No-op on non-Linux / without brewed glibc+gcc; idempotent.
+    zapbrew_prefix::setup_preferred_gcc_libs(env)?;
+
     if cellar_field.trim() == SKIP_RELOCATION {
         match env.bottle_tag {
             BottleTag::Linux { .. } => {
@@ -73,6 +78,7 @@ pub fn relocate(
 
     let subs = placeholder_subs(env);
     let new_prefix = env.prefix.as_str();
+    let cellar = env.cellar.as_str();
     let keg_root = keg.path();
     let keg_name = keg.name().name();
     let is_glibc = is_glibc(keg_name);
@@ -97,6 +103,7 @@ pub fn relocate(
             representative,
             &subs,
             new_prefix,
+            cellar,
             is_glibc,
             is_gcc,
             ld_so_readable,
@@ -118,8 +125,8 @@ pub fn relocate(
         }
     }
 
-    // Apply phase: nothing here can reject the mutation on content grounds.
     let mut report = RelocationReport::default();
+    // Apply phase: nothing here can reject the mutation on content grounds.
     for plan in plans {
         write_atomic(&plan.representative, &plan.new_bytes, plan.mode)?;
         // The atomic rename gives the representative a fresh inode, breaking the
@@ -135,6 +142,11 @@ pub fn relocate(
         }
         report.changed_files.push(plan.relative);
     }
+    // Symlink relativeization: rewrite absolute symlinks rooted in the
+    // prefix/cellar as relative symlinks, mirroring Homebrew's
+    // `fix_dynamic_linkage`. Runs after the file-rewrite apply phase so
+    // symlink targets with placeholders are substituted first.
+    relativeize_symlinks(keg_root, env, &subs, &mut report)?;
 
     Ok(report)
 }
@@ -219,11 +231,13 @@ fn collect_hardlink_groups(root: &Utf8Path) -> Result<Vec<HardlinkGroup>, PourEr
 /// Plan the rewrite for one file. Returns `Some((bytes, needs_codesign))` when
 /// the file changed, `None` when it is untouched, or an error when the mutation
 /// is impossible (rejected before any write).
+#[allow(clippy::too_many_arguments)]
 fn plan_file(
     original: &[u8],
     path: &Utf8Path,
     subs: &[(Vec<u8>, Vec<u8>)],
     new_prefix: &str,
+    cellar: &str,
     is_glibc: bool,
     is_gcc: bool,
     ld_so_readable: bool,
@@ -237,6 +251,7 @@ fn plan_file(
         path,
         subs,
         new_prefix,
+        cellar,
         is_glibc,
         is_gcc,
         ld_so_readable,
@@ -246,11 +261,13 @@ fn plan_file(
 /// Transform a binary file: structured ELF rewrite (runpath/interp, fit-or-grow)
 /// or structured Mach-O load-command rewrite first, then the generic NUL-padded
 /// placeholder pass, then a mandatory `object` reparse of the mutated bytes.
+#[allow(clippy::too_many_arguments)]
 fn relocate_binary(
     original: &[u8],
     path: &Utf8Path,
     subs: &[(Vec<u8>, Vec<u8>)],
     new_prefix: &str,
+    cellar: &str,
     is_glibc: bool,
     is_gcc: bool,
     ld_so_readable: bool,
@@ -265,12 +282,19 @@ fn relocate_binary(
     // so offsets stay valid across both passes.
     let mut protected: Vec<(usize, usize)> = Vec::new();
     if matches!(format, Some(BinaryFormat::Elf)) && !is_glibc {
-        if elf_relocate(&mut buf, original, subs, new_prefix, is_gcc, ld_so_readable).map_err(
-            |reason| PourError::Relocation {
-                path: path.to_path_buf(),
-                reason,
-            },
-        )? {
+        if elf_relocate(
+            &mut buf,
+            original,
+            subs,
+            new_prefix,
+            cellar,
+            is_gcc,
+            ld_so_readable,
+        )
+        .map_err(|reason| PourError::Relocation {
+            path: path.to_path_buf(),
+            reason,
+        })? {
             changed = true;
         }
         // The dynamic-linkage regions are owned by the structured pass; keep the
@@ -281,9 +305,11 @@ fn relocate_binary(
         // Recognized thin Mach-O (even when `object` cannot parse a malformed
         // command table) must take the structured path. Malformed tables return
         // a typed Relocation error before the generic pass or codesign.
-        if macho_relocate(&mut buf, original, subs).map_err(|reason| PourError::Relocation {
-            path: path.to_path_buf(),
-            reason,
+        if macho_relocate(&mut buf, original, subs, cellar, new_prefix).map_err(|reason| {
+            PourError::Relocation {
+                path: path.to_path_buf(),
+                reason,
+            }
         })? {
             changed = true;
         }
@@ -559,6 +585,163 @@ fn write_atomic(path: &Utf8Path, bytes: &[u8], mode: u32) -> Result<(), PourErro
 }
 
 // ---------------------------------------------------------------------------
+// Symlink relativeization: mirrors Homebrew's `Keg#fix_dynamic_linkage`,
+// which rewrites absolute symlinks rooted in the Cellar/prefix into relative
+// symlinks after pour. Zapbrew also substitutes placeholders in symlink targets
+// first, so bottles that store `@@HOMEBREW_PREFIX@@/...` or
+// `@@HOMEBREW_CELLAR@@/...` in symlink targets are covered alongside bottles
+// with real absolute paths.
+// ---------------------------------------------------------------------------
+
+/// Walk `keg_root` and rewrite every symlink whose target is an absolute path
+/// under the live prefix or cellar into a path relative to the symlink's parent
+/// directory. Placeholders in the target are substituted before the check, so
+/// both placeholder and real-prefix targets are handled. Changed symlinks are
+/// appended to `report.changed_files` as keg-relative paths.
+fn relativeize_symlinks(
+    keg_root: &Utf8Path,
+    env: &Env,
+    subs: &[(Vec<u8>, Vec<u8>)],
+    report: &mut RelocationReport,
+) -> Result<(), PourError> {
+    let prefix_path = &env.prefix;
+    let cellar_path = &env.cellar;
+
+    let mut stack: Vec<Utf8PathBuf> = vec![keg_root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = match fs::read_dir(dir.as_std_path()) {
+            Ok(entries) => entries,
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(source) => return Err(PourError::io("read_dir", dir, source)),
+        };
+        for entry in entries {
+            let entry = entry.map_err(|source| PourError::io("read_dir", dir.clone(), source))?;
+            let path = Utf8PathBuf::from_path_buf(entry.path()).map_err(|bad| {
+                PourError::InvalidArchive {
+                    path: bad.to_string_lossy().into_owned(),
+                    reason: "non-UTF-8 keg path".to_owned(),
+                }
+            })?;
+            let meta = fs::symlink_metadata(path.as_std_path())
+                .map_err(|source| PourError::io("stat", path.clone(), source))?;
+            let file_type = meta.file_type();
+            if file_type.is_symlink() {
+                let target = fs::read_link(path.as_std_path())
+                    .map_err(|source| PourError::io("readlink", path.clone(), source))?;
+                let target_str = target.to_string_lossy().into_owned();
+
+                // Substitute placeholders in the target so bottles that store
+                // `@@HOMEBREW_PREFIX@@/...` in symlink targets are covered.
+                let (substituted_bytes, _) = replace_all(target_str.as_bytes(), subs);
+                let substituted = String::from_utf8_lossy(&substituted_bytes).into_owned();
+
+                // Only rewrite absolute targets rooted in the prefix or cellar.
+                // `Utf8Path::starts_with` does component-level matching so
+                // `/opt/hb` does not match `/opt/hbfoo`.
+                if !substituted.starts_with('/') {
+                    continue;
+                }
+                let substituted_path = Utf8Path::new(&substituted);
+                if !substituted_path.starts_with(prefix_path)
+                    && !substituted_path.starts_with(cellar_path)
+                {
+                    continue;
+                }
+
+                let Some(parent) = path.parent() else {
+                    continue;
+                };
+
+                let Some(relative) = relative_path_from(parent, substituted_path) else {
+                    continue;
+                };
+
+                // Skip when the target is already the desired relative path.
+                if relative.as_str() == target_str {
+                    continue;
+                }
+
+                replace_symlink(&path, relative.as_str())?;
+
+                let relative_keg_path = path
+                    .strip_prefix(keg_root)
+                    .map(Utf8Path::to_path_buf)
+                    .unwrap_or_else(|_| path.clone());
+                report.changed_files.push(relative_keg_path);
+            } else if file_type.is_dir() {
+                stack.push(path);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Compute a relative path from `from` to `to`, both absolute POSIX paths.
+/// Returns `None` when the paths share no common ancestor (impossible for two
+/// absolute Unix paths, but guarded for safety).
+fn relative_path_from(from: &Utf8Path, to: &Utf8Path) -> Option<Utf8PathBuf> {
+    use camino::Utf8Component;
+
+    let from_components: Vec<Utf8Component> = from.components().collect();
+    let to_components: Vec<Utf8Component> = to.components().collect();
+
+    let mut common = 0;
+    while common < from_components.len()
+        && common < to_components.len()
+        && from_components[common] == to_components[common]
+    {
+        common += 1;
+    }
+
+    let mut result = Utf8PathBuf::new();
+    for _ in common..from_components.len() {
+        result.push("..");
+    }
+    for component in &to_components[common..] {
+        match component {
+            Utf8Component::CurDir | Utf8Component::RootDir => {}
+            Utf8Component::ParentDir => result.push(".."),
+            Utf8Component::Normal(name) => result.push(name),
+            Utf8Component::Prefix(_) => return None,
+        }
+    }
+
+    if result.as_str().is_empty() {
+        result.push(".");
+    }
+    Some(result)
+}
+
+/// Atomically replace the symlink at `path` with one pointing at `new_target`.
+/// A temp symlink is created in the same directory and renamed over the
+/// original, so there is no window in which the symlink is missing.
+fn replace_symlink(path: &Utf8Path, new_target: &str) -> Result<(), PourError> {
+    let parent = path.parent().ok_or_else(|| PourError::Relocation {
+        path: path.to_path_buf(),
+        reason: "symlink has no parent".to_owned(),
+    })?;
+    let file_name = path.file_name().ok_or_else(|| PourError::Relocation {
+        path: path.to_path_buf(),
+        reason: "symlink has no name".to_owned(),
+    })?;
+
+    let pid = std::process::id();
+    let temp = loop {
+        let unique = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let candidate = parent.join(format!(".{file_name}.zapbrew-tmp.{pid}.{unique}"));
+        match symlink(new_target, candidate.as_std_path()) {
+            Ok(()) => break candidate,
+            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(source) => return Err(PourError::io("symlink", candidate, source)),
+        }
+    };
+
+    fs::rename(temp.as_std_path(), path.as_std_path())
+        .map_err(|source| PourError::io("rename", path.to_path_buf(), source))?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // ELF64 structured relocation (little/big endian). 32-bit ELF is left to the
 // generic pass. All mutation is capacity-preserving in place, or an append into
 // the extended final PT_LOAD for a grown string.
@@ -602,6 +785,7 @@ fn elf_relocate(
     original: &[u8],
     subs: &[(Vec<u8>, Vec<u8>)],
     new_prefix: &str,
+    cellar: &str,
     is_gcc: bool,
     ld_so_readable: bool,
 ) -> Result<bool, String> {
@@ -623,7 +807,9 @@ fn elf_relocate(
     )? {
         changed = true;
     }
-    if rewrite_runpath(buf, original, &phdrs, little, subs, new_prefix, is_gcc)? {
+    if rewrite_runpath(
+        buf, original, &phdrs, little, subs, new_prefix, cellar, is_gcc,
+    )? {
         changed = true;
     }
 
@@ -789,6 +975,7 @@ fn rewrite_interp(
 /// Rewrite `DT_RUNPATH` (preferred) or `DT_RPATH`: keep `$ORIGIN`-relative and
 /// new-prefix segments, map `lib/gcc/<n>` → `lib/gcc/current` (non-gcc), ensure
 /// `<prefix>/lib` is present. Fits in place, else appends a copied string table.
+#[allow(clippy::too_many_arguments)]
 fn rewrite_runpath(
     buf: &mut Vec<u8>,
     original: &[u8],
@@ -796,6 +983,7 @@ fn rewrite_runpath(
     little: bool,
     subs: &[(Vec<u8>, Vec<u8>)],
     new_prefix: &str,
+    cellar: &str,
     is_gcc: bool,
 ) -> Result<bool, String> {
     let Some(dynamic) = phdrs.iter().find(|phdr| phdr.p_type == PT_DYNAMIC) else {
@@ -883,7 +1071,7 @@ fn rewrite_runpath(
 
     let substituted = replace_all(original_runpath, subs).0;
     let substituted = String::from_utf8_lossy(&substituted).into_owned();
-    let rewritten = compute_runpath(&substituted, new_prefix, is_gcc);
+    let rewritten = compute_runpath(&substituted, new_prefix, cellar, is_gcc);
     let rewritten_bytes = rewritten.as_bytes();
 
     if rewritten_bytes == original_runpath {
@@ -930,17 +1118,26 @@ fn rewrite_runpath(
     Ok(true)
 }
 
-/// Build the relocated runpath: keep only `$ORIGIN`-relative or new-prefix
-/// segments, rewrite `lib/gcc/<n>` → `lib/gcc/current` (unless this is gcc),
-/// and guarantee `<prefix>/lib` is present.
-fn compute_runpath(current: &str, new_prefix: &str, is_gcc: bool) -> String {
+/// Build the relocated runpath: keep only `$ORIGIN`-relative, new-prefix, or
+/// cellar-rooted segments, rewrite `lib/gcc/<n>` → `lib/gcc/current` (unless
+/// this is gcc), and guarantee `<prefix>/lib` is present. Cellar-rooted
+/// segments are kept so bottles whose runpath references `@@HOMEBREW_CELLAR@@`
+/// survive relocation even when the cellar is not nested under the prefix.
+fn compute_runpath(current: &str, new_prefix: &str, cellar: &str, is_gcc: bool) -> String {
     let lib_dir = format!("{new_prefix}/lib");
     let mut segments: Vec<String> = Vec::new();
     for raw in current.split(':') {
         if raw.is_empty() {
             continue;
         }
-        if !(raw.starts_with(new_prefix) || raw.starts_with("$ORIGIN")) {
+        // Use path-component matching so `/opt/hb` does not match `/opt/hbfoo`.
+        let raw_path = Utf8Path::new(raw);
+        let prefix_path = Utf8Path::new(new_prefix);
+        let cellar_path = Utf8Path::new(cellar);
+        if !(raw_path.starts_with(prefix_path)
+            || raw_path.starts_with(cellar_path)
+            || raw.starts_with("$ORIGIN"))
+        {
             continue;
         }
         let segment = if is_gcc {
@@ -1416,10 +1613,18 @@ fn macho_string_slots(data: &[u8]) -> Result<Option<Vec<MachSlot>>, String> {
 /// original strings (and slot capacities) from `original`. `Ok(false)` when the
 /// input is not thin Mach-O. `Err` when a recognized thin image has a malformed
 /// command table, or when a replacement cannot fit its command slot.
+///
+/// In addition to placeholder substitution, cellar-rooted paths (e.g.
+/// `/opt/hb/Cellar/foo/1.0/lib/libfoo.dylib`) are rewritten to opt-record
+/// paths (`/opt/hb/opt/foo/lib/libfoo.dylib`), mirroring Homebrew's
+/// `opt_name_for` from `mac/keg_relocate.rb`. This covers bottles whose
+/// Mach-O load commands carry real brew prefixes rather than placeholders.
 fn macho_relocate(
     buf: &mut [u8],
     original: &[u8],
     subs: &[(Vec<u8>, Vec<u8>)],
+    cellar: &str,
+    new_prefix: &str,
 ) -> Result<bool, String> {
     let Some(slots) = macho_string_slots(original)? else {
         return Ok(false);
@@ -1430,8 +1635,17 @@ fn macho_relocate(
             .get(slot.start..slot.end)
             .ok_or_else(|| "load command outside file".to_owned())?;
         let current = cstr(slot_bytes);
-        let (replaced, slot_changed) = replace_all(current, subs);
-        if !slot_changed {
+        let (mut replaced, slot_changed) = replace_all(current, subs);
+        // After placeholder substitution, rewrite any cellar-rooted path to
+        // its opt-record equivalent so the dylib reference survives even when
+        // the referenced keg is later upgraded/relocated.
+        let replaced_str = String::from_utf8_lossy(&replaced).into_owned();
+        let opt_rewritten = rewrite_cellar_to_opt(&replaced_str, cellar, new_prefix);
+        let opt_changed = opt_rewritten.is_some();
+        if let Some(rewritten) = opt_rewritten {
+            replaced = rewritten.into_bytes();
+        }
+        if !slot_changed && !opt_changed {
             continue;
         }
         let capacity = slot_bytes.len();
@@ -1449,6 +1663,32 @@ fn macho_relocate(
         changed = true;
     }
     Ok(changed)
+}
+
+/// Rewrite a cellar-rooted path to its opt-record equivalent, mirroring
+/// Homebrew's `opt_name_for`: `Cellar/<name>/<version>/...` →
+/// `opt/<name>/...`. Returns `None` when `path` is not cellar-rooted.
+fn rewrite_cellar_to_opt(path: &str, cellar: &str, new_prefix: &str) -> Option<String> {
+    let cellar_path = Utf8Path::new(cellar);
+    let given = Utf8Path::new(path);
+    if !given.starts_with(cellar_path) {
+        return None;
+    }
+    // Strip the cellar prefix to get `name/version/rest...`.
+    let rest = given.strip_prefix(cellar_path).ok()?;
+    let mut components = rest.components();
+    // First component after cellar is the formula name.
+    let name = components.next()?;
+    // Second component is the version directory — skip it.
+    components.next()?;
+    let name_str = name.as_str();
+    let tail: Vec<&str> = components.map(|c| c.as_str()).collect();
+    let tail_str = tail.join("/");
+    if tail_str.is_empty() {
+        Some(format!("{new_prefix}/opt/{name_str}"))
+    } else {
+        Some(format!("{new_prefix}/opt/{name_str}/{tail_str}"))
+    }
 }
 
 /// Load-command string slots as protected byte ranges for the generic pass.
@@ -1655,6 +1895,7 @@ mod tests {
             Utf8Path::new("keg/file"),
             &subs_for(prefix),
             prefix,
+            &format!("{prefix}/Cellar"),
             false,
             false,
             ld_readable,
@@ -1832,7 +2073,12 @@ mod tests {
 
     #[test]
     fn runpath_drops_foreign_segments_and_ensures_lib() {
-        let out = compute_runpath("/opt/hb/lib/foo:/usr/lib:$ORIGIN/../lib", "/opt/hb", false);
+        let out = compute_runpath(
+            "/opt/hb/lib/foo:/usr/lib:$ORIGIN/../lib",
+            "/opt/hb",
+            "/opt/hb/Cellar",
+            false,
+        );
         assert_eq!(out, "/opt/hb/lib/foo:$ORIGIN/../lib:/opt/hb/lib");
     }
 
@@ -1995,7 +2241,16 @@ mod tests {
         let macho = build_macho_rpath("@@HOMEBREW_PREFIX@@/lib", 8);
         let subs = subs_for("/opt/homebrew-longer");
         let mut buf = macho.clone();
-        assert!(okr(macho_relocate(&mut buf, &macho, &subs), "relocate"));
+        assert!(okr(
+            macho_relocate(
+                &mut buf,
+                &macho,
+                &subs,
+                "/opt/homebrew-longer/Cellar",
+                "/opt/homebrew-longer"
+            ),
+            "relocate"
+        ));
         assert_eq!(buf.len(), macho.len(), "in-place rewrite only");
         let slots = some(okr(macho_string_slots(&buf), "slots"), "slots");
         assert_eq!(slots.len(), 1);
@@ -2010,7 +2265,13 @@ mod tests {
         let macho = build_macho_rpath("@@HOMEBREW_PREFIX@@/lib", 0);
         let subs = subs_for("/a/very/long/custom/homebrew/prefix/location/deep");
         let mut buf = macho.clone();
-        let result = macho_relocate(&mut buf, &macho, &subs);
+        let result = macho_relocate(
+            &mut buf,
+            &macho,
+            &subs,
+            "/a/very/long/custom/homebrew/prefix/location/deep/Cellar",
+            "/a/very/long/custom/homebrew/prefix/location/deep",
+        );
         assert!(result.is_err(), "overflow past cmdsize must be rejected");
         assert_eq!(buf, macho, "rejected image must stay byte-unchanged");
     }
@@ -2100,5 +2361,121 @@ mod tests {
             Ok(()) => panic!("undersized e_shentsize must be rejected"),
         }
         assert_eq!(buf, before, "rejected buffer must stay byte-unchanged");
+    }
+
+    // ---- fix_dynamic_linkage parity: symlink relativeization ----
+
+    #[test]
+    fn relative_path_from_descends_into_cellar() {
+        let from = Utf8Path::new("/opt/hb/Cellar/foo/1.0/bin");
+        let to = Utf8Path::new("/opt/hb/Cellar/foo/1.0/lib/libfoo.so");
+        let rel = some(relative_path_from(from, to), "relative");
+        assert_eq!(rel.as_str(), "../lib/libfoo.so");
+    }
+
+    #[test]
+    fn relative_path_from_crosses_cellar_boundary() {
+        let from = Utf8Path::new("/opt/hb/Cellar/foo/1.0/bin");
+        let to = Utf8Path::new("/opt/hb/Cellar/bar/2.0/lib/libbar.so");
+        let rel = some(relative_path_from(from, to), "relative");
+        assert_eq!(rel.as_str(), "../../../bar/2.0/lib/libbar.so");
+    }
+
+    #[test]
+    fn relative_path_from_prefix_to_cellar() {
+        let from = Utf8Path::new("/opt/hb/bin");
+        let to = Utf8Path::new("/opt/hb/Cellar/foo/1.0/lib/libfoo.so");
+        let rel = some(relative_path_from(from, to), "relative");
+        assert_eq!(rel.as_str(), "../Cellar/foo/1.0/lib/libfoo.so");
+    }
+
+    #[test]
+    fn rewrite_cellar_to_opt_strips_version() {
+        let out = some(
+            rewrite_cellar_to_opt(
+                "/opt/hb/Cellar/foo/1.0/lib/libfoo.dylib",
+                "/opt/hb/Cellar",
+                "/opt/hb",
+            ),
+            "opt",
+        );
+        assert_eq!(out, "/opt/hb/opt/foo/lib/libfoo.dylib");
+    }
+
+    #[test]
+    fn rewrite_cellar_to_opt_no_tail() {
+        let out = some(
+            rewrite_cellar_to_opt("/opt/hb/Cellar/foo/1.0", "/opt/hb/Cellar", "/opt/hb"),
+            "opt",
+        );
+        assert_eq!(out, "/opt/hb/opt/foo");
+    }
+
+    #[test]
+    fn rewrite_cellar_to_opt_non_cellar_returns_none() {
+        assert!(
+            rewrite_cellar_to_opt("/opt/hb/lib/libfoo.dylib", "/opt/hb/Cellar", "/opt/hb")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn compute_runpath_keeps_cellar_rooted_segment() {
+        let out = compute_runpath(
+            "/opt/hb/Cellar/foo/1.0/lib:/usr/lib:$ORIGIN/../lib",
+            "/opt/hb",
+            "/opt/hb/Cellar",
+            false,
+        );
+        assert_eq!(out, "/opt/hb/Cellar/foo/1.0/lib:$ORIGIN/../lib:/opt/hb/lib");
+    }
+
+    #[test]
+    fn macho_cellar_rooted_load_dylib_rewritten_to_opt() {
+        // Build a Mach-O with an LC_LOAD_DYLIB whose path is a real cellar
+        // path (not a placeholder). After relocation, it should be rewritten
+        // to the opt-record equivalent.
+        let cellar = "/opt/hb/Cellar";
+        let prefix = "/opt/hb";
+        let dylib_path = "/opt/hb/Cellar/foo/1.0/lib/libfoo.dylib";
+        let macho = build_macho_load_dylib(dylib_path, 32);
+        let subs = subs_for(prefix);
+        let mut buf = macho.clone();
+        assert!(okr(
+            macho_relocate(&mut buf, &macho, &subs, cellar, prefix),
+            "relocate"
+        ));
+        let slots = some(okr(macho_string_slots(&buf), "slots"), "slots");
+        assert_eq!(slots.len(), 1);
+        assert_eq!(
+            cstr(&buf[slots[0].start..slots[0].end]),
+            b"/opt/hb/opt/foo/lib/libfoo.dylib"
+        );
+    }
+
+    /// Hand-assemble a thin Mach-O 64 header with one `LC_LOAD_DYLIB` whose
+    /// string slot has `pad` spare bytes.
+    ///
+    /// `LC_LOAD_DYLIB` layout: `cmd(4) + cmdsize(4) + str_off(4) + timestamp(4)
+    /// + current_version(4) + compat_version(4) = 24` bytes before the string,
+    /// so the string offset is 24 and `MIN_LC_STR_OFFSET` (12) is satisfied.
+    fn build_macho_load_dylib(dylib: &str, pad: usize) -> Vec<u8> {
+        let str_off = 24usize; // LC_LOAD_DYLIB string offset
+        let raw = str_off + dylib.len() + 1 + pad;
+        let cmdsize = raw.div_ceil(8) * 8;
+        let mut buf = vec![0u8; MACHO_HEADER64_LEN + cmdsize];
+        wr32(&mut buf, 0, MH_MAGIC_64);
+        wr32(&mut buf, 4, 0x0100_0007); // cputype x86_64
+        wr32(&mut buf, 8, 0x3); // cpusubtype
+        wr32(&mut buf, 12, 0x2); // filetype MH_EXECUTE
+        wr32(&mut buf, 16, 1); // ncmds
+        wr32(&mut buf, 20, cmdsize as u32); // sizeofcmds
+        let base = MACHO_HEADER64_LEN;
+        wr32(&mut buf, base, LC_LOAD_DYLIB);
+        wr32(&mut buf, base + 4, cmdsize as u32);
+        wr32(&mut buf, base + 8, str_off as u32);
+        // timestamp, current_version, compat_version: zeros are fine.
+        buf[base + str_off..base + str_off + dylib.len()].copy_from_slice(dylib.as_bytes());
+        buf
     }
 }

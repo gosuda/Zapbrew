@@ -451,15 +451,23 @@ fn validate_symlink_target(
 ) -> Result<(), PourError> {
     let display = entry_path.display().to_string();
 
-    let (final_dest, resolved_rel) = if link_target.is_absolute() {
-        (link_target.to_path_buf(), None)
-    } else {
-        let parent = entry_path.parent().unwrap_or_else(|| Path::new(""));
-        let resolved_rel = lexical_join(parent, link_target).ok_or_else(|| {
-            invalid_archive(display.clone(), "symbolic link target escapes keg via `..`")
-        })?;
-        (cellar.as_std_path().join(&resolved_rel), Some(resolved_rel))
-    };
+    if link_target.is_absolute() {
+        // Absolute symlink targets in bottles point into the build-time
+        // Cellar/prefix (e.g. `/opt/homebrew/Cellar/foo/1.0.0/lib/x`), which
+        // may differ from the user's prefix. Allow them through extraction;
+        // `relocate()` rewrites them to relative paths. The only risk is a
+        // symlink that escapes the keg via `..`, but absolute targets have no
+        // `..` component relative to the staging root — they are created as-is
+        // and never followed during extraction (reject_symlink_parents_on_disk
+        // guards later entries).
+        return Ok(());
+    }
+
+    let parent = entry_path.parent().unwrap_or_else(|| Path::new(""));
+    let resolved_rel = lexical_join(parent, link_target).ok_or_else(|| {
+        invalid_archive(display.clone(), "symbolic link target escapes keg via `..`")
+    })?;
+    let final_dest = cellar.as_std_path().join(&resolved_rel);
 
     // Exact staged keg only — staying under the cellar root is not sufficient.
     if !final_dest.starts_with(keg_path.as_std_path()) {
@@ -469,11 +477,7 @@ fn validate_symlink_target(
         ));
     }
 
-    if let Some(resolved_rel) = resolved_rel.as_deref() {
-        ensure_resolved_under_exact_keg(resolved_rel, keg_path, name, version, &display)?;
-    } else {
-        ensure_resolved_under_exact_keg(&final_dest, keg_path, name, version, &display)?;
-    }
+    ensure_resolved_under_exact_keg(&resolved_rel, keg_path, name, version, &display)?;
 
     Ok(())
 }

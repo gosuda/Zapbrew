@@ -20,6 +20,7 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
     // brew's perform_preinstall_checks: refresh `<prefix>/lib/ld.so` for
     // relocated Linux bottles on a fresh prefix.
     zapbrew_prefix::symlink_ld_so(&ctx.env)?;
+    zapbrew_prefix::setup_preferred_gcc_libs(&ctx.env)?;
 
     let mut formulae = Vec::new();
     let mut affected = BTreeSet::new();

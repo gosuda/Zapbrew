@@ -15,6 +15,7 @@ use zapbrew_prefix::CommandSpec;
 use zip::ZipArchive;
 
 use super::{checked_command, remove_entry, safe_relative};
+use crate::cleanup::confined_symlink_target;
 use crate::{Ctx, OpError};
 
 pub(super) fn extract(
@@ -196,7 +197,7 @@ where
         // a separate open, so the bytes can differ between the two reads.
         if !matches!(
             kind,
-            EntryType::Regular | EntryType::Continuous | EntryType::Directory
+            EntryType::Regular | EntryType::Continuous | EntryType::Directory | EntryType::Symlink
         ) {
             return Err(OpError::InvalidState {
                 reason: format!("unsafe cask archive entry type {kind:?}"),
@@ -209,6 +210,38 @@ where
         let target = staging.join(relative);
         if kind == EntryType::Directory {
             fs::create_dir_all(&target).map_err(|source| OpError::io("create", &target, source))?;
+        } else if kind == EntryType::Symlink {
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|source| OpError::io("create", parent, source))?;
+            }
+            let link_target = entry
+                .link_name()
+                .map_err(|source| OpError::io("read", staging, source))?
+                .ok_or_else(|| OpError::InvalidState {
+                    reason: format!("cask archive symlink entry has no target: {relative}"),
+                })?;
+            let link_str = link_target.to_string_lossy();
+            // Confine relative targets to the staging directory; absolute
+            // targets are extracted as-is (cask payloads are self-contained
+            // and never relocated, so an absolute target is preserved verbatim
+            // to match the on-disk layout the cask author intended).
+            if !link_target.is_absolute() {
+                let confined = confined_symlink_target(staging, &target, link_target.as_ref());
+                if confined.is_none() {
+                    return Err(OpError::InvalidState {
+                        reason: format!(
+                            "cask archive symlink target escapes staging dir: {relative} -> {link_str}"
+                        ),
+                    });
+                }
+            }
+            // Remove any pre-existing entry (e.g. from a prior partial extract)
+            // before creating the symlink, so create_symlink does not fail on
+            // an already-exists condition.
+            let _ = fs::remove_file(&target);
+            std::os::unix::fs::symlink(link_target.as_ref(), &target)
+                .map_err(|source| OpError::io("symlink", &target, source))?;
         } else {
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)
@@ -236,7 +269,7 @@ fn preflight_tar(reader: Box<dyn Read>) -> Result<(), OpError> {
         }
         if !matches!(
             kind,
-            EntryType::Regular | EntryType::Continuous | EntryType::Directory
+            EntryType::Regular | EntryType::Continuous | EntryType::Directory | EntryType::Symlink
         ) {
             return Err(OpError::InvalidState {
                 reason: format!("unsafe cask archive entry type {kind:?}"),
@@ -247,6 +280,28 @@ fn preflight_tar(reader: Box<dyn Read>) -> Result<(), OpError> {
             .map_err(|source| OpError::io("read", "cask archive", source))?;
         let relative = utf8_relative(&raw, Utf8Path::new("cask archive"))?;
         reject_nested_file(&paths, Path::new(relative), Utf8Path::new("cask archive"))?;
+        if kind == EntryType::Symlink {
+            let link_target = entry
+                .link_name()
+                .map_err(|source| OpError::io("read", "cask archive", source))?
+                .ok_or_else(|| OpError::InvalidState {
+                    reason: format!("cask archive symlink entry has no target: {relative}"),
+                })?;
+            if !link_target.is_absolute() {
+                let dummy_staging = Utf8Path::new("/__cask_staging__");
+                let dummy_link = dummy_staging.join(relative);
+                if confined_symlink_target(dummy_staging, &dummy_link, link_target.as_ref())
+                    .is_none()
+                {
+                    return Err(OpError::InvalidState {
+                        reason: format!(
+                            "cask archive symlink target escapes staging dir: {relative} -> {}",
+                            link_target.to_string_lossy()
+                        ),
+                    });
+                }
+            }
+        }
         if kind != EntryType::Directory {
             paths.insert(relative.to_owned());
         }

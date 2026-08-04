@@ -711,3 +711,117 @@ fn unpack_rejects_directory_below_archive_symlink_before_mutation() {
         }
     }
 }
+
+#[test]
+fn unpack_preserves_absolute_symlink_into_build_cellar() {
+    let (_temp, root) = utf8_temp();
+    let cellar = root.join("Cellar");
+    let tarball = root.join("abs-symlink.bottle.tar.gz");
+    let name = formula_name("foo");
+    let version = pkg_version("1.0.0");
+
+    // The build-time cellar path differs from the user's cellar — the symlink
+    // target points into a build prefix that does not exist on this machine.
+    // unpack must preserve the symlink as-is so relocate() can rewrite it.
+    write_gzip_tarball(
+        tarball.as_std_path(),
+        &[
+            ("foo/1.0.0", TestEntry::Dir { mode: 0o755 }),
+            ("foo/1.0.0/lib", TestEntry::Dir { mode: 0o755 }),
+            (
+                "foo/1.0.0/lib/libfoo.dylib",
+                TestEntry::File {
+                    mode: 0o644,
+                    data: b"fake-dylib\n",
+                },
+            ),
+            (
+                "foo/1.0.0/lib/libbar.dylib",
+                TestEntry::Symlink {
+                    target: "/opt/homebrew/Cellar/foo/1.0.0/lib/libfoo.dylib",
+                },
+            ),
+        ],
+    );
+
+    let keg = match unpack(&tarball, &cellar, &name, &version) {
+        Ok(keg) => keg,
+        Err(err) => panic!("unpack with absolute symlink: {err}"),
+    };
+
+    // The symlink is preserved (not followed) with its original absolute target.
+    let link = keg.path().join("lib/libbar.dylib");
+    let meta = match fs::symlink_metadata(link.as_std_path()) {
+        Ok(meta) => meta,
+        Err(err) => panic!("symlink_metadata libbar: {err}"),
+    };
+    assert!(
+        meta.file_type().is_symlink(),
+        "libbar.dylib must be a symlink, not a regular file"
+    );
+    let target = match fs::read_link(link.as_std_path()) {
+        Ok(target) => target,
+        Err(err) => panic!("read_link libbar: {err}"),
+    };
+    assert_eq!(
+        target,
+        Path::new("/opt/homebrew/Cellar/foo/1.0.0/lib/libfoo.dylib"),
+        "absolute symlink target must be preserved verbatim"
+    );
+
+    // The real file alongside it is also extracted correctly.
+    assert!(keg.path().join("lib/libfoo.dylib").is_file());
+}
+
+#[test]
+fn unpack_preserves_relative_symlink_within_keg() {
+    let (_temp, root) = utf8_temp();
+    let cellar = root.join("Cellar");
+    let tarball = root.join("rel-symlink.bottle.tar.gz");
+    let name = formula_name("foo");
+    let version = pkg_version("1.0.0");
+
+    write_gzip_tarball(
+        tarball.as_std_path(),
+        &[
+            ("foo/1.0.0", TestEntry::Dir { mode: 0o755 }),
+            ("foo/1.0.0/bin", TestEntry::Dir { mode: 0o755 }),
+            ("foo/1.0.0/lib", TestEntry::Dir { mode: 0o755 }),
+            (
+                "foo/1.0.0/lib/foo",
+                TestEntry::File {
+                    mode: 0o755,
+                    data: b"#!/bin/sh\necho foo\n",
+                },
+            ),
+            (
+                "foo/1.0.0/bin/foo",
+                TestEntry::Symlink {
+                    target: "../lib/foo",
+                },
+            ),
+        ],
+    );
+
+    let keg = match unpack(&tarball, &cellar, &name, &version) {
+        Ok(keg) => keg,
+        Err(err) => panic!("unpack with relative symlink: {err}"),
+    };
+
+    let link = keg.path().join("bin/foo");
+    let meta = match fs::symlink_metadata(link.as_std_path()) {
+        Ok(meta) => meta,
+        Err(err) => panic!("symlink_metadata bin/foo: {err}"),
+    };
+    assert!(meta.file_type().is_symlink(), "bin/foo must be a symlink");
+    let target = match fs::read_link(link.as_std_path()) {
+        Ok(target) => target,
+        Err(err) => panic!("read_link bin/foo: {err}"),
+    };
+    assert_eq!(target, Path::new("../lib/foo"));
+    // The symlink resolves to the real file within the keg.
+    assert!(
+        keg.path().join("bin/foo").exists(),
+        "symlink should resolve"
+    );
+}

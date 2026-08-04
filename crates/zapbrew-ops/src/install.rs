@@ -66,6 +66,7 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
         // fresh Linux prefix can run relocated bottles whose interpreter
         // points there. Never mutates under `--dry-run`.
         zapbrew_prefix::symlink_ld_so(&ctx.env)?;
+        zapbrew_prefix::setup_preferred_gcc_libs(&ctx.env)?;
         _locks = acquire_formula_locks(&ctx.env, &affected)?;
         state = scan_selected(&ctx.env, &affected)?;
     }

@@ -4,7 +4,9 @@ use std::fs;
 use std::os::unix::fs::symlink;
 use std::sync::Arc;
 
+use serde_json::json;
 use zapbrew_ops::link::{self, Args};
+use zapbrew_ops::unlink;
 use zapbrew_pour::{LinkOptions, link as pour_link};
 use zapbrew_prefix::Prefix;
 
@@ -474,5 +476,157 @@ async fn family_unlinks_cover_full_variants_and_every_unlinked_sibling_was_locke
     assert_eq!(
         fs::read_to_string(ctx.env.prefix.join("bin/food")).expect("unrelated"),
         "food"
+    );
+}
+
+fn formula_with_aliases(
+    name: &str,
+    version: &str,
+    scheme: u32,
+    aliases: &[&str],
+    oldnames: &[&str],
+) -> serde_json::Value {
+    let mut value = formula(name, version, scheme);
+    value["aliases"] = json!(aliases);
+    value["oldnames"] = json!(oldnames);
+    value
+}
+
+#[tokio::test]
+async fn link_creates_alias_and_oldname_opt_and_linked_symlinks() {
+    let fixture = Fixture::new();
+    let keg = fixture.keg("wget", "1.25.0", 1);
+    fixture.keg_file(&keg, "bin/wget", "data");
+    let (ctx, _reporter) = fixture.context(vec![formula_with_aliases(
+        "wget",
+        "1.25.0",
+        1,
+        &["wgot"],
+        &["wget2"],
+    )]);
+
+    link::run(
+        &ctx,
+        Args {
+            names: vec!["wget".to_owned()],
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("link");
+
+    let opt_alias = ctx.env.prefix.join("opt/wgot");
+    let opt_old = ctx.env.prefix.join("opt/wget2");
+    assert!(is_symlink(&opt_alias), "opt alias symlink created");
+    assert!(is_symlink(&opt_old), "opt oldname symlink created");
+    assert_eq!(
+        fs::read_link(&opt_alias)
+            .expect("read alias target")
+            .to_string_lossy(),
+        "wget"
+    );
+    assert_eq!(
+        fs::read_link(&opt_old)
+            .expect("read oldname target")
+            .to_string_lossy(),
+        "wget"
+    );
+    assert!(is_symlink(&ctx.env.linked.join("wgot")), "linked alias");
+    assert!(is_symlink(&ctx.env.linked.join("wget2")), "linked oldname");
+}
+
+#[tokio::test]
+async fn unlink_removes_alias_and_oldname_opt_and_linked_symlinks() {
+    let fixture = Fixture::new();
+    let keg = fixture.keg("wget", "1.25.0", 1);
+    fixture.keg_file(&keg, "bin/wget", "data");
+    let (ctx, _reporter) = fixture.context(vec![formula_with_aliases(
+        "wget",
+        "1.25.0",
+        1,
+        &["wgot"],
+        &["wget2"],
+    )]);
+
+    link::run(
+        &ctx,
+        Args {
+            names: vec!["wget".to_owned()],
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("link");
+
+    assert!(is_symlink(&ctx.env.prefix.join("opt/wgot")));
+    assert!(is_symlink(&ctx.env.prefix.join("opt/wget2")));
+
+    unlink::run(
+        &ctx,
+        unlink::Args {
+            names: vec!["wget".to_owned()],
+            dry_run: false,
+        },
+    )
+    .await
+    .expect("unlink");
+
+    assert!(
+        !is_symlink(&ctx.env.prefix.join("opt/wgot")),
+        "opt alias removed"
+    );
+    assert!(
+        !is_symlink(&ctx.env.prefix.join("opt/wget2")),
+        "opt oldname removed"
+    );
+    assert!(
+        !is_symlink(&ctx.env.linked.join("wgot")),
+        "linked alias removed"
+    );
+    assert!(
+        !is_symlink(&ctx.env.linked.join("wget2")),
+        "linked oldname removed"
+    );
+    assert!(
+        is_symlink(&ctx.env.prefix.join("opt/wget")),
+        "opt record retained until uninstall"
+    );
+}
+
+#[tokio::test]
+async fn link_overwrites_stale_alias_symlink_pointing_elsewhere() {
+    let fixture = Fixture::new();
+    let keg = fixture.keg("wget", "1.25.0", 1);
+    fixture.keg_file(&keg, "bin/wget", "data");
+    // Plant a stale opt/<alias> symlink pointing at a different formula.
+    fs::create_dir_all(fixture.env.prefix.join("opt")).expect("opt dir");
+    symlink("other", fixture.env.prefix.join("opt/wgot")).expect("stale alias symlink");
+
+    let (ctx, _reporter) = fixture.context(vec![formula_with_aliases(
+        "wget",
+        "1.25.0",
+        1,
+        &["wgot"],
+        &["wget2"],
+    )]);
+
+    link::run(
+        &ctx,
+        Args {
+            names: vec!["wget".to_owned()],
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("link");
+
+    let opt_alias = ctx.env.prefix.join("opt/wgot");
+    assert!(is_symlink(&opt_alias), "alias symlink recreated");
+    assert_eq!(
+        fs::read_link(&opt_alias)
+            .expect("read alias target")
+            .to_string_lossy(),
+        "wget",
+        "stale alias overwritten to point at the linked formula"
     );
 }

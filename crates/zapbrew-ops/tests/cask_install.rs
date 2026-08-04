@@ -1,13 +1,13 @@
 mod support;
 
-use std::io::Write;
-use std::sync::{Arc, Mutex};
-
 use camino::{Utf8Path, Utf8PathBuf};
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::fs;
+use std::io::Write;
+use std::sync::{Arc, Mutex};
 use support::{Fixture, fingerprint};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -335,7 +335,7 @@ async fn zip_and_tar_and_bare_extract_place_app() {
 }
 
 #[tokio::test]
-async fn tar_with_symlink_entry_refuses_before_mutation() {
+async fn tar_with_symlink_entry_preserves_link_without_following() {
     let fixture = Fixture::new().macos();
     let appdir = fixture.env.home.join("Applications");
     let server = MockServer::start().await;
@@ -352,13 +352,23 @@ async fn tar_with_symlink_entry_refuses_before_mutation() {
     );
     let (ctx, _reporter) =
         fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
-    let result = install::run(&ctx, install_args(&["linky"], &appdir, false)).await;
-    let error = err(result);
-    assert!(
-        matches!(&error, OpError::InvalidState { reason } if reason.contains("unsafe cask archive entry type")),
-        "expected unsafe-entry refusal, got {error}"
-    );
-    assert!(!appdir.join("Demo.app").exists(), "no app may be deployed");
+    install::run(&ctx, install_args(&["linky"], &appdir, false))
+        .await
+        .expect("extract install with symlink");
+    // The app is deployed (symlink was not followed during extraction).
+    assert!(appdir.join("Demo.app/Contents/info").is_file());
+    // The symlink is preserved as a symlink pointing at its original target.
+    let link = appdir.join("Demo.app/Contents/evil-link");
+    let meta = match fs::symlink_metadata(link.as_std_path()) {
+        Ok(meta) => meta,
+        Err(e) => panic!("symlink_metadata evil-link: {e}"),
+    };
+    assert!(meta.file_type().is_symlink(), "evil-link must be a symlink");
+    let target = match fs::read_link(link.as_std_path()) {
+        Ok(t) => t,
+        Err(e) => panic!("read_link evil-link: {e}"),
+    };
+    assert_eq!(target, std::path::Path::new("/etc/passwd"));
 }
 
 #[tokio::test]

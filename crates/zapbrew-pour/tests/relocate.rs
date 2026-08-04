@@ -177,6 +177,231 @@ fn capacity_failure_leaves_every_file_byte_unchanged() {
     assert_eq!(read(&text), text_original);
 }
 
+// ---- fix_dynamic_linkage parity: symlink relativeization ----
+
+/// Read a symlink target as a UTF-8 string.
+fn read_link(path: &Utf8Path) -> String {
+    let target = okr(fs::read_link(path.as_std_path()), "readlink");
+    target.to_string_lossy().into_owned()
+}
+
+/// Create a symlink inside the keg at `relative` pointing to `target`.
+fn write_symlink(keg: &Keg, relative: &str, target: &str) -> Utf8PathBuf {
+    use std::os::unix::fs::symlink;
+    let path = keg.path().join(relative);
+    if let Some(parent) = path.parent() {
+        okr(fs::create_dir_all(parent.as_std_path()), "mkdir");
+    }
+    okr(symlink(target, path.as_std_path()), "symlink");
+    path
+}
+
+#[test]
+fn absolute_symlink_to_cellar_relativeized() {
+    let temp = okr(TempDir::new(), "temp");
+    let root = utf8(&temp);
+    let env = make_env(&root, "/opt/hb");
+    let keg = make_keg(&env);
+
+    // Symlink in bin/ pointing at an absolute path inside the keg's lib/.
+    let target = format!("{}/lib/libfoo.so", keg.path());
+    let link = write_symlink(&keg, "bin/tool", &target);
+
+    okr(relocate_call(&keg, &env, ":any"), "relocate");
+
+    // The symlink should now be a relative path.
+    let new_target = read_link(&link);
+    assert!(
+        !new_target.starts_with('/'),
+        "symlink target should be relative, got {new_target}"
+    );
+    assert!(
+        new_target.ends_with("lib/libfoo.so"),
+        "relative target should end with the basename, got {new_target}"
+    );
+}
+
+#[test]
+fn absolute_symlink_to_prefix_relativeized() {
+    let temp = okr(TempDir::new(), "temp");
+    let root = utf8(&temp);
+    let env = make_env(&root, "/opt/hb");
+    let keg = make_keg(&env);
+
+    // Symlink pointing at an absolute path under the prefix (not the cellar).
+    let link = write_symlink(&keg, "bin/tool", "/opt/hb/libexec/tool");
+
+    okr(relocate_call(&keg, &env, ":any"), "relocate");
+
+    let new_target = read_link(&link);
+    assert!(
+        !new_target.starts_with('/'),
+        "symlink target should be relative, got {new_target}"
+    );
+    assert!(
+        new_target.ends_with("libexec/tool"),
+        "relative target should end with the basename, got {new_target}"
+    );
+}
+
+#[test]
+fn placeholder_symlink_target_substituted_then_relativeized() {
+    let temp = okr(TempDir::new(), "temp");
+    let root = utf8(&temp);
+    let env = make_env(&root, "/opt/hb");
+    let keg = make_keg(&env);
+
+    // Symlink whose target contains a placeholder — must be substituted
+    // before relativeization.
+    let link = write_symlink(&keg, "bin/tool", "@@HOMEBREW_PREFIX@@/libexec/tool");
+
+    okr(relocate_call(&keg, &env, ":any"), "relocate");
+
+    let new_target = read_link(&link);
+    assert!(
+        !new_target.starts_with('/'),
+        "symlink target should be relative, got {new_target}"
+    );
+    assert!(
+        new_target.ends_with("libexec/tool"),
+        "relative target should end with the basename, got {new_target}"
+    );
+}
+
+#[test]
+fn foreign_absolute_symlink_left_untouched() {
+    let temp = okr(TempDir::new(), "temp");
+    let root = utf8(&temp);
+    let env = make_env(&root, "/opt/hb");
+    let keg = make_keg(&env);
+
+    // Symlink pointing outside the prefix/cellar — must NOT be rewritten.
+    let link = write_symlink(&keg, "bin/foreign", "/usr/bin/env");
+
+    okr(relocate_call(&keg, &env, ":any"), "relocate");
+
+    assert_eq!(read_link(&link), "/usr/bin/env");
+}
+
+#[test]
+fn already_relative_symlink_left_untouched() {
+    let temp = okr(TempDir::new(), "temp");
+    let root = utf8(&temp);
+    let env = make_env(&root, "/opt/hb");
+    let keg = make_keg(&env);
+
+    let link = write_symlink(&keg, "lib/libfoo.so", "../lib/libfoo_real.so");
+
+    okr(relocate_call(&keg, &env, ":any"), "relocate");
+
+    assert_eq!(read_link(&link), "../lib/libfoo_real.so");
+}
+
+#[test]
+fn unpack_then_relocate_rewrites_absolute_build_cellar_symlink() {
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
+    use tar::{Builder, Header};
+    use zapbrew_pour::unpack;
+    use zapbrew_types::{FormulaName, PkgVersion};
+
+    let temp = okr(TempDir::new(), "temp");
+    let root = utf8(&temp);
+    let env = make_env(&root, "/opt/hb");
+    let cellar = env.cellar.clone();
+
+    // Build a bottle tarball with an absolute symlink into a build-time
+    // cellar that differs from the user's cellar.
+    let tarball = root.join("test.bottle.tar.gz");
+    let file = okr(
+        std::fs::File::create(tarball.as_std_path()),
+        "create tarball",
+    );
+    let encoder = GzEncoder::new(file, Compression::default());
+    let mut builder = Builder::new(encoder);
+
+    // Directory entries
+    let mut dir_header = Header::new_gnu();
+    dir_header.set_path("foo/1.0.0").expect("set_path");
+    dir_header.set_entry_type(tar::EntryType::Directory);
+    dir_header.set_mode(0o755);
+    dir_header.set_size(0);
+    dir_header.set_cksum();
+    builder
+        .append(&dir_header, std::io::empty())
+        .expect("append dir");
+
+    let mut dir_header = Header::new_gnu();
+    dir_header.set_path("foo/1.0.0/lib").expect("set_path");
+    dir_header.set_entry_type(tar::EntryType::Directory);
+    dir_header.set_mode(0o755);
+    dir_header.set_size(0);
+    dir_header.set_cksum();
+    builder
+        .append(&dir_header, std::io::empty())
+        .expect("append lib dir");
+
+    // Real file
+    let data = b"fake-dylib\n";
+    let mut file_header = Header::new_gnu();
+    file_header.set_mode(0o644);
+    file_header.set_size(data.len() as u64);
+    file_header.set_cksum();
+    builder
+        .append_data(&mut file_header, "foo/1.0.0/lib/libfoo.dylib", &data[..])
+        .expect("append file");
+
+    // Absolute symlink into a build cellar (not the user's cellar)
+    let mut link_header = Header::new_gnu();
+    link_header.set_entry_type(tar::EntryType::Symlink);
+    link_header.set_mode(0o777);
+    link_header.set_size(0);
+    link_header
+        .set_link_name("@@HOMEBREW_CELLAR@@/foo/1.0.0/lib/libfoo.dylib")
+        .expect("set_link_name");
+    link_header.set_cksum();
+    builder
+        .append_data(
+            &mut link_header,
+            "foo/1.0.0/lib/libbar.dylib",
+            std::io::empty(),
+        )
+        .expect("append symlink");
+
+    let encoder = okr(builder.into_inner(), "finish tar");
+    okr(encoder.finish(), "finish gzip");
+
+    let name = okr(FormulaName::from_str("foo"), "name");
+    let version = okr(PkgVersion::from_str("1.0.0"), "version");
+    let keg = okr(unpack(&tarball, &cellar, &name, &version), "unpack");
+
+    // After unpack, the symlink is preserved with its original absolute target.
+    let link = keg.path().join("lib/libbar.dylib");
+    let meta = okr(fs::symlink_metadata(link.as_std_path()), "stat symlink");
+    assert!(
+        meta.file_type().is_symlink(),
+        "libbar.dylib must be a symlink after unpack"
+    );
+    let pre_target = read_link(&link);
+    assert_eq!(
+        pre_target, "@@HOMEBREW_CELLAR@@/foo/1.0.0/lib/libfoo.dylib",
+        "placeholder target must be preserved through unpack"
+    );
+
+    // After relocate, the symlink is rewritten to a relative path.
+    okr(relocate_call(&keg, &env, ":any"), "relocate");
+
+    let post_target = read_link(&link);
+    assert!(
+        !post_target.starts_with('/'),
+        "symlink target should be relative after relocate, got {post_target}"
+    );
+    assert!(
+        post_target.ends_with("libfoo.dylib"),
+        "relative target should end with libfoo.dylib, got {post_target}"
+    );
+}
+
 fn relocate_call(
     keg: &Keg,
     env: &Env,

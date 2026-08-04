@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
+use std::os::unix::fs::symlink;
 use std::str::FromStr;
 
 use camino::{Utf8Path, Utf8PathBuf};
@@ -176,6 +177,8 @@ fn link_one(
         }
     };
 
+    write_alias_opt_symlinks(prefix, formula)?;
+
     ctx.reporter.print(&format!(
         "Linking {}... {} symlinks created.",
         keg.path(),
@@ -333,6 +336,44 @@ fn restore_links(prefix: &Prefix, kegs: &[Keg]) -> Result<(), OpError> {
     Ok(())
 }
 
+/// Create `opt/<alias>` and `linked/<alias>` relative symlinks for every alias
+/// and oldname of `formula`, each pointing at the formula's own opt/linked
+/// record (`<formula.name>`). Mirrors Homebrew's `Keg#optlink` alias and
+/// oldname handling: any existing file, symlink, or empty directory at the
+/// record path is removed first so an alias moving between formulae is
+/// overwritten cleanly.
+fn write_alias_opt_symlinks(prefix: &Prefix, formula: &Formula) -> Result<(), OpError> {
+    let opt_dir = prefix.opt();
+    let linked_dir = prefix.linked();
+    for alias in formula.aliases.iter().chain(formula.oldnames.iter()) {
+        if alias == &formula.name {
+            continue;
+        }
+        write_alias_record(&opt_dir, alias, &formula.name)?;
+        write_alias_record(linked_dir, alias, &formula.name)?;
+    }
+    Ok(())
+}
+
+/// Replace whatever is at `dir/<alias>` with a relative symlink to
+/// `target_name` (resolving to `dir/<target_name>`). Removes an existing
+/// symlink, file, or empty directory first.
+fn write_alias_record(dir: &Utf8Path, alias: &str, target_name: &str) -> Result<(), OpError> {
+    let record = dir.join(alias);
+    if let Ok(meta) = fs::symlink_metadata(record.as_std_path()) {
+        if meta.file_type().is_symlink() || meta.is_file() {
+            fs::remove_file(record.as_std_path())
+                .map_err(|source| OpError::io("remove", &record, source))?;
+        } else if meta.is_dir() {
+            fs::remove_dir(record.as_std_path())
+                .map_err(|source| OpError::io("remove", &record, source))?;
+        }
+    }
+    symlink(target_name, record.as_std_path())
+        .map_err(|source| OpError::io("symlink", &record, source))?;
+    Ok(())
+}
+
 fn reject_conflicts(
     ctx: &Ctx,
     formula: &Formula,
@@ -379,7 +420,7 @@ fn symlink_owner(dst: &Utf8Path, cellar: &Utf8Path) -> Option<String> {
         .map(|component| component.as_str().to_owned())
 }
 
-fn resolves_inside(path: &Utf8Path, root: &Utf8Path) -> bool {
+pub(crate) fn resolves_inside(path: &Utf8Path, root: &Utf8Path) -> bool {
     let Some(path) = fs::canonicalize(path.as_std_path())
         .ok()
         .and_then(|path| Utf8PathBuf::from_path_buf(path).ok())
