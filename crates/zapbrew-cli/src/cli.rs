@@ -495,6 +495,23 @@ pub enum ServicesCommand {
         /// Service names to restart.
         names: Vec<String>,
     },
+    /// Run a service without registering it to launch at login or boot.
+    Run {
+        /// Service names to run.
+        names: Vec<String>,
+    },
+    /// Print one-line status for services.
+    Info {
+        /// Service names to inspect.
+        names: Vec<String>,
+    },
+    /// Stop a service but keep it registered.
+    Kill {
+        /// Service names to kill.
+        names: Vec<String>,
+    },
+    /// Remove unused service files.
+    Cleanup,
 }
 
 #[derive(Debug, Args)]
@@ -944,6 +961,35 @@ mod tests {
             panic!("expected start");
         };
         assert_eq!(names, vec!["a", "b"]);
+
+        let Commands::Services(run) = command(&["zapbrew", "services", "run", "a"]) else {
+            panic!("expected services");
+        };
+        let ServicesCommand::Run { names } = run.command else {
+            panic!("expected run");
+        };
+        assert_eq!(names, vec!["a"]);
+
+        let Commands::Services(info) = command(&["zapbrew", "services", "info", "a"]) else {
+            panic!("expected services");
+        };
+        let ServicesCommand::Info { names } = info.command else {
+            panic!("expected info");
+        };
+        assert_eq!(names, vec!["a"]);
+
+        let Commands::Services(kill) = command(&["zapbrew", "services", "kill", "a"]) else {
+            panic!("expected services");
+        };
+        let ServicesCommand::Kill { names } = kill.command else {
+            panic!("expected kill");
+        };
+        assert_eq!(names, vec!["a"]);
+
+        let Commands::Services(cleanup) = command(&["zapbrew", "services", "cleanup"]) else {
+            panic!("expected services");
+        };
+        assert!(matches!(cleanup.command, ServicesCommand::Cleanup));
 
         assert_eq!(
             parse_kind(&["zapbrew", "services"]),

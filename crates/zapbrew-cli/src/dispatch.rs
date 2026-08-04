@@ -383,6 +383,10 @@ fn services_args(command: ServicesCommand) -> services::Args {
         ServicesCommand::Start { names } => (services::ServiceAction::Start, names),
         ServicesCommand::Stop { names } => (services::ServiceAction::Stop, names),
         ServicesCommand::Restart { names } => (services::ServiceAction::Restart, names),
+        ServicesCommand::Run { names } => (services::ServiceAction::Run, names),
+        ServicesCommand::Info { names } => (services::ServiceAction::Info, names),
+        ServicesCommand::Kill { names } => (services::ServiceAction::Kill, names),
+        ServicesCommand::Cleanup => (services::ServiceAction::Cleanup, Vec::new()),
     };
     services::Args { action, names }
 }
@@ -798,6 +802,34 @@ mod tests {
             planned(&["zapbrew", "services", "list"]).kind,
             OpKind::Services(zapbrew_ops::services::Args {
                 action: zapbrew_ops::services::ServiceAction::List,
+                names: Vec::new(),
+            })
+        );
+        assert_eq!(
+            planned(&["zapbrew", "services", "run", "mysql"]).kind,
+            OpKind::Services(zapbrew_ops::services::Args {
+                action: zapbrew_ops::services::ServiceAction::Run,
+                names: vec!["mysql".to_owned()],
+            })
+        );
+        assert_eq!(
+            planned(&["zapbrew", "services", "info", "mysql"]).kind,
+            OpKind::Services(zapbrew_ops::services::Args {
+                action: zapbrew_ops::services::ServiceAction::Info,
+                names: vec!["mysql".to_owned()],
+            })
+        );
+        assert_eq!(
+            planned(&["zapbrew", "services", "kill", "mysql"]).kind,
+            OpKind::Services(zapbrew_ops::services::Args {
+                action: zapbrew_ops::services::ServiceAction::Kill,
+                names: vec!["mysql".to_owned()],
+            })
+        );
+        assert_eq!(
+            planned(&["zapbrew", "services", "cleanup"]).kind,
+            OpKind::Services(zapbrew_ops::services::Args {
+                action: zapbrew_ops::services::ServiceAction::Cleanup,
                 names: Vec::new(),
             })
         );

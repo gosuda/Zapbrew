@@ -827,3 +827,410 @@ async fn broad_cartesian_cron_refuses_before_allocation_and_io() {
     assert!(!directory.join("homebrew.demo.timer").exists());
     assert!(reporter.take().is_empty());
 }
+
+#[tokio::test]
+async fn linux_run_writes_unit_and_starts_without_registering_for_boot() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": ["$HOMEBREW_PREFIX/bin/demo", "serve"]});
+    let (mut ctx, reporter) = fixture.context(vec![service_formula("demo", service.clone())]);
+    let runner = Arc::new(ScriptRunner::new([
+        Outcome::failure(),
+        Outcome::success(),
+        Outcome::success(),
+    ]));
+    ctx.commands = runner.clone();
+
+    services::run(&ctx, run_args(ServiceAction::Run, &["demo"]))
+        .await
+        .expect("run");
+
+    let unit = fixture
+        .env
+        .home
+        .join(".config/systemd/user/homebrew.demo.service");
+    assert_eq!(
+        fs::read_to_string(&unit).expect("unit file"),
+        services_test_support::render_systemd_unit(&fixture.env, "demo", &service)
+            .expect("rendered unit")
+    );
+    assert_eq!(
+        runner.calls(),
+        [
+            vec!["systemctl", "--user", "is-active", "homebrew.demo.service"],
+            vec!["systemctl", "--user", "daemon-reload"],
+            vec!["systemctl", "--user", "start", "homebrew.demo.service"],
+        ]
+    );
+    assert_eq!(
+        reporter.take(),
+        ["ohai:Successfully ran `demo` (label: homebrew.demo)"]
+    );
+}
+
+#[tokio::test]
+async fn linux_run_already_active_skips_with_message() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
+    let (mut ctx, reporter) = fixture.context(vec![service_formula("demo", service)]);
+    let runner = Arc::new(ScriptRunner::new([Outcome::success()]));
+    ctx.commands = runner.clone();
+
+    services::run(&ctx, run_args(ServiceAction::Run, &["demo"]))
+        .await
+        .expect("already running");
+
+    assert_eq!(
+        runner.calls(),
+        [vec![
+            "systemctl",
+            "--user",
+            "is-active",
+            "homebrew.demo.service"
+        ]]
+    );
+    assert_eq!(
+        reporter.take(),
+        ["print:Service `demo` already running, use zapbrew restart demo to restart."]
+    );
+}
+
+#[tokio::test]
+async fn macos_run_loads_plist_and_starts_label() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
+    let (mut ctx, reporter) = fixture.context(vec![service_formula("demo", service.clone())]);
+    ctx.env.bottle_tag = "arm64_sonoma".parse().expect("macOS tag");
+    let runner = Arc::new(ScriptRunner::new([
+        Outcome::failure(),
+        Outcome::success(),
+        Outcome::success(),
+    ]));
+    ctx.commands = runner.clone();
+
+    services::run(&ctx, run_args(ServiceAction::Run, &["demo"]))
+        .await
+        .expect("mac run");
+
+    let plist_path = fixture
+        .env
+        .home
+        .join("Library/LaunchAgents/homebrew.mxcl.demo.plist");
+    assert_eq!(
+        fs::read_to_string(&plist_path).expect("plist file"),
+        services_test_support::render_launchd_plist(&ctx.env, "demo", &service)
+            .expect("render plist")
+    );
+    let path = plist_path.to_string();
+    assert_eq!(
+        runner.calls(),
+        [
+            vec!["launchctl", "list", "homebrew.mxcl.demo"],
+            vec!["launchctl", "load", path.as_str()],
+            vec!["launchctl", "start", "homebrew.mxcl.demo"],
+        ]
+    );
+    assert_eq!(
+        reporter.take(),
+        ["ohai:Successfully ran `demo` (label: homebrew.mxcl.demo)"]
+    );
+}
+
+#[tokio::test]
+async fn linux_info_reports_running_stopped_none_states() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
+    let (mut ctx, reporter) = fixture.context(vec![service_formula("demo", service)]);
+    let runner = Arc::new(ScriptRunner::new([
+        Outcome::stdout("active\n"),
+        Outcome::failure(),
+        Outcome::failure(),
+    ]));
+    ctx.commands = runner.clone();
+    let file = fixture
+        .env
+        .home
+        .join(".config/systemd/user/homebrew.demo.service");
+    write(&file, "unit");
+
+    services::run(&ctx, run_args(ServiceAction::Info, &["demo"]))
+        .await
+        .expect("info running");
+    services::run(&ctx, run_args(ServiceAction::Info, &["demo"]))
+        .await
+        .expect("info stopped");
+    // Remove the file so the third probe reports "none".
+    fs::remove_file(&file).expect("remove unit");
+    services::run(&ctx, run_args(ServiceAction::Info, &["demo"]))
+        .await
+        .expect("info none");
+
+    assert_eq!(
+        runner.calls(),
+        [
+            vec!["systemctl", "--user", "is-active", "homebrew.demo.service"],
+            vec!["systemctl", "--user", "is-active", "homebrew.demo.service"],
+            vec!["systemctl", "--user", "is-active", "homebrew.demo.service"],
+        ]
+    );
+    assert_eq!(
+        reporter.take(),
+        [
+            format!("print:demo running {file}"),
+            format!("print:demo stopped {file}"),
+            format!("print:demo none {file}"),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn macos_info_reports_state_with_plist_path() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
+    let (mut ctx, reporter) = fixture.context(vec![service_formula("demo", service)]);
+    ctx.env.bottle_tag = "sequoia".parse().expect("macOS tag");
+    let runner = Arc::new(ScriptRunner::new([Outcome::failure()]));
+    ctx.commands = runner.clone();
+
+    services::run(&ctx, run_args(ServiceAction::Info, &["demo"]))
+        .await
+        .expect("mac info");
+
+    let plist_path = fixture
+        .env
+        .home
+        .join("Library/LaunchAgents/homebrew.mxcl.demo.plist");
+    assert_eq!(
+        runner.calls(),
+        [vec!["launchctl", "list", "homebrew.mxcl.demo"]]
+    );
+    assert_eq!(reporter.take(), [format!("print:demo none {plist_path}")]);
+}
+
+#[tokio::test]
+async fn linux_kill_stops_unit_with_killed_message() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
+    let (mut ctx, reporter) = fixture.context(vec![service_formula("demo", service)]);
+    let runner = Arc::new(ScriptRunner::new([Outcome::success(), Outcome::success()]));
+    ctx.commands = runner.clone();
+
+    services::run(&ctx, run_args(ServiceAction::Kill, &["demo"]))
+        .await
+        .expect("kill");
+
+    assert_eq!(
+        runner.calls(),
+        [
+            vec!["systemctl", "--user", "is-active", "homebrew.demo.service"],
+            vec!["systemctl", "--user", "stop", "homebrew.demo.service"],
+        ]
+    );
+    assert_eq!(
+        reporter.take(),
+        ["ohai:Successfully killed `demo` (label: homebrew.demo)"]
+    );
+}
+
+#[tokio::test]
+async fn linux_kill_inactive_prints_not_started() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
+    let (mut ctx, reporter) = fixture.context(vec![service_formula("demo", service)]);
+    let runner = Arc::new(ScriptRunner::new([Outcome::failure()]));
+    ctx.commands = runner.clone();
+
+    services::run(&ctx, run_args(ServiceAction::Kill, &["demo"]))
+        .await
+        .expect("inactive kill");
+
+    assert_eq!(reporter.take(), ["print:Service `demo` is not started."]);
+}
+
+#[tokio::test]
+async fn macos_kill_stops_label_without_unloading() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
+    let (mut ctx, reporter) = fixture.context(vec![service_formula("demo", service)]);
+    ctx.env.bottle_tag = "arm64_sonoma".parse().expect("macOS tag");
+    let runner = Arc::new(ScriptRunner::new([Outcome::success(), Outcome::success()]));
+    ctx.commands = runner.clone();
+
+    services::run(&ctx, run_args(ServiceAction::Kill, &["demo"]))
+        .await
+        .expect("mac kill");
+
+    assert_eq!(
+        runner.calls(),
+        [
+            vec!["launchctl", "list", "homebrew.mxcl.demo"],
+            vec!["launchctl", "stop", "homebrew.mxcl.demo"],
+        ]
+    );
+    assert_eq!(
+        reporter.take(),
+        ["ohai:Successfully killed `demo` (label: homebrew.mxcl.demo)"]
+    );
+}
+
+#[tokio::test]
+async fn linux_cleanup_removes_uninstalled_inactive_files_and_reloads() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
+    let (mut ctx, reporter) = fixture.context(vec![service_formula("demo", service)]);
+    let dir = fixture.env.home.join(".config/systemd/user");
+    // `ghost` is not installed — its unit file should be removed.
+    let ghost_unit = dir.join("homebrew.ghost.service");
+    write(&ghost_unit, "unit");
+    // `demo` is installed — its unit file must survive.
+    let demo_unit = dir.join("homebrew.demo.service");
+    write(&demo_unit, "unit");
+    // A non-homebrew file must be ignored.
+    let foreign = dir.join("other.service");
+    write(&foreign, "unit");
+
+    let runner = Arc::new(ScriptRunner::new([
+        Outcome::failure(), // ghost is not active
+        Outcome::success(), // daemon-reload after removal
+    ]));
+    ctx.commands = runner.clone();
+
+    services::run(&ctx, run_args(ServiceAction::Cleanup, &[]))
+        .await
+        .expect("cleanup");
+
+    assert!(!ghost_unit.exists(), "ghost unit removed");
+    assert!(demo_unit.exists(), "demo unit preserved");
+    assert!(foreign.exists(), "foreign file ignored");
+    assert_eq!(
+        runner.calls(),
+        [
+            vec!["systemctl", "--user", "is-active", "homebrew.ghost.service"],
+            vec!["systemctl", "--user", "daemon-reload"],
+        ]
+    );
+    let messages = reporter.take();
+    assert!(
+        messages
+            .iter()
+            .any(|m| m == &format!("print:Removing unused service file: {ghost_unit}"))
+    );
+}
+
+#[tokio::test]
+async fn linux_cleanup_skips_active_uninstalled_services() {
+    let fixture = Fixture::new();
+    let (mut ctx, _reporter) = fixture.context(vec![]);
+    let dir = fixture.env.home.join(".config/systemd/user");
+    let ghost_unit = dir.join("homebrew.ghost.service");
+    write(&ghost_unit, "unit");
+
+    let runner = Arc::new(ScriptRunner::new([Outcome::stdout("active\n")]));
+    ctx.commands = runner.clone();
+
+    services::run(&ctx, run_args(ServiceAction::Cleanup, &[]))
+        .await
+        .expect("cleanup active");
+
+    assert!(ghost_unit.exists(), "active ghost unit preserved");
+    // No daemon-reload because nothing was removed.
+    assert_eq!(
+        runner.calls(),
+        [vec![
+            "systemctl",
+            "--user",
+            "is-active",
+            "homebrew.ghost.service"
+        ]]
+    );
+}
+
+#[tokio::test]
+async fn linux_cleanup_nothing_to_clean_prints_ok() {
+    let fixture = Fixture::new();
+    let (ctx, reporter) = fixture.context(vec![]);
+
+    services::run(&ctx, run_args(ServiceAction::Cleanup, &[]))
+        .await
+        .expect("empty cleanup");
+
+    assert_eq!(
+        reporter.take(),
+        ["print:All user-space services OK, nothing cleaned..."]
+    );
+}
+
+#[tokio::test]
+async fn macos_cleanup_unloads_and_removes_uninstalled_plists() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
+    let (mut ctx, reporter) = fixture.context(vec![service_formula("demo", service)]);
+    ctx.env.bottle_tag = "sequoia".parse().expect("macOS tag");
+    let dir = fixture.env.home.join("Library/LaunchAgents");
+    let ghost_plist = dir.join("homebrew.mxcl.ghost.plist");
+    write(&ghost_plist, "plist");
+    let demo_plist = dir.join("homebrew.mxcl.demo.plist");
+    write(&demo_plist, "plist");
+
+    let runner = Arc::new(ScriptRunner::new([
+        Outcome::failure(), // ghost not active
+        Outcome::success(), // unload ghost plist
+    ]));
+    ctx.commands = runner.clone();
+
+    services::run(&ctx, run_args(ServiceAction::Cleanup, &[]))
+        .await
+        .expect("mac cleanup");
+
+    assert!(!ghost_plist.exists(), "ghost plist removed");
+    assert!(demo_plist.exists(), "demo plist preserved");
+    let ghost_str = ghost_plist.to_string();
+    assert_eq!(
+        runner.calls(),
+        [
+            vec!["launchctl", "list", "homebrew.mxcl.ghost"],
+            vec!["launchctl", "unload", ghost_str.as_str()],
+        ]
+    );
+    let messages = reporter.take();
+    assert!(
+        messages
+            .iter()
+            .any(|m| m == &format!("print:Removing unused service file: {ghost_plist}"))
+    );
+}
+
+#[tokio::test]
+async fn universal_platform_run_info_kill_cleanup_are_refused() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
+    let (mut ctx, _reporter) = fixture.context(vec![service_formula("demo", service)]);
+    ctx.env.bottle_tag = BottleTag::All;
+
+    for action in [ServiceAction::Run, ServiceAction::Info, ServiceAction::Kill] {
+        let error = services::run(&ctx, run_args(action, &["demo"]))
+            .await
+            .expect_err("universal platform");
+        assert_eq!(
+            error.to_string(),
+            "Services are not supported for the universal bottle platform."
+        );
+    }
+    let error = services::run(&ctx, run_args(ServiceAction::Cleanup, &[]))
+        .await
+        .expect_err("universal cleanup");
+    assert_eq!(
+        error.to_string(),
+        "Services are not supported for the universal bottle platform."
+    );
+}

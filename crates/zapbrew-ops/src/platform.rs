@@ -115,6 +115,16 @@ pub fn launchctl(action: LaunchctlAction, plist: &Utf8Path) -> CommandSpec {
         .arg(plist.as_str())
 }
 
+/// Start a launchd job by label without registering it for boot.
+pub fn launchctl_start(label: &str) -> CommandSpec {
+    CommandSpec::new("launchctl").arg("start").arg(label)
+}
+
+/// Stop a launchd job by label without unregistering it.
+pub fn launchctl_stop(label: &str) -> CommandSpec {
+    CommandSpec::new("launchctl").arg("stop").arg(label)
+}
+
 /// Install a staged macOS package onto the root volume.
 pub fn installer(package: &Utf8Path) -> CommandSpec {
     CommandSpec::new("/usr/sbin/installer")

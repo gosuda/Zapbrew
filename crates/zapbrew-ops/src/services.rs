@@ -8,8 +8,8 @@ use zapbrew_prefix::{CommandSpec, Env};
 use zapbrew_types::BottleTag;
 
 use crate::platform::{
-    LaunchctlAction, SystemctlAction, launchctl, run_checked, systemctl, systemctl_daemon_reload,
-    systemctl_is_active,
+    LaunchctlAction, SystemctlAction, launchctl, launchctl_start, launchctl_stop, run_checked,
+    systemctl, systemctl_daemon_reload, systemctl_is_active,
 };
 use crate::state::{self, InstalledState};
 use crate::{Ctx, OpError};
@@ -26,6 +26,10 @@ pub enum ServiceAction {
     Start,
     Stop,
     Restart,
+    Run,
+    Info,
+    Kill,
+    Cleanup,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,18 +119,25 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
     if args.action == ServiceAction::List {
         return list(ctx);
     }
+    if args.action == ServiceAction::Cleanup {
+        return cleanup(ctx);
+    }
 
     let installed = state::scan(&ctx.env)?;
     for name in args.names {
         let target = target(ctx, &installed, &name)?;
         match args.action {
             ServiceAction::List => unreachable!("list returned before target resolution"),
+            ServiceAction::Cleanup => unreachable!("cleanup returned before target resolution"),
             ServiceAction::Start => start(ctx, &target)?,
             ServiceAction::Stop => stop(ctx, &target)?,
             ServiceAction::Restart => {
                 stop(ctx, &target)?;
                 start(ctx, &target)?;
             }
+            ServiceAction::Run => run_service(ctx, &target)?,
+            ServiceAction::Info => info(ctx, &target)?,
+            ServiceAction::Kill => kill(ctx, &target)?,
         }
     }
     Ok(())
@@ -271,6 +282,185 @@ fn stop(ctx: &Ctx, target: &Target) -> Result<(), OpError> {
     Ok(())
 }
 
+fn run_service(ctx: &Ctx, target: &Target) -> Result<(), OpError> {
+    let active = active(ctx, target)?;
+    if active {
+        ctx.reporter.print(&format!(
+            "Service `{}` already running, use {} restart {} to restart.",
+            target.name,
+            ctx.reporter.hint_program(),
+            target.name
+        ));
+        return Ok(());
+    }
+
+    match &ctx.env.bottle_tag {
+        BottleTag::Linux { .. } => {
+            let unit_path = systemd_dir(&ctx.env).join(service_unit(&target.name));
+            write_file(
+                &unit_path,
+                render_systemd_unit(&target.name, &target.config),
+            )?;
+            let unit = if target.config.timed() {
+                let timer_path = systemd_dir(&ctx.env).join(timer_unit(&target.name));
+                write_file(
+                    &timer_path,
+                    render_systemd_timer(&target.name, &target.config)?,
+                )?;
+                timer_unit(&target.name)
+            } else {
+                service_unit(&target.name)
+            };
+            run_checked(ctx.commands.as_ref(), &systemctl_daemon_reload())?;
+            run_checked(
+                ctx.commands.as_ref(),
+                &systemctl(SystemctlAction::Start, &unit),
+            )?;
+            ran(ctx, target, &service_label(&target.name));
+        }
+        BottleTag::MacOs { .. } => {
+            let path = launch_agents_dir(&ctx.env).join(plist_file_name(&target.name));
+            write_file(
+                &path,
+                render_launchd_plist(&ctx.env, &target.name, &target.config)?,
+            )?;
+            run_checked(
+                ctx.commands.as_ref(),
+                &launchctl(LaunchctlAction::Load, &path),
+            )?;
+            run_checked(
+                ctx.commands.as_ref(),
+                &launchctl_start(&plist_label(&target.name)),
+            )?;
+            ran(ctx, target, &plist_label(&target.name));
+        }
+        BottleTag::All => return Err(unsupported_platform()),
+    }
+    Ok(())
+}
+
+fn info(ctx: &Ctx, target: &Target) -> Result<(), OpError> {
+    let file = service_file(&ctx.env, &target.name)?;
+    let running = active(ctx, target)?;
+    let status = if running {
+        "running"
+    } else if file.exists() {
+        "stopped"
+    } else {
+        "none"
+    };
+    ctx.reporter
+        .print(&format!("{} {} {}", target.name, status, file));
+    Ok(())
+}
+
+fn kill(ctx: &Ctx, target: &Target) -> Result<(), OpError> {
+    if !active(ctx, target)? {
+        ctx.reporter
+            .print(&format!("Service `{}` is not started.", target.name));
+        return Ok(());
+    }
+
+    match &ctx.env.bottle_tag {
+        BottleTag::Linux { .. } => {
+            let unit = if target.config.timed() {
+                timer_unit(&target.name)
+            } else {
+                service_unit(&target.name)
+            };
+            run_checked(
+                ctx.commands.as_ref(),
+                &systemctl(SystemctlAction::Stop, &unit),
+            )?;
+            killed(ctx, target, &service_label(&target.name));
+        }
+        BottleTag::MacOs { .. } => {
+            run_checked(
+                ctx.commands.as_ref(),
+                &launchctl_stop(&plist_label(&target.name)),
+            )?;
+            killed(ctx, target, &plist_label(&target.name));
+        }
+        BottleTag::All => return Err(unsupported_platform()),
+    }
+    Ok(())
+}
+
+fn cleanup(ctx: &Ctx) -> Result<(), OpError> {
+    let installed = state::scan(&ctx.env)?;
+    let mut cleaned = false;
+    match &ctx.env.bottle_tag {
+        BottleTag::Linux { .. } => {
+            let dir = systemd_dir(&ctx.env);
+            if dir.exists() {
+                let entries = fs::read_dir(&dir)
+                    .map_err(|source| OpError::io("read service directory", dir.clone(), source))?;
+                for entry in entries {
+                    let entry = entry
+                        .map_err(|source| OpError::io("read service entry", dir.clone(), source))?;
+                    let path = utf8_entry_path(&entry, &dir)?;
+                    let Some(name) = formula_name_from_systemd_file(&path) else {
+                        continue;
+                    };
+                    if installed.contains(&name) {
+                        continue;
+                    }
+                    let unit = path.file_name().expect("file name").to_owned();
+                    if probe(ctx, &systemctl_is_active(&unit))? {
+                        continue;
+                    }
+                    ctx.reporter
+                        .print(&format!("Removing unused service file: {path}"));
+                    fs::remove_file(&path).map_err(|source| {
+                        OpError::io("remove service file", path.clone(), source)
+                    })?;
+                    cleaned = true;
+                }
+            }
+            if cleaned {
+                run_checked(ctx.commands.as_ref(), &systemctl_daemon_reload())?;
+            }
+        }
+        BottleTag::MacOs { .. } => {
+            let dir = launch_agents_dir(&ctx.env);
+            if dir.exists() {
+                let entries = fs::read_dir(&dir)
+                    .map_err(|source| OpError::io("read service directory", dir.clone(), source))?;
+                for entry in entries {
+                    let entry = entry
+                        .map_err(|source| OpError::io("read service entry", dir.clone(), source))?;
+                    let path = utf8_entry_path(&entry, &dir)?;
+                    let Some(name) = formula_name_from_plist(&path) else {
+                        continue;
+                    };
+                    if installed.contains(&name) {
+                        continue;
+                    }
+                    if probe(ctx, &launchctl_list(&plist_label(&name)))? {
+                        continue;
+                    }
+                    run_checked(
+                        ctx.commands.as_ref(),
+                        &launchctl(LaunchctlAction::Unload, &path),
+                    )?;
+                    ctx.reporter
+                        .print(&format!("Removing unused service file: {path}"));
+                    fs::remove_file(&path).map_err(|source| {
+                        OpError::io("remove service file", path.clone(), source)
+                    })?;
+                    cleaned = true;
+                }
+            }
+        }
+        BottleTag::All => return Err(unsupported_platform()),
+    }
+    if !cleaned {
+        ctx.reporter
+            .print("All user-space services OK, nothing cleaned...");
+    }
+    Ok(())
+}
+
 fn active(ctx: &Ctx, target: &Target) -> Result<bool, OpError> {
     match &ctx.env.bottle_tag {
         BottleTag::Linux { .. } => {
@@ -304,6 +494,20 @@ fn started(ctx: &Ctx, target: &Target, label: &str) {
 fn stopped(ctx: &Ctx, target: &Target, label: &str) {
     ctx.reporter.ohai(&format!(
         "Successfully stopped `{}` (label: {label})",
+        target.name
+    ));
+}
+
+fn ran(ctx: &Ctx, target: &Target, label: &str) {
+    ctx.reporter.ohai(&format!(
+        "Successfully ran `{}` (label: {label})",
+        target.name
+    ));
+}
+
+fn killed(ctx: &Ctx, target: &Target, label: &str) {
+    ctx.reporter.ohai(&format!(
+        "Successfully killed `{}` (label: {label})",
         target.name
     ));
 }
@@ -346,6 +550,32 @@ fn plist_file_name(name: &str) -> String {
 
 fn launchctl_list(label: &str) -> CommandSpec {
     CommandSpec::new("launchctl").arg("list").arg(label)
+}
+
+/// Convert a `fs::read_dir` entry to a UTF-8 path, refusing non-UTF-8 names.
+fn utf8_entry_path(entry: &fs::DirEntry, dir: &Utf8Path) -> Result<Utf8PathBuf, OpError> {
+    let file_name = entry.file_name();
+    let name = file_name.to_str().ok_or_else(|| OpError::InvalidState {
+        reason: format!("non-UTF-8 service file name in {dir}"),
+    })?;
+    Ok(dir.join(name))
+}
+
+/// Extract the formula name from a `homebrew.<name>.service` or `.timer` file.
+fn formula_name_from_systemd_file(path: &Utf8Path) -> Option<String> {
+    let file_name = path.file_name()?;
+    let stem = file_name.strip_prefix("homebrew.")?;
+    if let Some(name) = stem.strip_suffix(".service") {
+        return Some(name.to_owned());
+    }
+    stem.strip_suffix(".timer").map(|name| name.to_owned())
+}
+
+/// Extract the formula name from a `homebrew.mxcl.<name>.plist` file.
+fn formula_name_from_plist(path: &Utf8Path) -> Option<String> {
+    let file_name = path.file_name()?;
+    let stem = file_name.strip_prefix("homebrew.mxcl.")?;
+    stem.strip_suffix(".plist").map(|name| name.to_owned())
 }
 
 fn write_file(path: &Utf8Path, contents: String) -> Result<(), OpError> {
