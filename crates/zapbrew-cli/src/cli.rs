@@ -64,6 +64,14 @@ pub enum JsonVersion {
     V2,
 }
 
+/// Shell dialect the `completions` subcommand generates a script for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum CompletionShell {
+    Bash,
+    Zsh,
+    Fish,
+}
+
 /// Every approved top-level verb.
 #[derive(Debug, Subcommand)]
 pub enum Commands {
@@ -123,6 +131,8 @@ pub enum Commands {
     Update,
     /// Manage the opt-in `brew` shim.
     Shim(ShimArgs),
+    /// Generate a shell completion script.
+    Completions(CompletionsArgs),
 }
 
 /// Shared arguments for verbs that take only a list of names.
@@ -437,6 +447,13 @@ pub enum ShimCommand {
     Remove,
 }
 
+#[derive(Debug, Args)]
+pub struct CompletionsArgs {
+    /// Shell to generate a completion script for.
+    #[arg(value_enum)]
+    pub shell: CompletionShell,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -487,6 +504,7 @@ mod tests {
             Commands::Services(_) => "services",
             Commands::Update => "update",
             Commands::Shim(_) => "shim",
+            Commands::Completions(_) => "completions",
         }
     }
 
@@ -521,6 +539,7 @@ mod tests {
         (&["zapbrew", "services", "list"], "services"),
         (&["zapbrew", "update"], "update"),
         (&["zapbrew", "shim", "install"], "shim"),
+        (&["zapbrew", "completions", "bash"], "completions"),
     ];
 
     #[test]
@@ -883,5 +902,34 @@ mod tests {
             panic!("expected shellenv");
         };
         assert_eq!(named.shell.as_deref(), Some("fish"));
+    }
+
+    #[test]
+    fn completions_parses_every_shell_and_rejects_bad_values() {
+        for (argv, expected) in [
+            (
+                &["zapbrew", "completions", "bash"][..],
+                CompletionShell::Bash,
+            ),
+            (&["zapbrew", "completions", "zsh"][..], CompletionShell::Zsh),
+            (
+                &["zapbrew", "completions", "fish"][..],
+                CompletionShell::Fish,
+            ),
+        ] {
+            let Commands::Completions(args) = command(argv) else {
+                panic!("expected completions for {argv:?}");
+            };
+            assert_eq!(args.shell, expected, "argv: {argv:?}");
+        }
+
+        assert_eq!(
+            parse_kind(&["zapbrew", "completions"]),
+            ErrorKind::MissingRequiredArgument
+        );
+        assert_eq!(
+            parse_kind(&["zapbrew", "completions", "powershell"]),
+            ErrorKind::InvalidValue
+        );
     }
 }

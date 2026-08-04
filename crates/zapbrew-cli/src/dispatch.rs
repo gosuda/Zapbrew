@@ -341,6 +341,14 @@ pub fn plan(command: Commands, globals: &GlobalArgs, width: usize) -> Result<Pla
                 action: shim_action(args.command),
             }),
         },
+        // `main` intercepts completion generation before the runtime ever runs,
+        // so reaching dispatch means the interception was lost. Refuse with a
+        // typed error rather than silently doing nothing.
+        Commands::Completions(_) => {
+            return Err(OpError::InvalidState {
+                reason: "completions must be intercepted by main before dispatch".to_owned(),
+            });
+        }
     };
     Ok(plan)
 }
@@ -866,5 +874,13 @@ mod tests {
             suggestion_suffix(&["wget".to_owned(), "wgetpaste".to_owned()]),
             " Did you mean wget or wgetpaste?"
         );
+    }
+
+    #[test]
+    fn completions_are_refused_by_dispatch() {
+        let cli = Cli::parse_from(["zapbrew", "completions", "bash"]);
+        let error = plan(cli.command.expect("command"), &cli.globals, WIDTH)
+            .expect_err("dispatch must refuse an unintercepted completion");
+        assert!(matches!(error, zapbrew_ops::OpError::InvalidState { .. }));
     }
 }

@@ -7,6 +7,7 @@
 //! SIGINT handling, and the exit contract.
 
 mod cli;
+mod completions;
 mod dispatch;
 mod fastpath;
 pub mod output;
@@ -23,6 +24,14 @@ use crate::output::TerminalReporter;
 
 fn main() -> ExitCode {
     let cli = cli::Cli::parse();
+
+    // Completion generation is a pure function of the clap surface. Intercept it
+    // before the argv0 shim hint, `Env::detect`, fast paths, the runtime, HTTP,
+    // catalogs, or any `Ctx` so it never touches the host or the network.
+    if let Some(cli::Commands::Completions(args)) = &cli.command {
+        completions::generate(args.shell, &mut std::io::stdout());
+        return output::success();
+    }
 
     let argv0 = std::env::args().next().unwrap_or_default();
     let hint = zapbrew_ops::shim::hint_program(&argv0);
