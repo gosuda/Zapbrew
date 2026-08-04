@@ -43,12 +43,15 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
     for (cask, plan, version, url, checksum) in prepared {
         transaction::install(
             ctx,
-            cask,
-            &plan,
-            &version,
-            &url,
-            checksum.as_ref(),
-            args.force,
+            transaction::CaskInstall {
+                cask,
+                plan: &plan,
+                version: &version,
+                url: &url,
+                checksum: checksum.as_ref(),
+                appdir: &appdir,
+                force: args.force,
+            },
         )
         .await?;
     }

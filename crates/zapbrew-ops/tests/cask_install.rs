@@ -432,4 +432,115 @@ fn find_receipt(meta: &Utf8Path) -> Utf8PathBuf {
     panic!("no receipt under {meta}");
 }
 
+#[tokio::test]
+async fn force_reinstall_replaces_old_artifact_and_clears_backups() {
+    let server = MockServer::start().await;
+    let body = tar_gz(&[("Editor.app/run", b"content")]);
+    let sha = sha_hex(&body);
+    let url = serve(&server, "/Editor.tar.gz", body).await;
+    let value = cask("editor", &url, &sha, vec![json!({"app": ["Editor.app"]})]);
+
+    let fixture = Fixture::new().macos();
+    let appdir = fixture.env.home.join("Applications");
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+
+    install::run(&ctx, install_args(&["editor"], &appdir, false))
+        .await
+        .expect("first install");
+    assert_eq!(
+        std::fs::read(appdir.join("Editor.app/run")).expect("run"),
+        b"content"
+    );
+
+    // Tamper with the deployed app to prove the reinstall replaces it wholesale.
+    std::fs::write(appdir.join("Editor.app/run"), b"tampered").expect("tamper");
+    std::fs::write(appdir.join("Editor.app/extra"), b"junk").expect("extra");
+
+    install::run(&ctx, install_args(&["editor"], &appdir, true))
+        .await
+        .expect("force reinstall");
+
+    assert_eq!(
+        std::fs::read(appdir.join("Editor.app/run")).expect("run"),
+        b"content"
+    );
+    assert!(!appdir.join("Editor.app/extra").exists());
+    assert!(fixture.env.caskroom.join("editor/1.0").is_dir());
+    let staging = fixture.env.caskroom.join(".staging");
+    let leftovers = std::fs::read_dir(&staging)
+        .map(|entries| entries.count())
+        .unwrap_or(0);
+    assert_eq!(leftovers, 0, "staging should be empty after success");
+}
+
+#[tokio::test]
+async fn force_reinstall_failure_restores_old_artifact_and_version() {
+    let server = MockServer::start().await;
+    let body = tar_gz(&[
+        ("Editor.app/run", b"new-editor"),
+        ("Second.app/run", b"new-second"),
+    ]);
+    let sha = sha_hex(&body);
+    let url = serve(&server, "/Two.tar.gz", body).await;
+    let value = cask(
+        "editor",
+        &url,
+        &sha,
+        vec![
+            json!({"app": ["Editor.app"]}),
+            json!({"app": ["Second.app"]}),
+        ],
+    );
+
+    let fixture = Fixture::new().macos();
+    let appdir = fixture.env.home.join("Applications");
+    std::fs::create_dir_all(&appdir).expect("appdir");
+
+    // Manual prior install: receipt lists only the first app, so Second.app is an
+    // unrelated target the new plan must not silently clobber.
+    let old_receipt = json!({
+        "token": "editor",
+        "version": "1.0",
+        "sha256": "no_check",
+        "url": "https://example.test/old.zip",
+        "artifacts": [{"app": ["Editor.app"]}]
+    });
+    let receipt_path = fixture
+        .env
+        .caskroom
+        .join("editor/.metadata/1.0/20260101000000/Casks/editor.json");
+    std::fs::create_dir_all(receipt_path.parent().expect("receipt parent")).expect("receipt dir");
+    std::fs::write(
+        &receipt_path,
+        serde_json::to_vec_pretty(&old_receipt).expect("receipt json"),
+    )
+    .expect("write receipt");
+    std::fs::create_dir_all(fixture.env.caskroom.join("editor/1.0")).expect("version dir");
+    std::fs::create_dir_all(appdir.join("Editor.app")).expect("old app");
+    std::fs::write(appdir.join("Editor.app/run"), b"old-editor").expect("old run");
+    // Unrelated occupant at the second app's target: the reinstall must refuse it.
+    std::fs::write(appdir.join("Second.app"), b"blocker").expect("blocker");
+
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+    let result = install::run(&ctx, install_args(&["editor"], &appdir, true)).await;
+    assert!(
+        result.is_err(),
+        "expected reinstall to refuse the collision"
+    );
+
+    // Old deployed artifact and old version/receipt are both restored.
+    assert_eq!(
+        std::fs::read(appdir.join("Editor.app/run")).expect("restored run"),
+        b"old-editor"
+    );
+    assert_eq!(
+        std::fs::read(appdir.join("Second.app")).expect("blocker"),
+        b"blocker"
+    );
+    assert!(fixture.env.caskroom.join("editor/1.0").is_dir());
+    assert!(receipt_path.is_file());
+}
+
 fn _use_ctx(_ctx: &Ctx) {}

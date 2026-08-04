@@ -22,12 +22,37 @@ pub struct Args {
 
 pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
     require_macos(ctx)?;
-    let tokens = args.tokens.iter().cloned().collect::<BTreeSet<_>>();
-    let _locks = acquire_locks(ctx, &tokens)?;
+    let mut resolved = Vec::new();
+    let mut canonical = BTreeSet::new();
     for token in &args.tokens {
+        let token = resolve_installed(ctx, token)?;
+        if canonical.insert(token.clone()) {
+            resolved.push(token);
+        }
+    }
+    let _locks = acquire_locks(ctx, &canonical)?;
+    for token in &resolved {
         remove(ctx, token, args.zap)?;
     }
     Ok(())
+}
+
+/// Resolve a requested token to the canonical installed token.
+///
+/// Live catalog first, so an old-token alias maps to its canonical install; then
+/// the raw token when its Caskroom directory exists, preserving
+/// uninstall-from-stored-receipt after a cask leaves the catalog.
+fn resolve_installed(ctx: &Ctx, requested: &str) -> Result<String, OpError> {
+    if let Some(cask) = ctx.casks.get(requested) {
+        return Ok(cask.token.clone());
+    }
+    let dir = ctx.env.caskroom.join(requested);
+    if fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink()) {
+        return Ok(requested.to_owned());
+    }
+    Err(OpError::Refusal {
+        message: format!("Cask '{requested}' is unavailable."),
+    })
 }
 
 pub(super) fn remove(ctx: &Ctx, token: &str, zap: bool) -> Result<(), OpError> {
@@ -39,18 +64,8 @@ pub(super) fn remove(ctx: &Ctx, token: &str, zap: bool) -> Result<(), OpError> {
         .ok_or_else(|| OpError::InvalidState {
             reason: format!("installed cask version has no basename: {version_dir}"),
         })?;
-    let receipt =
-        newest_receipt(&token_dir, version, token)?.ok_or_else(|| OpError::InvalidState {
-            reason: format!("Cask '{token}' has no stored receipt."),
-        })?;
-    let bytes = fs::read(&receipt).map_err(|source| OpError::io("read", &receipt, source))?;
-    let wrapped = format!("[{}]", String::from_utf8_lossy(&bytes));
-    let catalog = CaskCatalog::from_payload(wrapped.as_bytes(), &ctx.env.bottle_tag)?;
-    let cask = catalog.get(token).ok_or_else(|| OpError::InvalidState {
-        reason: format!("receipt {receipt} does not contain Cask '{token}'"),
-    })?;
     let appdir = Utf8Path::new("/Applications");
-    let plan = super::artifact::plan(ctx, cask, appdir)?;
+    let plan = stored_plan(ctx, token, version, appdir)?;
 
     preflight_directives(ctx, &plan.uninstall, appdir)?;
     if zap {
@@ -66,6 +81,30 @@ pub(super) fn remove(ctx: &Ctx, token: &str, zap: bool) -> Result<(), OpError> {
     remove_version_receipts(&token_dir, version)?;
     prune_empty(&token_dir)?;
     Ok(())
+}
+
+/// Build an install plan from the newest stored receipt for `version`.
+///
+/// Actions come from the receipt, never the live catalog, so uninstall and force
+/// reinstall operate on what was actually deployed.
+pub(super) fn stored_plan(
+    ctx: &Ctx,
+    token: &str,
+    version: &str,
+    appdir: &Utf8Path,
+) -> Result<Plan, OpError> {
+    let token_dir = ctx.env.caskroom.join(token);
+    let receipt =
+        newest_receipt(&token_dir, version, token)?.ok_or_else(|| OpError::InvalidState {
+            reason: format!("Cask '{token}' has no stored receipt."),
+        })?;
+    let bytes = fs::read(&receipt).map_err(|source| OpError::io("read", &receipt, source))?;
+    let wrapped = format!("[{}]", String::from_utf8_lossy(&bytes));
+    let catalog = CaskCatalog::from_payload(wrapped.as_bytes(), &ctx.env.bottle_tag)?;
+    let cask = catalog.get(token).ok_or_else(|| OpError::InvalidState {
+        reason: format!("receipt {receipt} does not contain Cask '{token}'"),
+    })?;
+    super::artifact::plan(ctx, cask, appdir)
 }
 
 fn reverse_actions(plan: &Plan, _version_dir: &Utf8Path) -> Result<(), OpError> {

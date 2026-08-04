@@ -174,7 +174,7 @@ async fn missing_install_and_missing_receipt_refuse() {
     )
     .await;
     assert!(
-        matches!(missing, Err(OpError::Refusal { message }) if message == "Cask 'ghost' is not installed.")
+        matches!(missing, Err(OpError::Refusal { message }) if message == "Cask 'ghost' is unavailable.")
     );
 
     fs::create_dir_all(fixture.env.caskroom.join("broken/1.0")).expect("version");
@@ -189,6 +189,74 @@ async fn missing_install_and_missing_receipt_refuse() {
     assert!(
         matches!(broken, Err(OpError::InvalidState { reason }) if reason == "Cask 'broken' has no stored receipt.")
     );
+}
+
+#[tokio::test]
+async fn uninstall_resolves_old_token_alias() {
+    let fixture = Fixture::new().macos();
+    let raw = json!({
+        "token": "everything",
+        "old_tokens": ["every-thing"],
+        "version": "1.0",
+        "sha256": "no_check",
+        "url": "https://example.test/app.zip",
+        "artifacts": [
+            {"artifact": ["stored.txt"], "target": format!("{}/installed.txt", fixture.env.home)}
+        ]
+    });
+    fs::create_dir_all(&fixture.env.home).expect("home");
+    receipt(&fixture, "everything", &raw);
+    fs::write(fixture.env.home.join("installed.txt"), b"installed").expect("target");
+
+    let runner = Arc::new(RecordingRunner::default());
+    let (ctx, _reporter) = fixture.context_casks(vec![raw.clone()], runner, reqwest::Client::new());
+
+    uninstall::run(
+        &ctx,
+        Args {
+            tokens: vec!["every-thing".to_owned()],
+            zap: false,
+        },
+    )
+    .await
+    .expect("old-token uninstall");
+
+    assert!(!fixture.env.home.join("installed.txt").exists());
+    assert!(!fixture.env.caskroom.join("everything").exists());
+}
+
+#[tokio::test]
+async fn uninstall_removed_from_catalog_uses_receipt() {
+    let fixture = Fixture::new().macos();
+    let raw = json!({
+        "token": "vanished",
+        "version": "1.0",
+        "sha256": "no_check",
+        "url": "https://example.test/app.zip",
+        "artifacts": [
+            {"artifact": ["stored.txt"], "target": format!("{}/installed.txt", fixture.env.home)}
+        ]
+    });
+    fs::create_dir_all(&fixture.env.home).expect("home");
+    receipt(&fixture, "vanished", &raw);
+    fs::write(fixture.env.home.join("installed.txt"), b"installed").expect("target");
+
+    // Live catalog no longer lists the cask; uninstall relies on the receipt tree.
+    let runner = Arc::new(RecordingRunner::default());
+    let (ctx, _reporter) = fixture.context_casks(vec![], runner, reqwest::Client::new());
+
+    uninstall::run(
+        &ctx,
+        Args {
+            tokens: vec!["vanished".to_owned()],
+            zap: false,
+        },
+    )
+    .await
+    .expect("uninstall from stored receipt");
+
+    assert!(!fixture.env.home.join("installed.txt").exists());
+    assert!(!fixture.env.caskroom.join("vanished").exists());
 }
 
 #[tokio::test]

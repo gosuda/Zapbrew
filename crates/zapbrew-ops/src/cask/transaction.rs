@@ -11,16 +11,28 @@ use super::artifact::{self, Plan, Reverse};
 use super::{path_exists, remove_entry, unique_stage};
 use crate::{Ctx, OpError};
 
+/// One fully preflighted cask install request.
+pub(super) struct CaskInstall<'a> {
+    pub cask: &'a Cask,
+    pub plan: &'a Plan,
+    pub version: &'a str,
+    pub url: &'a str,
+    pub checksum: Option<&'a Checksum>,
+    pub appdir: &'a Utf8Path,
+    pub force: bool,
+}
+
 /// Execute one fully preflighted install as a journaled transaction.
-pub(super) async fn install(
-    ctx: &Ctx,
-    cask: &Cask,
-    plan: &Plan,
-    version: &str,
-    url: &str,
-    checksum: Option<&Checksum>,
-    force: bool,
-) -> Result<(), OpError> {
+pub(super) async fn install(ctx: &Ctx, request: CaskInstall<'_>) -> Result<(), OpError> {
+    let CaskInstall {
+        cask,
+        plan,
+        version,
+        url,
+        checksum,
+        appdir,
+        force,
+    } = request;
     let final_dir = ctx.env.caskroom.join(&cask.token).join(version);
     if path_exists(&final_dir) && !force {
         ctx.reporter
@@ -33,11 +45,19 @@ pub(super) async fn install(
     let mut journal = Vec::<Reverse>::new();
     let mut receipt = None;
     let mut old_version = None;
+    let mut old_targets = None;
 
     let result = (|| {
         archive::extract(ctx, &cached.path, url, &staging)?;
 
         if path_exists(&final_dir) {
+            // Force reinstall of an existing version: back up the prior deployed
+            // artifacts (from the stored receipt) and version before replacing.
+            let old_plan = super::uninstall::stored_plan(ctx, &cask.token, version, appdir)?;
+            let backup_root = unique_stage(ctx, &format!("{}-replaced", cask.token))?;
+            old_targets = Some(backup_root.clone());
+            artifact::backup_old_targets(&old_plan, &backup_root, &mut journal)?;
+
             let backup = ctx.env.caskroom.join(".staging").join(format!(
                 "{}-old-{}",
                 cask.token,
@@ -64,6 +84,9 @@ pub(super) async fn install(
             if let Some(old) = old_version {
                 remove_entry(&old)?;
             }
+            if let Some(backups) = old_targets {
+                remove_entry(&backups)?;
+            }
             Ok(())
         }
         Err(original) => {
@@ -79,6 +102,10 @@ pub(super) async fn install(
             }
             if remove_entry(&staging).is_err() && path_exists(&staging) {
                 leftovers.push(staging.to_string());
+            }
+            if let Some(backups) = old_targets.as_ref() {
+                // Best-effort: succeeds only once every restore drained the dir.
+                let _ = fs::remove_dir(backups);
             }
             if let Some(old) = old_version
                 && path_exists(&old)

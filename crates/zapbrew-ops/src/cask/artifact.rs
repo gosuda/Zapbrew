@@ -38,6 +38,11 @@ pub(super) struct Plan {
 /// Reverse of a single applied action, replayed on rollback.
 pub(super) enum Reverse {
     Remove(Utf8PathBuf),
+    /// Move a backed-up prior artifact from `backup` back to its `target`.
+    Restore {
+        backup: Utf8PathBuf,
+        target: Utf8PathBuf,
+    },
     Irreversible(String),
 }
 
@@ -197,6 +202,37 @@ pub(super) fn apply(
     Ok(())
 }
 
+/// Move every reversible target of a prior install into `backup_root`, recording
+/// a restore entry for each so a failed replacement can put them back.
+///
+/// `pkg` artifacts leave no reversible target, so they are skipped. Targets that
+/// are already absent are left untouched.
+pub(super) fn backup_old_targets(
+    old_plan: &Plan,
+    backup_root: &Utf8Path,
+    journal: &mut Vec<Reverse>,
+) -> Result<(), OpError> {
+    for (index, action) in old_plan.actions.iter().enumerate() {
+        let target = match action {
+            Action::Move { target, .. }
+            | Action::Copy { target, .. }
+            | Action::Symlink { target, .. } => target,
+            Action::Pkg { .. } => continue,
+        };
+        if !path_exists(target) {
+            continue;
+        }
+        let backup = backup_root.join(index.to_string());
+        ensure_parent(&backup)?;
+        move_path(target, &backup)?;
+        journal.push(Reverse::Restore {
+            backup,
+            target: target.clone(),
+        });
+    }
+    Ok(())
+}
+
 /// Replay journalled reverse actions, returning any irreversible/failed leftovers.
 pub(super) fn rollback(journal: &[Reverse]) -> Vec<String> {
     let mut leftovers = Vec::new();
@@ -205,6 +241,13 @@ pub(super) fn rollback(journal: &[Reverse]) -> Vec<String> {
             Reverse::Remove(path) => {
                 if remove_entry(path).is_err() && path_exists(path) {
                     leftovers.push(path.to_string());
+                }
+            }
+            Reverse::Restore { backup, target } => {
+                if path_exists(target) && remove_entry(target).is_err() {
+                    leftovers.push(target.to_string());
+                } else if move_path(backup, target).is_err() && path_exists(backup) {
+                    leftovers.push(backup.to_string());
                 }
             }
             Reverse::Irreversible(description) => leftovers.push(description.clone()),
