@@ -2,11 +2,11 @@
   "payload": "{}",
   "signatures": [
     {
-      "header": {
-        "kid": "zapbrew-test-1"
-      },
       "protected": "eyJhbGciOiJQUzUxMiIsImI2NCI6ZmFsc2V9",
-      "signature": "DeFPOTfBFd2asWfsDvRNLhG1su2OsUCDt81M9c4CdBqGiYqF83aB8uUwt0LIqrihrelkTfsmG-F8b54vdVsGHhhP0WHZKuwvQPCjovmWTDO5Mdn5zmPS5L8v0ahQB_pM3887WIDPIV7McxT3J21mMOG2IiyW7dIxwvNuRXyRI7j5TAYsCnOLbNezzutOPUrJud8b-j1XtYLsTlhKgB1hL6L1kVXtvCqjnbSUUkVJUzHuR4U5xZvi_78Mo5YJmPQSYt_-ZxaeSr2qAMs_IguKOpEH29Vm6F9tYL_yDJKwtFcvkO_B9GII8EH8ASxvCy9-mKL4WljnX42Zn6RNmVL9Og"
+      "header": {
+        "kid": "zapbrew-test"
+      },
+      "signature": "jAQoXYXVLwaWO0WgfeaWJ1tetwpBqvX7A3SAxeQ2ZQIY0kZuuaPxM1MDbGlucmJOoKMulkQ5XlsOVG5AG7nNeY-oJQQk_dTndwUxkInastR-dTjO0CNDXU0_RQpE8B4kzlbs8OFoLXiTKT0nlWVIeOQVmy56dEoIHwqgurjD874YDOtvP_2STz1YmLE-drm57-EdHHuwKIMeDkgJ9wKdamgDmnXpxA_kq1pFV4-0FgVpIQyDn50DpFv8xEZhmHIlOkDQCxNk8OunQvR9ZaajDVj2F7Yei7MzosoaLVGrTUs1hXe8fkw4In75pFyajiePT44N4YqeaPWTtCh3FgjBuA"
     }
   ]
 }
