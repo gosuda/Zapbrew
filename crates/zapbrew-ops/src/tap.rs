@@ -129,19 +129,29 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
     let remote = args.url.unwrap_or_else(|| tap.default_remote());
     ctx.reporter.ohai(&format!("Tapping {}", tap.name()));
     if let Err(error) = run_checked(ctx.commands.as_ref(), &git_clone(&remote, &destination)) {
-        if path_exists(&destination)? {
-            remove_tree(&destination)?;
-        }
-        let user_path = tap.user_path(&ctx.env);
-        if is_empty_real_directory(&user_path)? {
-            fs::remove_dir(&user_path).map_err(|source| {
-                OpError::io("remove empty tap user directory", user_path.clone(), source)
-            })?;
+        if let Err(cleanup_error) = rollback_clone(&ctx.env, &tap, &destination) {
+            ctx.reporter.opoo(&format!(
+                "Failed to remove partial tap {}: {cleanup_error}",
+                tap.name()
+            ));
         }
         return Err(error);
     }
     let stats = measure(&destination)?;
     ctx.reporter.print(&format!("Tapped ({}).", stats.abv()));
+    Ok(())
+}
+
+fn rollback_clone(env: &Env, tap: &TapName, destination: &Utf8Path) -> Result<(), OpError> {
+    if path_exists(destination)? {
+        remove_tree(destination)?;
+    }
+    let user_path = tap.user_path(env);
+    if is_empty_real_directory(&user_path)? {
+        fs::remove_dir(&user_path).map_err(|source| {
+            OpError::io("remove empty tap user directory", user_path.clone(), source)
+        })?;
+    }
     Ok(())
 }
 

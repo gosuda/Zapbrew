@@ -19,6 +19,7 @@ use zapbrew_prefix::{CommandOutput, CommandRunner, CommandSpec};
 enum ResultKind {
     Clone(Vec<(&'static str, Vec<u8>)>),
     Failure,
+    FileFailure,
 }
 
 struct CloneRunner {
@@ -51,14 +52,18 @@ impl CommandRunner for CloneRunner {
         self.calls.lock().expect("runner lock").push(argv);
 
         match &self.result {
-            ResultKind::Failure => {
+            ResultKind::Failure | ResultKind::FileFailure => {
                 let destination = spec
                     .arguments()
                     .last()
                     .map(PathBuf::from)
                     .ok_or_else(|| io::Error::other("clone destination missing"))?;
-                fs::create_dir_all(&destination)?;
-                fs::write(destination.join("partial"), b"partial")?;
+                if matches!(&self.result, ResultKind::FileFailure) {
+                    fs::write(&destination, b"partial")?;
+                } else {
+                    fs::create_dir_all(&destination)?;
+                    fs::write(destination.join("partial"), b"partial")?;
+                }
                 Ok(CommandOutput::new(
                     ExitStatus::from_raw(17 << 8),
                     Vec::new(),
@@ -290,4 +295,27 @@ async fn invalid_existing_and_failed_clones_are_stable_and_do_not_run_host_git()
     assert_eq!(reporter.take(), ["ohai:Tapping acme/failing"]);
     assert_eq!(runner.calls().len(), 1);
     assert!(fs::symlink_metadata(fixture.env.library.join("Taps/acme/homebrew-failing")).is_err());
+}
+
+#[tokio::test]
+async fn rollback_failure_warns_without_masking_clone_error() {
+    let fixture = Fixture::new();
+    let (mut ctx, reporter) = fixture.context(Vec::new());
+    ctx.commands = Arc::new(CloneRunner::new(ResultKind::FileFailure));
+
+    let error = tap::run(
+        &ctx,
+        Args {
+            name: Some("acme/failing".to_owned()),
+            url: None,
+            force: false,
+        },
+    )
+    .await
+    .expect_err("clone failure");
+
+    assert!(matches!(error, OpError::CommandFailed { .. }));
+    let output = reporter.take();
+    assert_eq!(output[0], "ohai:Tapping acme/failing");
+    assert!(output[1].starts_with("opoo:Failed to remove partial tap acme/failing:"));
 }
