@@ -23,7 +23,8 @@ use crate::fastpath::FastPath;
 use crate::output::TerminalReporter;
 
 fn main() -> ExitCode {
-    let cli = cli::Cli::parse();
+    let args = cli::canonicalize_argv(std::env::args().collect());
+    let cli = cli::Cli::parse_from(args);
 
     // Completion generation is a pure function of the clap surface. Intercept it
     // before the argv0 shim hint, `Env::detect`, fast paths, the runtime, HTTP,

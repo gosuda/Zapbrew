@@ -10,6 +10,30 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
+/// Rewrite common Homebrew command aliases to their canonical names.
+///
+/// This operates on the argument vector (including the binary name at index 0)
+/// and returns a newly-allocated vector. It runs before clap so that `ls`,
+/// `rm`, `-S`, `up`, etc. behave the same in the binary and in unit tests.
+pub(crate) fn canonicalize_argv(argv: Vec<String>) -> Vec<String> {
+    let mut argv = argv;
+    if let Some(first) = argv.get_mut(1) {
+        *first = match first.as_str() {
+            "ls" => "list",
+            "-S" => "search",
+            "up" => "update",
+            "ln" => "link",
+            "instal" => "install",
+            "uninstal" | "rm" | "remove" => "uninstall",
+            "abv" => "info",
+            "dr" => "doctor",
+            other => other,
+        }
+        .to_owned();
+    }
+    argv
+}
+
 /// Root parser for the `zapbrew` binary.
 #[derive(Debug, Parser)]
 #[command(
@@ -496,10 +520,12 @@ mod tests {
     use clap::error::ErrorKind;
 
     fn parse(argv: &[&str]) -> Cli {
+        let argv = canonicalize_argv(argv.iter().map(|&s| s.to_owned()).collect());
         Cli::try_parse_from(argv).expect("expected parse to succeed")
     }
 
     fn parse_kind(argv: &[&str]) -> ErrorKind {
+        let argv = canonicalize_argv(argv.iter().map(|&s| s.to_owned()).collect());
         Cli::try_parse_from(argv)
             .expect_err("expected parse to fail")
             .kind()
@@ -645,6 +671,17 @@ mod tests {
                 "help for {name}"
             );
         }
+    }
+
+    #[test]
+    fn command_aliases_resolve_to_canonical_verbs() {
+        assert_eq!(command_name(&command(&["zapbrew", "ls"])), "list");
+        assert_eq!(
+            command_name(&command(&["zapbrew", "rm", "wget"])),
+            "uninstall"
+        );
+        assert_eq!(command_name(&command(&["zapbrew", "up"])), "update");
+        assert_eq!(command_name(&command(&["zapbrew", "-S", "wget"])), "search");
     }
 
     #[test]
