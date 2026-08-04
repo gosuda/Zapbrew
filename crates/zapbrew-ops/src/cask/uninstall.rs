@@ -130,7 +130,15 @@ fn preflight_directives(ctx: &Ctx, groups: &[Value], appdir: &Utf8Path) -> Resul
             })?;
             for (kind, value) in object {
                 match kind.as_str() {
-                    "launchctl" | "pkgutil" | "quit" | "signal" => {
+                    "launchctl" => {
+                        let labels = string_values(value).ok_or_else(|| OpError::InvalidState {
+                            reason: "stored launchctl directive has invalid shape".to_owned(),
+                        })?;
+                        for label in &labels {
+                            validate_launchctl_label(label)?;
+                        }
+                    }
+                    "pkgutil" | "quit" | "signal" => {
                         if kind == "signal" {
                             if !value.is_object() && !value.is_array() {
                                 return Err(OpError::InvalidState {
@@ -177,11 +185,7 @@ fn run_directives(ctx: &Ctx, groups: &[Value], appdir: &Utf8Path) -> Result<(), 
                 match kind.as_str() {
                     "launchctl" => {
                         for label in string_values(value).unwrap_or_default() {
-                            let plist = ctx
-                                .env
-                                .home
-                                .join("Library/LaunchAgents")
-                                .join(format!("{label}.plist"));
+                            let plist = launch_agent_plist(ctx, &label)?;
                             checked_command(
                                 ctx,
                                 CommandSpec::new("/bin/launchctl")
@@ -238,6 +242,36 @@ fn ensure_removal_root(ctx: &Ctx, path: &Utf8Path, appdir: &Utf8Path) -> Result<
             message: format!("Cask removal path '{path}' is outside approved roots."),
         })
     }
+}
+
+/// Validate a stored `launchctl` label before it builds a plist path or runs a
+/// command. A launchd label is a nonempty string of ASCII letters, digits, `.`,
+/// `_`, and `-`; any slash, separator, parent component, control byte, or other
+/// character is invalid stored receipt data.
+fn validate_launchctl_label(label: &str) -> Result<(), OpError> {
+    let valid = !label.is_empty()
+        && label
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'));
+    if valid {
+        Ok(())
+    } else {
+        Err(OpError::InvalidState {
+            reason: format!("stored launchctl label {label:?} is invalid"),
+        })
+    }
+}
+
+/// Build a LaunchAgents plist path from a validated launchd label. The label is
+/// validated first, so the returned path is always a single filename confined to
+/// `~/Library/LaunchAgents`.
+fn launch_agent_plist(ctx: &Ctx, label: &str) -> Result<Utf8PathBuf, OpError> {
+    validate_launchctl_label(label)?;
+    Ok(ctx
+        .env
+        .home
+        .join("Library/LaunchAgents")
+        .join(format!("{label}.plist")))
 }
 
 fn newest_receipt(

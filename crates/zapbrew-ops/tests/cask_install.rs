@@ -543,4 +543,91 @@ async fn force_reinstall_failure_restores_old_artifact_and_version() {
     assert!(receipt_path.is_file());
 }
 
+/// Scripts a DMG attach/ditto/detach where `ditto` plants an escaping symlink
+/// `link -> link_target` into the staging directory it is handed.
+struct DmgSymlinkRunner {
+    calls: Mutex<Vec<Vec<String>>>,
+    plist: String,
+    link_target: Utf8PathBuf,
+}
+
+impl CommandRunner for DmgSymlinkRunner {
+    fn run(&self, spec: &CommandSpec) -> Result<CommandOutput, std::io::Error> {
+        let program = spec.program().to_string_lossy().into_owned();
+        let args: Vec<String> = spec
+            .arguments()
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        let mut call = vec![program.clone()];
+        call.extend(args.clone());
+        self.calls.lock().expect("calls").push(call);
+        if program == "/usr/bin/hdiutil" && args.first().map(String::as_str) == Some("attach") {
+            return Ok(CommandOutput::new(
+                status(true),
+                self.plist.clone().into_bytes(),
+                Vec::new(),
+            ));
+        }
+        if program == "/usr/bin/ditto" {
+            // ditto <mount> <staging>: simulate extraction of an escaping symlink.
+            let staging = Utf8Path::new(&args[1]);
+            std::os::unix::fs::symlink(
+                self.link_target.as_std_path(),
+                staging.join("link").as_std_path(),
+            )
+            .expect("plant staged symlink");
+        }
+        Ok(CommandOutput::new(status(true), Vec::new(), Vec::new()))
+    }
+}
+
+#[tokio::test]
+async fn dmg_source_through_staging_symlink_refuses_before_mutation() {
+    let server = MockServer::start().await;
+    let body = b"dmg-bytes".to_vec();
+    let sha = sha_hex(&body);
+    let url = serve(&server, "/App.dmg", body).await;
+    let value = cask(
+        "mounted",
+        &url,
+        &sha,
+        vec![json!({"app": ["link/sentinel"]})],
+    );
+
+    let fixture = Fixture::new().macos();
+    let appdir = fixture.env.home.join("Applications");
+    // External tree the staged symlink points at; it must be untouched.
+    let external = fixture.env.home.join("external");
+    std::fs::create_dir_all(&external).expect("external dir");
+    std::fs::write(external.join("sentinel"), b"external-sentinel").expect("sentinel");
+    let before = fingerprint(&external);
+
+    let mount = fixture.env.caskroom.join(".mnt");
+    let plist = format!(
+        "<?xml version=\"1.0\"?>\n<plist version=\"1.0\"><dict><key>system-entities</key><array><dict><key>mount-point</key><string>{mount}</string></dict></array></dict></plist>"
+    );
+    let runner = Arc::new(DmgSymlinkRunner {
+        calls: Mutex::new(Vec::new()),
+        plist,
+        link_target: external.clone(),
+    });
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], runner.clone(), reqwest::Client::new());
+    let result = install::run(&ctx, install_args(&["mounted"], &appdir, false)).await;
+
+    let error = err(result);
+    assert!(
+        matches!(&error, OpError::Refusal { message } if message.contains("symlink")),
+        "expected symlink refusal, got {error:?}"
+    );
+    // The declared target was never created; the external tree is unchanged.
+    assert!(!appdir.join("sentinel").exists());
+    assert_eq!(
+        std::fs::read(external.join("sentinel")).expect("external survives"),
+        b"external-sentinel"
+    );
+    assert_eq!(fingerprint(&external), before);
+}
+
 fn _use_ctx(_ctx: &Ctx) {}

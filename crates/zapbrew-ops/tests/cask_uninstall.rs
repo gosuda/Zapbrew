@@ -285,4 +285,43 @@ async fn unsafe_remove_path_fails_before_any_directive() {
     assert!(fixture.env.caskroom.join("unsafe/1.0").is_dir());
 }
 
+#[tokio::test]
+async fn traversal_launchctl_label_refuses_before_any_command() {
+    let fixture = Fixture::new().macos();
+    let raw = json!({
+        "token": "evil-label",
+        "version": "1.0",
+        "sha256": "no_check",
+        "url": "https://example.test/app.zip",
+        "artifacts": [{"uninstall": [{"launchctl": "../evil"}]}]
+    });
+    receipt(&fixture, "evil-label", &raw);
+    // A plist a naive traversal would unload and remove; it must survive.
+    let sentinel = fixture.env.home.join("Library/evil.plist");
+    fs::create_dir_all(sentinel.parent().expect("parent")).expect("library");
+    fs::write(&sentinel, b"external-sentinel").expect("sentinel");
+
+    let runner = Arc::new(RecordingRunner::default());
+    let (ctx, _reporter) = fixture.context_casks(vec![], runner.clone(), reqwest::Client::new());
+    let result = uninstall::run(
+        &ctx,
+        Args {
+            tokens: vec!["evil-label".to_owned()],
+            zap: false,
+        },
+    )
+    .await;
+
+    assert!(
+        matches!(&result, Err(OpError::InvalidState { reason }) if reason.contains("launchctl label")),
+        "expected invalid-label refusal, got {result:?}"
+    );
+    assert!(runner.calls().is_empty(), "no host command may run");
+    assert_eq!(
+        fs::read(&sentinel).expect("sentinel survives"),
+        b"external-sentinel"
+    );
+    assert!(fixture.env.caskroom.join("evil-label/1.0").is_dir());
+}
+
 fn _path(_path: &Utf8Path) {}

@@ -1,7 +1,7 @@
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::{fs, io};
 
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::{Utf8Component, Utf8Path, Utf8PathBuf};
 use serde_json::Value;
 use zapbrew_api::{Cask, CaskArtifact};
 use zapbrew_prefix::CommandSpec;
@@ -172,11 +172,16 @@ pub(super) fn apply(
                 target,
                 executable,
             } => {
-                let final_source = staged_source(final_dir, source, &ctx.env.caskroom)?;
+                // No-follow-validate the extracted staging source even when we
+                // only symlink to its future promoted keg path.
+                let staged = staged_source(staging, source, &ctx.env.caskroom)?;
                 if *executable {
-                    let staged = staged_source(staging, source, &ctx.env.caskroom)?;
                     make_executable(&staged)?;
                 }
+                // The promoted version directory does not exist until staging is
+                // atomically renamed into place, so confine the future symlink
+                // source lexically only.
+                let final_source = confined_source_path(final_dir, source, &ctx.env.caskroom)?;
                 ensure_absent(target)?;
                 ensure_parent(target)?;
                 journal.push(Reverse::Remove(target.clone()));
@@ -355,6 +360,67 @@ fn man_section(source: &str) -> Option<char> {
 }
 
 fn staged_source(
+    root: &Utf8Path,
+    source: &str,
+    caskroom: &Utf8Path,
+) -> Result<Utf8PathBuf, OpError> {
+    let joined = confined_source_path(root, source, caskroom)?;
+    // The staging root itself must be a real directory before we walk into it.
+    let root_meta =
+        fs::symlink_metadata(root).map_err(|error| OpError::io("inspect", root, error))?;
+    if root_meta.file_type().is_symlink() || !root_meta.is_dir() {
+        return Err(OpError::Refusal {
+            message: format!("Cask staging root '{root}' is not a real directory."),
+        });
+    }
+    let mut components: Vec<&str> = Vec::new();
+    for component in Utf8Path::new(source).components() {
+        match component {
+            Utf8Component::Normal(name) => components.push(name),
+            Utf8Component::CurDir => {}
+            _ => {
+                return Err(OpError::Refusal {
+                    message: format!("Cask artifact source '{source}' is unsafe."),
+                });
+            }
+        }
+    }
+    if components.is_empty() {
+        return Err(OpError::Refusal {
+            message: format!("Cask artifact source '{source}' is unsafe."),
+        });
+    }
+    // Inspect every component with no-follow metadata: intermediates must be real
+    // directories and the final source must exist and not be a symlink. Reject
+    // any symlink/non-directory component without stat-ing, renaming, or copying
+    // through it.
+    let last = components.len() - 1;
+    let mut current = root.to_path_buf();
+    for (index, name) in components.iter().enumerate() {
+        current.push(name);
+        let metadata = fs::symlink_metadata(&current)
+            .map_err(|error| OpError::io("inspect", &current, error))?;
+        if metadata.file_type().is_symlink() {
+            return Err(OpError::Refusal {
+                message: format!(
+                    "Cask artifact source '{source}' resolves through symlink '{current}'."
+                ),
+            });
+        }
+        if index != last && !metadata.is_dir() {
+            return Err(OpError::Refusal {
+                message: format!(
+                    "Cask artifact source '{source}' has a non-directory component '{current}'."
+                ),
+            });
+        }
+    }
+    Ok(joined)
+}
+
+/// Confine a declared artifact source lexically: reject non-relative or
+/// traversal paths and any join that would escape the Caskroom subtree.
+fn confined_source_path(
     root: &Utf8Path,
     source: &str,
     caskroom: &Utf8Path,
