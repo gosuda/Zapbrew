@@ -123,7 +123,7 @@ fn normalized(value: &str, fixture: &Fixture) -> String {
 fn renders_exact_systemd_unit_with_sorted_environment_and_safe_argv_quoting() {
     let fixture = Fixture::new();
     let service = json!({
-        "run": ["$HOMEBREW_PREFIX/opt/demo/bin/server", "two words", "quote\"slash\\"],
+        "run": ["$HOMEBREW_PREFIX/opt/demo/bin/server", "two words", "quote\"slash\\", "100% ready"],
         "run_type": "immediate",
         "keep_alive": true,
         "launch_only_once": true,
@@ -146,7 +146,7 @@ fn renders_exact_systemd_unit_with_sorted_environment_and_safe_argv_quoting() {
 
     assert_eq!(
         normalized(&rendered, &fixture),
-        "[Unit]\nDescription=Homebrew generated unit for demo\n\n[Install]\nWantedBy=default.target\n\n[Service]\nType=oneshot\nExecStart=\"$ROOT/prefix/opt/demo/bin/server\" \"two words\" \"quote\\\"slash\\\\\"\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=20\nNice=-5\nWorkingDirectory=$ROOT/home/work\nRootDirectory=$ROOT/prefix/root\nStandardInput=file:$ROOT/prefix/Cellar/input\nStandardOutput=append:$ROOT/prefix/var/log/demo.log\nStandardError=append:$ROOT/prefix/var/log/demo.err\nEnvironment=\"ALPHA=$ROOT/prefix/bin\"\nEnvironment=\"ZETA=last\"\n"
+        "[Unit]\nDescription=Homebrew generated unit for demo\n\n[Install]\nWantedBy=default.target\n\n[Service]\nType=oneshot\nExecStart=\"$ROOT/prefix/opt/demo/bin/server\" \"two words\" \"quote\\\"slash\\\\\" \"100%% ready\"\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=20\nNice=-5\nWorkingDirectory=$ROOT/home/work\nRootDirectory=$ROOT/prefix/root\nStandardInput=file:$ROOT/prefix/Cellar/input\nStandardOutput=append:$ROOT/prefix/var/log/demo.log\nStandardError=append:$ROOT/prefix/var/log/demo.err\nEnvironment=\"ALPHA=$ROOT/prefix/bin\"\nEnvironment=\"ZETA=last\"\n"
     );
 }
 
@@ -186,6 +186,7 @@ fn serializes_exact_launchd_plist_with_sorted_environment() {
         "keep_alive": true,
         "working_dir": "/$HOME/work",
         "log_path": "$HOMEBREW_PREFIX/var/log/demo.log",
+        "error_log_path": "$HOMEBREW_PREFIX/var/log/demo.err",
         "environment_variables": {
             "ZETA": "last",
             "ALPHA": "$HOMEBREW_CELLAR/demo"
@@ -199,7 +200,7 @@ fn serializes_exact_launchd_plist_with_sorted_environment() {
     assert!(parsed.as_dictionary().is_some());
     assert_eq!(
         normalized(&rendered, &fixture),
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n\t<key>EnvironmentVariables</key>\n\t<dict>\n\t\t<key>ALPHA</key>\n\t\t<string>$ROOT/prefix/Cellar/demo</string>\n\t\t<key>ZETA</key>\n\t\t<string>last</string>\n\t</dict>\n\t<key>KeepAlive</key>\n\t<true/>\n\t<key>Label</key>\n\t<string>homebrew.mxcl.demo</string>\n\t<key>LimitLoadToSessionType</key>\n\t<array>\n\t\t<string>Aqua</string>\n\t\t<string>Background</string>\n\t\t<string>LoginWindow</string>\n\t\t<string>StandardIO</string>\n\t\t<string>System</string>\n\t</array>\n\t<key>ProgramArguments</key>\n\t<array>\n\t\t<string>$ROOT/prefix/opt/demo/bin/server</string>\n\t\t<string>serve</string>\n\t</array>\n\t<key>RunAtLoad</key>\n\t<true/>\n\t<key>StandardOutPath</key>\n\t<string>$ROOT/prefix/var/log/demo.log</string>\n\t<key>StartInterval</key>\n\t<integer>30</integer>\n\t<key>WorkingDirectory</key>\n\t<string>$ROOT/home/work</string>\n</dict>\n</plist>"
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n\t<key>EnvironmentVariables</key>\n\t<dict>\n\t\t<key>ALPHA</key>\n\t\t<string>$ROOT/prefix/Cellar/demo</string>\n\t\t<key>ZETA</key>\n\t\t<string>last</string>\n\t</dict>\n\t<key>KeepAlive</key>\n\t<true/>\n\t<key>Label</key>\n\t<string>homebrew.mxcl.demo</string>\n\t<key>LimitLoadToSessionType</key>\n\t<array>\n\t\t<string>Aqua</string>\n\t\t<string>Background</string>\n\t\t<string>LoginWindow</string>\n\t\t<string>StandardIO</string>\n\t\t<string>System</string>\n\t</array>\n\t<key>ProgramArguments</key>\n\t<array>\n\t\t<string>$ROOT/prefix/opt/demo/bin/server</string>\n\t\t<string>serve</string>\n\t</array>\n\t<key>RunAtLoad</key>\n\t<true/>\n\t<key>StandardErrorPath</key>\n\t<string>$ROOT/prefix/var/log/demo.err</string>\n\t<key>StandardOutPath</key>\n\t<string>$ROOT/prefix/var/log/demo.log</string>\n\t<key>StartInterval</key>\n\t<integer>30</integer>\n\t<key>WorkingDirectory</key>\n\t<string>$ROOT/home/work</string>\n</dict>\n</plist>"
     );
 }
 

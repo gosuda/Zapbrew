@@ -712,6 +712,7 @@ fn render_launchd_plist(_env: &Env, name: &str, config: &ServiceConfig) -> Resul
     );
     values.insert("RunAtLoad".to_owned(), PlistValue::Boolean(true));
     insert_string(&mut values, "StandardOutPath", &config.log_path);
+    insert_string(&mut values, "StandardErrorPath", &config.error_log_path);
     match &config.schedule {
         Schedule::Immediate => {}
         Schedule::Interval(interval) => {
@@ -802,6 +803,7 @@ fn systemd_quote(value: &str) -> String {
             '\u{b}' => output.push_str("\\v"),
             '\\' => output.push_str("\\\\"),
             '"' => output.push_str("\\\""),
+            '%' => output.push_str("%%"),
             other => output.push(other),
         }
     }
