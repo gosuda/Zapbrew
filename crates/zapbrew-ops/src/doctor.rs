@@ -45,12 +45,16 @@ pub(crate) fn findings(
 
     let prefix_usable = configured_root_usable(&ctx.env.prefix)?;
     let cache_usable = configured_root_usable(&ctx.env.cache)?;
+    let cellar_usable = configured_root_usable(&ctx.env.cellar)?;
     let mut invalid_roots = Vec::new();
     if matches!(prefix_usable, RootUsability::Invalid) {
         invalid_roots.push(ctx.env.prefix.clone());
     }
     if matches!(cache_usable, RootUsability::Invalid) {
         invalid_roots.push(ctx.env.cache.clone());
+    }
+    if matches!(cellar_usable, RootUsability::Invalid) {
+        invalid_roots.push(ctx.env.cellar.clone());
     }
     invalid_roots.sort();
     if !invalid_roots.is_empty() {
@@ -71,15 +75,17 @@ pub(crate) fn findings(
             ));
         }
 
-        let unlinked = unlinked_racks(ctx)?;
-        if !unlinked.is_empty() {
-            findings.push(format!(
-                "You have unlinked kegs in your Cellar.\n\
-             Leaving kegs unlinked can lead to build-trouble and cause formulae that depend on\n\
-             those kegs to fail to run properly once built.\n\n\
-             Run `brew link` on these:\n{}",
-                indented(&unlinked)
-            ));
+        if !matches!(cellar_usable, RootUsability::Invalid) {
+            let unlinked = unlinked_racks(ctx)?;
+            if !unlinked.is_empty() {
+                findings.push(format!(
+                    "You have unlinked kegs in your Cellar.\n\
+                 Leaving kegs unlinked can lead to build-trouble and cause formulae that depend on\n\
+                 those kegs to fail to run properly once built.\n\n\
+                 Run `brew link` on these:\n{}",
+                    indented(&unlinked)
+                ));
+            }
         }
 
         findings.extend(path_findings(&ctx.env.prefix, path_entries)?);

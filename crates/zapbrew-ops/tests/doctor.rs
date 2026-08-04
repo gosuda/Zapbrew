@@ -226,6 +226,36 @@ fn symlinked_roots_report_configured_paths_without_traversing_sentinels() {
 }
 
 #[test]
+fn symlinked_cellar_root_is_reported_without_traversing_sentinel() {
+    let fixture = Fixture::new();
+    let cellar_sentinel = fixture.env.home.join("cellar-sentinel");
+    let secret = cellar_sentinel.join("secret");
+    fs::create_dir_all(&cellar_sentinel).expect("cellar sentinel");
+    write(&secret, "secret");
+    if fixture.env.cellar.exists() {
+        fs::remove_dir_all(&fixture.env.cellar).expect("remove cellar");
+    }
+    symlink(&cellar_sentinel, &fixture.env.cellar).expect("cellar symlink");
+    let (ctx, _reporter) = fixture.context(Vec::new());
+
+    let findings =
+        doctor_test_support::findings(&ctx, &[ctx.env.prefix.join("bin")], &BTreeSet::new())
+            .expect("findings");
+
+    let root_finding = findings
+        .iter()
+        .find(|finding| {
+            finding.starts_with("The following configured roots are not real directories:")
+        })
+        .expect("root finding");
+    assert!(root_finding.contains(ctx.env.cellar.as_str()));
+    let joined = findings.join("\n");
+    assert!(!joined.contains(cellar_sentinel.as_str()));
+    assert!(!joined.contains(secret.as_str()));
+    assert_eq!(fs::read_to_string(&secret).expect("sentinel"), "secret");
+}
+
+#[test]
 fn non_directory_configured_root_is_reported_without_descent() {
     let fixture = Fixture::new();
     fs::create_dir_all(fixture.env.prefix.join("bin")).expect("bin");
