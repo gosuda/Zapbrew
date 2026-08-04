@@ -161,6 +161,12 @@ enum Base {
     FormulaPrefix(String),
     FormulaOptPrefix(String),
     FormulaPkgetc(String),
+    Cellar,
+    Rack,
+    BashCompletion,
+    ZshCompletion,
+    FishCompletion,
+    PwshCompletion,
     Relative,
 }
 
@@ -1014,7 +1020,39 @@ fn parse_path_spec(
     )?;
     let path = required_string(formula, index, type_name, object, "path")?;
     validate_relative_path(formula, index, type_name, &path)?;
-    let base_name = required_string(formula, index, type_name, object, "base")?;
+    // Live API path specs are either `{"base": ..., "path": ...}` or the
+    // template form `{"path": "{{etc}}/..."}` where the leading `{{token}}`
+    // selects the base. Derive the base for the template form so both shapes
+    // parse identically (brew's formula.rb emits the template form at scale).
+    let base_name = optional_string(formula, index, type_name, object, "base")?;
+    let (base_name, path) = match base_name {
+        Some(name) => (name, path),
+        None => match path
+            .split_once("{{")
+            .and_then(|(head, _)| head.is_empty().then_some(()))
+        {
+            Some(()) => {
+                let Some((token, rest)) = path.strip_prefix("{{").and_then(|t| t.split_once("}}/"))
+                else {
+                    return Err(step_error(
+                        formula,
+                        index,
+                        type_name,
+                        "template path must start with `{{token}}/`",
+                    ));
+                };
+                (token.to_owned(), rest.to_owned())
+            }
+            None => {
+                return Err(step_error(
+                    formula,
+                    index,
+                    type_name,
+                    "path spec requires a `base` field or a leading `{{token}}/` prefix",
+                ));
+            }
+        },
+    };
     let formula_ref = optional_string(formula, index, type_name, object, "formula")?;
     let base = match (base_name.as_str(), formula_ref) {
         ("prefix" | "keg" | "formula_prefix", None) => Base::Prefix,
@@ -1029,7 +1067,13 @@ fn parse_path_spec(
         ("etc", None) => Base::Etc,
         ("pkgetc", None) => Base::Pkgetc,
         ("var", None) => Base::Var,
-        ("homebrew_prefix", None) => Base::HomebrewPrefix,
+        ("homebrew_prefix" | "HOMEBREW_PREFIX", None) => Base::HomebrewPrefix,
+        ("HOMEBREW_CELLAR", None) => Base::Cellar,
+        ("rack", None) => Base::Rack,
+        ("bash_completion", None) => Base::BashCompletion,
+        ("zsh_completion", None) => Base::ZshCompletion,
+        ("fish_completion", None) => Base::FishCompletion,
+        ("pwsh_completion", None) => Base::PwshCompletion,
         ("formula_prefix", Some(name)) => Base::FormulaPrefix(resolve_formula_reference(
             ctx, formula, index, type_name, &name,
         )?),
@@ -1405,6 +1449,12 @@ impl Resolver<'_> {
             Base::FormulaPrefix(name) => formula_keg(self, index, type_name, name)?,
             Base::FormulaOptPrefix(name) => self.env.prefix.join("opt").join(name),
             Base::FormulaPkgetc(name) => self.env.prefix.join("etc").join(name),
+            Base::Cellar => self.env.cellar.clone(),
+            Base::Rack => self.env.cellar.join(&self.formula.name),
+            Base::BashCompletion => self.keg.join("etc/bash_completion.d"),
+            Base::ZshCompletion => self.keg.join("share/zsh/site-functions"),
+            Base::FishCompletion => self.keg.join("share/fish/vendor_completions.d"),
+            Base::PwshCompletion => self.keg.join("share/pwsh/completions"),
             Base::Relative => {
                 return Err(step_error_named(
                     &self.formula.name,
@@ -2347,6 +2397,13 @@ fn template_value(
             .to_string(),
         "var" => resolver.env.prefix.join("var").to_string(),
         "rack" => resolver.env.cellar.join(&resolver.formula.name).to_string(),
+        "bash_completion" => resolver.keg.join("etc/bash_completion.d").to_string(),
+        "zsh_completion" => resolver.keg.join("share/zsh/site-functions").to_string(),
+        "fish_completion" => resolver
+            .keg
+            .join("share/fish/vendor_completions.d")
+            .to_string(),
+        "pwsh_completion" => resolver.keg.join("share/pwsh/completions").to_string(),
         _ => {
             return Err(step_error_named(
                 &resolver.formula.name,

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
+use std::fs::symlink_metadata;
 use std::io;
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::os::unix::process::ExitStatusExt;
@@ -414,6 +415,56 @@ async fn malformed_steps_fail_before_lock_download_or_mutation() {
         assert!(!prefix.exists(), "{type_name} mutated prefix");
         assert!(!cache.exists(), "{type_name} downloaded");
     }
+}
+
+#[tokio::test]
+async fn template_path_specs_derive_base_like_live_api() {
+    // The live JSON API emits `{"path": "{{etc}}/..."}` without a `base` field
+    // (brew's formula.rb post_install DSL serializer). The base must be derived
+    // from the leading template token exactly like the base-form path specs.
+    let server = MockServer::start().await;
+    let bytes = bottle("root", &[("bin/root", b"root")]);
+    mount(&server, &bytes, 1).await;
+    let digest = sha(&bytes);
+    let steps = json!([
+        {"type":"mkdir_p", "path":{"path":"{{var}}/root/state"}},
+        {"type":"touch", "path":{"path":"{{var}}/root/state/marker"}},
+        {"type":"symlink", "source":{"path":"{{etc}}/ca-certificates/cert.pem"}, "target":{"path":"{{pkgetc}}/cert.pem"}, "force":true}
+    ]);
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    std::fs::create_dir_all(environment.prefix.join("etc/ca-certificates"))
+        .expect("etc source parent");
+    std::fs::write(
+        environment.prefix.join("etc/ca-certificates/cert.pem"),
+        b"cert",
+    )
+    .expect("etc source");
+    let (ctx, _reporter) = context(
+        environment.clone(),
+        vec![formula(
+            "root",
+            &format!("{}/root", server.uri()),
+            &digest,
+            steps,
+        )],
+        Arc::new(PanicRunner),
+    );
+
+    install::run(&ctx, args()).await.expect("template install");
+
+    assert!(environment.prefix.join("var/root/state/marker").is_file());
+    let link = environment.prefix.join("etc/root/cert.pem");
+    assert!(
+        symlink_metadata(&link)
+            .expect("link meta")
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        std::fs::read_link(&link).expect("link target"),
+        environment.prefix.join("etc/ca-certificates/cert.pem")
+    );
 }
 
 #[tokio::test]
