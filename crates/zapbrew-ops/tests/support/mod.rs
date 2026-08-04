@@ -28,6 +28,7 @@ impl CommandRunner for PanicRunner {
 pub struct RecordingReporter {
     log: Mutex<Vec<String>>,
     hint: String,
+    verbose: bool,
 }
 
 impl Default for RecordingReporter {
@@ -35,6 +36,7 @@ impl Default for RecordingReporter {
         Self {
             log: Mutex::new(Vec::new()),
             hint: "zapbrew".to_owned(),
+            verbose: false,
         }
     }
 }
@@ -45,6 +47,15 @@ impl RecordingReporter {
         Self {
             log: Mutex::new(Vec::new()),
             hint: hint.to_owned(),
+            verbose: false,
+        }
+    }
+
+    pub fn verbose() -> Self {
+        Self {
+            log: Mutex::new(Vec::new()),
+            hint: "zapbrew".to_owned(),
+            verbose: true,
         }
     }
 
@@ -81,6 +92,9 @@ impl Reporter for RecordingReporter {
     }
     fn hint_program(&self) -> &str {
         &self.hint
+    }
+    fn is_verbose(&self) -> bool {
+        self.verbose
     }
 }
 

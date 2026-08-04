@@ -2,12 +2,15 @@ mod support;
 
 use std::fs;
 use std::os::unix::fs::symlink;
+use std::sync::Arc;
 
 use zapbrew_ops::link::{self, Args};
 use zapbrew_pour::{LinkOptions, link as pour_link};
 use zapbrew_prefix::Prefix;
 
-use support::{Fixture, fingerprint, formula, is_symlink, keg_only_formula, write};
+use support::{
+    Fixture, RecordingReporter, fingerprint, formula, is_symlink, keg_only_formula, write,
+};
 
 #[tokio::test]
 async fn links_max_scheme_keg_with_records_and_exact_count_then_warns_when_repeated() {
@@ -54,6 +57,36 @@ async fn links_max_scheme_keg_with_records_and_exact_count_then_warns_when_repea
         [
             format!("opoo:Already linked: {}", selected.path()),
             "print:To relink, run:\n  brew unlink foo && brew link foo".to_owned(),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn verbose_link_lists_created_paths_in_sorted_order() {
+    let fixture = Fixture::new();
+    let keg = fixture.keg("foo", "1.0", 0);
+    fixture.keg_file(&keg, "bin/zeta", "zeta");
+    fixture.keg_file(&keg, "bin/alpha", "alpha");
+    let (mut ctx, _) = fixture.context(vec![formula("foo", "1.0", 0)]);
+    let reporter = Arc::new(RecordingReporter::verbose());
+    ctx.reporter = reporter.clone();
+
+    link::run(
+        &ctx,
+        Args {
+            names: vec!["foo".to_owned()],
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("link");
+
+    assert_eq!(
+        reporter.take(),
+        [
+            format!("print:Linking {}... 4 symlinks created.", keg.path()),
+            format!("print:{}", ctx.env.prefix.join("bin/alpha")),
+            format!("print:{}", ctx.env.prefix.join("bin/zeta")),
         ]
     );
 }
