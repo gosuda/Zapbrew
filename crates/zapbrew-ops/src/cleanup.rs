@@ -31,6 +31,8 @@ pub struct Args {
     pub names: Vec<String>,
     pub dry_run: bool,
     pub scrub: bool,
+    pub prune: Option<String>,
+    pub prune_prefix: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,7 +50,6 @@ struct Candidate {
     size: u64,
     kind: CandidateKind,
 }
-
 pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
     ensure_real_root(&ctx.env.prefix)?;
     ensure_real_root(&ctx.env.cellar)?;
@@ -56,6 +57,11 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
     ensure_real_root(&ctx.env.locks)?;
     ensure_no_symlink_components(&ctx.env.prefix, &ctx.env.locks)?;
 
+    if args.prune_prefix {
+        return prune_prefix_only(ctx, &args).await;
+    }
+
+    let prune_days = parse_prune_days(&args.prune)?;
     let explicitly_named = !args.names.is_empty();
     let mut names = resolve_racks(ctx, &args.names)?;
     retain_cleanable(ctx, &mut names, explicitly_named);
@@ -73,6 +79,7 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
         &state,
         explicitly_named.then_some(&names),
         args.scrub,
+        prune_days,
         &mut candidates,
     )?;
     collect_prefix_candidates(&ctx.env, &mut candidates)?;
@@ -146,6 +153,64 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
         .map_err(|source| OpError::io("touch", marker, source))?;
     report_total(ctx, removed_size, false);
     Ok(())
+}
+
+async fn prune_prefix_only(ctx: &Ctx, args: &Args) -> Result<(), OpError> {
+    let mut candidates = BTreeMap::new();
+    collect_prefix_candidates(&ctx.env, &mut candidates)?;
+
+    if args.dry_run {
+        for candidate in candidates.values() {
+            ctx.reporter.print(&format!(
+                "Would remove: {} ({})",
+                candidate.path,
+                disk_usage_readable(candidate.size)
+            ));
+        }
+        report_total(
+            ctx,
+            candidates.values().map(|candidate| candidate.size).sum(),
+            true,
+        );
+        return Ok(());
+    }
+
+    let mut failed = Vec::new();
+    let mut removed_size = 0_u64;
+    apply_file_candidates(
+        &ctx.env,
+        &candidates,
+        CandidateKind::PrefixSymlink,
+        &mut removed_size,
+        &mut failed,
+    );
+    apply_directory_candidates(&ctx.env, &candidates, &mut failed);
+
+    failed.sort();
+    failed.dedup();
+    if !failed.is_empty() {
+        return Err(OpError::CleanupIncomplete {
+            keg: ctx.env.prefix.clone(),
+            leftovers: failed,
+        });
+    }
+
+    report_total(ctx, removed_size, false);
+    Ok(())
+}
+
+fn parse_prune_days(prune: &Option<String>) -> Result<Option<u64>, OpError> {
+    prune.as_ref().map_or(Ok(None), |value| {
+        if value == "all" {
+            return Ok(Some(0));
+        }
+        value
+            .parse::<u64>()
+            .map(Some)
+            .map_err(|_| OpError::Refusal {
+                message: format!("`--prune` expects an integer or `all`, got `{value}`"),
+            })
+    })
 }
 
 fn resolve_racks(ctx: &Ctx, requested: &[String]) -> Result<BTreeSet<String>, OpError> {
@@ -258,6 +323,7 @@ fn collect_cache_candidates(
     state: &InstalledState,
     scrub_scope: Option<&BTreeSet<String>>,
     scrub: bool,
+    prune_days: Option<u64>,
     candidates: &mut BTreeMap<Utf8PathBuf, Candidate>,
 ) -> Result<(), OpError> {
     if !present_real_directory(&ctx.env.cache)? {
@@ -285,14 +351,12 @@ fn collect_cache_candidates(
         let incomplete = path
             .file_name()
             .is_some_and(|name| name.ends_with(".incomplete"));
+        let active_prune = prune_days.is_some();
+        let max_age_days = prune_days.unwrap_or(ctx.env.cleanup_max_age_days);
         let aged = !metadata.is_dir()
-            && !referenced.contains(&path)
-            && older_than(
-                metadata.mtime(),
-                metadata.ctime(),
-                now,
-                ctx.env.cleanup_max_age_days,
-            );
+            && (active_prune || !referenced.contains(&path))
+            && (max_age_days == 0
+                || older_than(metadata.mtime(), metadata.ctime(), now, max_age_days));
         let stale_bottle =
             scrub && !metadata.is_dir() && stale_bottle(ctx, state, scrub_scope, &path);
         if incomplete || aged || stale_bottle {

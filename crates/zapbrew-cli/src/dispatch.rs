@@ -265,6 +265,8 @@ pub fn plan(command: Commands, globals: &GlobalArgs, width: usize) -> Result<Pla
                 names: args.names,
                 dry_run: args.dry_run,
                 scrub: args.scrub,
+                prune: args.prune,
+                prune_prefix: args.prune_prefix,
             }),
         },
         Commands::Search(args) => Plan {
@@ -771,6 +773,7 @@ mod tests {
                 names: vec!["wget".to_owned()],
                 dry_run: true,
                 scrub: true,
+                ..Default::default()
             })
         );
         assert_eq!(

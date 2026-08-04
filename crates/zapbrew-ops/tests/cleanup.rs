@@ -132,6 +132,7 @@ async fn named_alias_scope_and_no_cleanup_formulae_are_honored() {
             names: vec!["f".to_owned(), "bar".to_owned()],
             dry_run: true,
             scrub: false,
+            ..Default::default()
         },
     )
     .await
@@ -503,4 +504,54 @@ async fn missing_prefix_is_allowed_without_recreation() {
 fn candidate_name_set_is_deterministic() {
     let names = BTreeSet::from(["b", "a"]);
     assert_eq!(names.into_iter().collect::<Vec<_>>(), ["a", "b"]);
+}
+
+#[tokio::test]
+async fn prune_all_removes_ordinary_cache_files() {
+    let fixture = Fixture::new();
+    fs::create_dir_all(&fixture.env.cache).expect("cache");
+    let cache_file = fixture.env.cache.join("old-bottle.tar.gz");
+    fs::write(&cache_file, b"bottle").expect("cache file");
+    let (ctx, reporter) = fixture.context(Vec::new());
+
+    cleanup::run(
+        &ctx,
+        Args {
+            prune: Some("all".to_owned()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("prune all");
+
+    assert!(!cache_file.exists(), "prune=all must remove the cache file");
+    let output = reporter.take();
+    assert!(
+        output
+            .iter()
+            .any(|line| line.starts_with("ohai:This operation has freed"))
+    );
+}
+
+#[tokio::test]
+async fn prune_prefix_removes_broken_prefix_symlinks() {
+    let fixture = Fixture::new();
+    fs::create_dir_all(fixture.env.prefix.join("bin")).expect("bin");
+    let broken = fixture.env.prefix.join("bin/broken");
+    symlink("/no/such/target", &broken).expect("broken symlink");
+    let (ctx, _reporter) = fixture.context(Vec::new());
+    cleanup::run(
+        &ctx,
+        Args {
+            prune_prefix: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("prune prefix");
+
+    assert!(
+        fs::symlink_metadata(&broken).is_err(),
+        "broken prefix symlink must be removed"
+    );
 }

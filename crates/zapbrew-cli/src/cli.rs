@@ -408,6 +408,12 @@ pub struct CleanupArgs {
     /// Show what would be removed without doing it.
     #[arg(short = 'n', long)]
     pub dry_run: bool,
+    /// Remove all cache files older than <days>, or 'all'.
+    #[arg(long, value_name = "days")]
+    pub prune: Option<String>,
+    /// Only prune the symlinks and directories from the prefix.
+    #[arg(long)]
+    pub prune_prefix: bool,
 }
 
 #[derive(Debug, Args)]
