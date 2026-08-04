@@ -89,6 +89,37 @@ fn unlinked_check_excludes_keg_only_and_includes_catalog_missing_racks() {
 }
 
 #[test]
+fn linked_check_accepts_only_confined_keg_targets() {
+    let fixture = Fixture::new();
+    let linked_keg = fixture.keg("linked", "1.0", 0);
+    fixture.keg("external", "1.0", 0);
+    fs::create_dir_all(&fixture.env.linked).expect("linked root");
+    symlink(linked_keg.path(), fixture.env.linked.join("linked")).expect("linked keg");
+    let outside = fixture.env.home.join("outside-keg");
+    let sentinel = outside.join("sentinel");
+    write(&sentinel, "outside");
+    symlink(&outside, fixture.env.linked.join("external")).expect("external link");
+    fs::create_dir_all(&fixture.env.cache).expect("cache");
+    let (ctx, _reporter) = fixture.context(vec![
+        formula("linked", "1.0", 0),
+        formula("external", "1.0", 0),
+    ]);
+
+    let findings =
+        doctor_test_support::findings(&ctx, &[ctx.env.prefix.join("bin")], &BTreeSet::new())
+            .expect("findings");
+    let unlinked = findings
+        .iter()
+        .find(|finding| finding.starts_with("You have unlinked kegs"))
+        .expect("unlinked finding");
+
+    assert!(unlinked.contains(&format!("  {}/external", ctx.env.cellar)));
+    assert!(!unlinked.contains(&format!("  {}/linked", ctx.env.cellar)));
+    assert!(!findings.join("\n").contains(outside.as_str()));
+    assert_eq!(fs::read_to_string(sentinel).expect("sentinel"), "outside");
+}
+
+#[test]
 fn path_collision_is_reported_only_for_overlapping_tool_names() {
     let fixture = Fixture::new();
     let system_bin = fixture.env.home.join("system-bin");

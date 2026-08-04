@@ -325,11 +325,20 @@ fn cache_aliases(env: &Env) -> Result<(BTreeSet<Utf8PathBuf>, Vec<Utf8PathBuf>),
             invalid.push(path);
             continue;
         };
+        let Some(parent) = target.parent() else {
+            invalid.push(path);
+            continue;
+        };
+        if !real_directory_below(&env.cache, parent)? {
+            invalid.push(path);
+            continue;
+        }
         match fs::symlink_metadata(&target) {
-            Ok(_) => {
+            Ok(metadata) if !metadata.file_type().is_symlink() => {
                 referenced.insert(path.clone());
                 referenced.insert(target);
             }
+            Ok(_) => invalid.push(path),
             Err(source) if source.kind() == io::ErrorKind::NotFound => invalid.push(path),
             Err(source) => return Err(OpError::io("inspect", target, source)),
         }
@@ -350,9 +359,10 @@ fn stale_bottle(
     let Some((name, version_and_tag)) = basename.split_once("--") else {
         return false;
     };
-    if !version_and_tag.contains(".bottle") || !version_and_tag.ends_with(".tar.gz") {
+    let bottle_suffix = format!(".{}.bottle.tar.gz", ctx.env.bottle_tag);
+    let Some(version) = version_and_tag.strip_suffix(&bottle_suffix) else {
         return false;
-    }
+    };
     if scope.is_some_and(|names| !names.contains(name)) {
         return false;
     }
@@ -363,9 +373,7 @@ fn stale_bottle(
     if let Some(installed) = state.formula(name) {
         kept.extend(installed.kegs().iter().map(|keg| keg.version().to_string()));
     }
-    !kept
-        .iter()
-        .any(|version| version_and_tag.starts_with(&format!("{version}.")))
+    !kept.contains(version)
 }
 
 fn strip_download_hash(file_name: &str) -> &str {
@@ -761,7 +769,7 @@ fn cleanup_stale_locks(
     Ok(())
 }
 
-fn real_directory_below(root: &Utf8Path, path: &Utf8Path) -> Result<bool, OpError> {
+pub(crate) fn real_directory_below(root: &Utf8Path, path: &Utf8Path) -> Result<bool, OpError> {
     let relative = path.strip_prefix(root).map_err(|_| OpError::InvalidState {
         reason: format!("path escaped {root}: {path}"),
     })?;
@@ -824,7 +832,11 @@ fn ensure_no_symlink_components(root: &Utf8Path, path: &Utf8Path) -> Result<(), 
     Ok(())
 }
 
-fn confined_symlink_target(root: &Utf8Path, link: &Utf8Path, target: &Path) -> Option<Utf8PathBuf> {
+pub(crate) fn confined_symlink_target(
+    root: &Utf8Path,
+    link: &Utf8Path,
+    target: &Path,
+) -> Option<Utf8PathBuf> {
     let joined = if target.is_absolute() {
         target.to_path_buf()
     } else {

@@ -219,6 +219,35 @@ async fn scrub_keeps_catalog_latest_and_every_installed_version() {
 }
 
 #[tokio::test]
+async fn scrub_matches_kept_versions_exactly() {
+    let fixture = Fixture::new();
+    fs::create_dir_all(fixture.env.cache.join("downloads")).expect("downloads");
+    for version in ["1.2", "1.2.3"] {
+        write(
+            &fixture.env.cache.join(format!(
+                "downloads/foo--{version}.x86_64_linux.bottle.tar.gz"
+            )),
+            version,
+        );
+    }
+    let (ctx, reporter) = fixture.context(vec![formula("foo", "1.2", 0)]);
+
+    cleanup::run(
+        &ctx,
+        Args {
+            dry_run: true,
+            scrub: true,
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("scrub cleanup");
+    let output = reporter.take().join("\n");
+    assert!(output.contains("foo--1.2.3.x86_64_linux.bottle.tar.gz"));
+    assert!(!output.contains("foo--1.2.x86_64_linux.bottle.tar.gz"));
+}
+
+#[tokio::test]
 async fn valid_alias_protects_target_and_outside_alias_is_removed_without_following() {
     let fixture = Fixture::new();
     let downloads = fixture.env.cache.join("downloads");
@@ -248,6 +277,35 @@ async fn valid_alias_protects_target_and_outside_alias_is_removed_without_follow
         fs::read_to_string(outside).expect("outside survives"),
         "outside"
     );
+}
+
+#[tokio::test]
+async fn alias_chain_through_escape_is_removed_without_following() {
+    let fixture = Fixture::new();
+    let downloads = fixture.env.cache.join("downloads");
+    fs::create_dir_all(&downloads).expect("downloads");
+    let kept = downloads.join("kept");
+    write(&kept, "kept");
+    symlink("downloads/kept", fixture.env.cache.join("direct")).expect("direct alias");
+
+    let outside = fixture.env.home.join("outside-cache");
+    let sentinel = outside.join("sentinel");
+    write(&sentinel, "outside");
+    let before = fingerprint(&outside);
+    symlink(&outside, fixture.env.cache.join("escape")).expect("escaping alias");
+    symlink("escape/sentinel", fixture.env.cache.join("alias")).expect("chained alias");
+    let (ctx, _reporter) = fixture.context(Vec::new());
+
+    cleanup::run(&ctx, Args::default())
+        .await
+        .expect("alias cleanup");
+
+    assert!(fs::symlink_metadata(fixture.env.cache.join("alias")).is_err());
+    assert!(fs::symlink_metadata(fixture.env.cache.join("escape")).is_err());
+    assert!(fs::symlink_metadata(fixture.env.cache.join("direct")).is_ok());
+    assert_eq!(fs::read_to_string(kept).expect("kept target"), "kept");
+    assert_eq!(fingerprint(&outside), before);
+    assert_eq!(fs::read_to_string(sentinel).expect("sentinel"), "outside");
 }
 
 #[tokio::test]

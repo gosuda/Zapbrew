@@ -127,6 +127,7 @@ fn unlinked_racks(ctx: &Ctx) -> Result<Vec<Utf8PathBuf>, OpError> {
     if !ctx.env.cellar.exists() {
         return Ok(racks);
     }
+    let linked_root_usable = cleanup::real_directory_below(&ctx.env.prefix, &ctx.env.linked)?;
     let entries = fs::read_dir(&ctx.env.cellar)
         .map_err(|source| OpError::io("read directory", ctx.env.cellar.clone(), source))?;
     for entry in entries {
@@ -151,7 +152,27 @@ fn unlinked_racks(ctx: &Ctx) -> Result<Vec<Utf8PathBuf>, OpError> {
         {
             continue;
         }
-        if fs::metadata(ctx.env.linked.join(name)).is_ok_and(|metadata| metadata.is_dir()) {
+        let linked = ctx.env.linked.join(name);
+        let linked_to_keg = if linked_root_usable {
+            match fs::symlink_metadata(&linked) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    let target = fs::read_link(&linked)
+                        .map_err(|source| OpError::io("read symlink", linked.clone(), source))?;
+                    match cleanup::confined_symlink_target(&ctx.env.cellar, &linked, &target) {
+                        Some(target) if target.parent() == Some(path.as_path()) => {
+                            cleanup::real_directory_below(&ctx.env.cellar, &target)?
+                        }
+                        _ => false,
+                    }
+                }
+                Ok(_) => false,
+                Err(source) if source.kind() == std::io::ErrorKind::NotFound => false,
+                Err(source) => return Err(OpError::io("inspect", linked, source)),
+            }
+        } else {
+            false
+        };
+        if linked_to_keg {
             continue;
         }
         racks.push(path);
