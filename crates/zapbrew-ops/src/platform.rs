@@ -93,6 +93,21 @@ pub fn systemctl(action: SystemctlAction, unit: &str) -> CommandSpec {
         .arg(unit)
 }
 
+/// Reload systemd's user-unit definitions.
+pub fn systemctl_daemon_reload() -> CommandSpec {
+    CommandSpec::new("systemctl")
+        .arg("--user")
+        .arg("daemon-reload")
+}
+
+/// Probe whether a systemd user unit is active.
+pub fn systemctl_is_active(unit: &str) -> CommandSpec {
+    CommandSpec::new("systemctl")
+        .arg("--user")
+        .arg("is-active")
+        .arg(unit)
+}
+
 /// Load or unload a launchd plist.
 pub fn launchctl(action: LaunchctlAction, plist: &Utf8Path) -> CommandSpec {
     CommandSpec::new("launchctl")

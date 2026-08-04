@@ -328,6 +328,9 @@ pub struct RefreshReport {
     /// Count of formula names whose raw JSON object changed versus the payload
     /// cached before the refresh (added or modified; removed names excluded).
     pub formulae_changed: usize,
+    /// Whether a prior verified cask payload existed and differed from the
+    /// newly verified payload. A first fetch is not reported as changed.
+    pub casks_changed: bool,
     /// Offline fallback warnings raised while refreshing either catalog.
     pub warnings: Vec<ApiWarning>,
 }
@@ -338,8 +341,9 @@ pub struct RefreshReport {
 /// verified on-disk cache until a verified replacement is written, so a failed
 /// refresh never corrupts the cache and returns the prior verified formula
 /// payload as `previous`, letting [`RefreshReport::formulae_changed`] count
-/// changed objects. When no prior verified cache existed the count is `0`
-/// (a first fetch reports nothing as "updated").
+/// changed objects and [`RefreshReport::casks_changed`] compare the cask
+/// payload. When no prior verified cache existed, neither payload is reported
+/// as changed.
 pub async fn force_refresh(env: &Env, http: &reqwest::Client) -> Result<RefreshReport, ApiError> {
     let verifier = HomebrewVerifier::new()?;
     force_refresh_with(env, http, &verifier).await
@@ -360,8 +364,13 @@ async fn force_refresh_with(
         Some(previous) => count_changed_formulae(&previous, &formula.payload)?,
         None => 0,
     };
+    let casks_changed = cask
+        .previous
+        .as_deref()
+        .is_some_and(|previous| previous != cask.payload);
     Ok(RefreshReport {
         formulae_changed,
+        casks_changed,
         warnings,
     })
 }
@@ -517,6 +526,33 @@ mod tests {
         let file = File::options().write(true).open(path).expect("open cache");
         let mtime = SystemTime::now().checked_sub(age).expect("mtime");
         file.set_modified(mtime).expect("set mtime");
+    }
+
+    async fn refresh_cask(previous: Option<&str>, current: &str) -> RefreshReport {
+        let tmp = TempDir::new().expect("tempdir");
+        let cache = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).expect("utf8");
+        let server = MockServer::start().await;
+        let env = test_env(&cache, &server.uri());
+        if let Some(payload) = previous {
+            write_cache(
+                &cache_file(&env, "cask.jws.json"),
+                &envelope(payload),
+                Duration::from_secs(3600),
+            );
+        }
+
+        for (endpoint, payload) in [("/formula.jws.json", "[]"), ("/cask.jws.json", current)] {
+            Mock::given(method("GET"))
+                .and(url_path(endpoint))
+                .respond_with(ResponseTemplate::new(200).set_body_bytes(envelope(payload)))
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+
+        force_refresh_with(&env, &http_client(), &FakeVerifier)
+            .await
+            .expect("force refresh")
     }
 
     // --- deterministic index / lookup (no network) -------------------------
@@ -846,6 +882,35 @@ mod tests {
             .expect("force refresh");
 
         assert_eq!(report.formulae_changed, 2);
+        assert!(!report.casks_changed);
+    }
+
+    #[tokio::test]
+    async fn force_refresh_does_not_mark_an_unchanged_cask_payload() {
+        let payload = serde_json::json!([{ "token": "iterm2" }]).to_string();
+
+        let report = refresh_cask(Some(&payload), &payload).await;
+
+        assert!(!report.casks_changed);
+    }
+
+    #[tokio::test]
+    async fn force_refresh_marks_a_changed_cask_payload() {
+        let previous = serde_json::json!([{ "token": "iterm2", "version": "1" }]).to_string();
+        let current = serde_json::json!([{ "token": "iterm2", "version": "2" }]).to_string();
+
+        let report = refresh_cask(Some(&previous), &current).await;
+
+        assert!(report.casks_changed);
+    }
+
+    #[tokio::test]
+    async fn force_refresh_does_not_mark_a_first_cask_fetch() {
+        let current = serde_json::json!([{ "token": "iterm2" }]).to_string();
+
+        let report = refresh_cask(None, &current).await;
+
+        assert!(!report.casks_changed);
     }
 
     #[tokio::test]

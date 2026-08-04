@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 camino.workspace = true
 jiff.workspace = true
+plist.workspace = true
 regex.workspace = true
 reqwest.workspace = true
 rustix.workspace = true

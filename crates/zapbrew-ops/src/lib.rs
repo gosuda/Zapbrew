@@ -22,6 +22,7 @@ pub mod platform;
 pub mod reinstall;
 mod render;
 pub mod search;
+pub mod services;
 pub mod shellenv;
 mod size;
 pub mod state;
@@ -32,6 +33,7 @@ pub mod uninstall;
 pub mod unlink;
 pub mod unpin;
 pub mod untap;
+pub mod update;
 pub mod upgrade;
 pub mod uses;
 
@@ -120,5 +122,40 @@ pub mod shellenv_test_support {
         detected: Option<&str>,
     ) -> Result<(), OpError> {
         shellenv::run_with_detected(ctx, args, detected.map(OsStr::new)).await
+    }
+}
+
+#[doc(hidden)]
+pub mod services_test_support {
+    use serde_json::Value;
+    use zapbrew_prefix::Env;
+
+    use crate::{OpError, services};
+
+    pub fn parse(env: &Env, name: &str, value: &Value) -> Result<(), OpError> {
+        services::parse_for_test(env, name, value)
+    }
+
+    pub fn render_systemd_unit(env: &Env, name: &str, value: &Value) -> Result<String, OpError> {
+        services::render_systemd_unit_for_test(env, name, value)
+    }
+
+    pub fn render_systemd_timer(env: &Env, name: &str, value: &Value) -> Result<String, OpError> {
+        services::render_systemd_timer_for_test(env, name, value)
+    }
+
+    pub fn render_launchd_plist(env: &Env, name: &str, value: &Value) -> Result<String, OpError> {
+        services::render_launchd_plist_for_test(env, name, value)
+    }
+}
+
+#[doc(hidden)]
+pub mod update_test_support {
+    use zapbrew_api::RefreshReport;
+
+    use crate::{Ctx, OpError, update};
+
+    pub fn run_with_report(ctx: &Ctx, report: &RefreshReport) -> Result<(), OpError> {
+        update::run_with_report(ctx, report)
     }
 }
