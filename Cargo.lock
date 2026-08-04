@@ -2932,6 +2932,7 @@ dependencies = [
  "jaro_winkler",
  "owo-colors",
  "reqwest",
+ "tempfile",
  "terminal_size",
  "tokio",
  "zapbrew-api",

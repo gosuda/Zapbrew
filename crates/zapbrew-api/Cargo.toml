@@ -8,6 +8,12 @@ license.workspace = true
 [lints]
 workspace = true
 
+# Nondefault: swaps ONLY the compile-time JWS trust anchor to a checked-in test
+# root so integration tests can traverse the real PS512/RFC7797 verifier over a
+# fixture. Never enabled in the normal/build/release/install graph.
+[features]
+test-trust-root = []
+
 [dependencies]
 zapbrew-prefix = { path = "../zapbrew-prefix" }
 zapbrew-types = { path = "../zapbrew-types" }

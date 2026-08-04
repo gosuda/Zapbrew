@@ -10,7 +10,16 @@ use serde_json::Value;
 
 use crate::error::ApiError;
 
-const HOMEBREW_PUBLIC_KEY_PEM: &str = include_str!("homebrew-1.pem");
+// Compile-time JWS trust anchor. The `test-trust-root` feature substitutes ONLY
+// this embedded public key with a checked-in test root; it changes nothing else.
+// The full RFC 7515/7797 PS512 (64-byte salt) verification path runs unchanged
+// in every build, and no environment variable or runtime flag can bypass it. A
+// `test-trust-root` build simply loses the ability to verify real Homebrew
+// catalogs. This feature is nondefault and absent from the normal/build graph.
+#[cfg(not(feature = "test-trust-root"))]
+const TRUST_ROOT_PEM: &str = include_str!("homebrew-1.pem");
+#[cfg(feature = "test-trust-root")]
+const TRUST_ROOT_PEM: &str = include_str!("../testdata/zapbrew-test-root.pub.pem");
 
 /// Object-safe JWS envelope verifier.
 pub(crate) trait JwsVerifier: Send + Sync {
@@ -26,7 +35,7 @@ pub(crate) struct HomebrewVerifier {
 impl HomebrewVerifier {
     /// Production constructor: embed the exact Homebrew `homebrew-1` public key.
     pub(crate) fn new() -> Result<Self, ApiError> {
-        Self::from_pem(HOMEBREW_PUBLIC_KEY_PEM)
+        Self::from_pem(TRUST_ROOT_PEM)
     }
 
     /// Test/internal constructor: inject an alternate public key PEM.
@@ -347,9 +356,58 @@ PDOT0wTMkCJCLBCQ8M8Fcq3C8yytCLSBdfcmH+Ew/rzryl566QVxpg3VVQG6mvgX\n\
     }
 
     #[test]
+    #[cfg(not(feature = "test-trust-root"))]
     fn production_new_uses_homebrew_pem_not_test_key() {
         // Embedded key must differ from the test fixture key (no silent swap / bypass).
-        assert_ne!(HOMEBREW_PUBLIC_KEY_PEM, TEST_PUBLIC_KEY_PEM);
-        assert!(HOMEBREW_PUBLIC_KEY_PEM.contains("MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEA"));
+        assert_ne!(TRUST_ROOT_PEM, TEST_PUBLIC_KEY_PEM);
+        assert!(TRUST_ROOT_PEM.contains("MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEA"));
+    }
+
+    /// The checked-in trust-root fixture verifies under the dedicated test root,
+    /// and any byte change to the payload fails the real PS512/RFC7797 path.
+    /// This is feature-independent: it exercises the verifier directly, so it
+    /// runs under the standard `cargo test -p zapbrew-api` gate.
+    #[test]
+    fn checked_in_trust_root_fixture_verifies_and_rejects_mutation() {
+        const TEST_ROOT_PEM: &str = include_str!("../testdata/zapbrew-test-root.pub.pem");
+        const FIXTURE: &[u8] = include_bytes!("../testdata/formula.jws.json");
+
+        let verifier = match HomebrewVerifier::from_pem(TEST_ROOT_PEM) {
+            Ok(v) => v,
+            Err(err) => panic!("test root PEM must parse: {err}"),
+        };
+        let payload = match verifier.verify(FIXTURE) {
+            Ok(p) => p,
+            Err(err) => panic!("fixture must verify under the test root: {err}"),
+        };
+        assert_eq!(payload, b"[]");
+
+        // Mutate only the inner payload; the fixed signature no longer covers it.
+        let mut envelope: Value = serde_json::from_slice(FIXTURE).expect("fixture json");
+        envelope["payload"] = Value::String("[0]".to_owned());
+        let tampered = serde_json::to_vec(&envelope).expect("tampered json");
+        match verifier.verify(&tampered) {
+            Err(ApiError::Signature { reason }) => {
+                assert!(reason.contains("no valid signature"), "{reason}");
+            }
+            other => panic!("expected Signature rejection of mutated payload, got {other:?}"),
+        }
+    }
+
+    /// With `test-trust-root` enabled, the production constructor itself trusts
+    /// the swapped-in test root: `new()` verifies the checked-in fixture. This
+    /// pins the compile-time swap (not just the injectable `from_pem` seam).
+    #[test]
+    #[cfg(feature = "test-trust-root")]
+    fn feature_swaps_production_constructor_to_test_root() {
+        const FIXTURE: &[u8] = include_bytes!("../testdata/formula.jws.json");
+        let verifier = match HomebrewVerifier::new() {
+            Ok(v) => v,
+            Err(err) => panic!("new() must build under test-trust-root: {err}"),
+        };
+        match verifier.verify(FIXTURE) {
+            Ok(payload) => assert_eq!(payload, b"[]"),
+            Err(err) => panic!("new() must trust the swapped test root: {err}"),
+        }
     }
 }

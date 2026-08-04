@@ -29,5 +29,11 @@ terminal_size = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "signal", "time"] }
 
 [dev-dependencies]
+# Resolver-3 feature unification: `cargo test -p zapbrew-cli` rebuilds the
+# `zapbrew` bin with the API's test trust root, so assert_cmd traverses the real
+# JWS verifier over a checked-in fixture. `cargo build`/release/install ignore
+# dev-dependencies, so the production trust root ships unchanged.
+zapbrew-api = { path = "../zapbrew-api", features = ["test-trust-root"] }
 assert_cmd = { workspace = true }
 insta = { workspace = true }
+tempfile = { workspace = true }

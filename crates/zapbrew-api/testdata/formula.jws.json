@@ -1,0 +1,12 @@
+{
+  "payload": "[]",
+  "signatures": [
+    {
+      "header": {
+        "kid": "zapbrew-test-1"
+      },
+      "protected": "eyJhbGciOiJQUzUxMiIsImI2NCI6ZmFsc2V9",
+      "signature": "EsGwHm-8VXr6wz6F3nIPiKZzloS0p8sAC_FsnRBzfV-PaILQiEMrPPQVHQJXD1Zyccc12e-o6apES-uww7ikr6ZUmr6niZym2OI7DNDSjMnGbR-Q9FGYLgyL_DaIzlcY-eSDvZ774q-tNxb2SRzwPhQ-bQ_duXi3gE1ve12uGN2vbks8_sRMzzGe1wgY7t1Hm75eOHw_TsLpZBIboqnnHsjx6y8mUAc4XF8X9kANaGCHsSSWP9mCpO5hyv2ovE21xy-MGHVdk390Fskx4TUGAxUx7h_GpGTdQGD1u1XhIu3G0y_GtqANHUL0sjbKX8UjSfhELjdqRHiPqOM4_Ald3Q"
+    }
+  ]
+}
