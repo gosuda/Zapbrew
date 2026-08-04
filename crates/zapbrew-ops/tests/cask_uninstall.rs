@@ -664,4 +664,109 @@ async fn symlinked_record_file_refuses_before_read() {
     assert!(fixture.env.home.join("one.txt").exists());
 }
 
+/// Seed a version tree whose typed record is replaced with `record` verbatim.
+fn seed_record_bytes(fixture: &Fixture, token: &str, version: &str, record: &Value) {
+    let version_dir = fixture.env.caskroom.join(token).join(version);
+    fs::create_dir_all(&version_dir).expect("version");
+    let mut bytes = serde_json::to_vec_pretty(record).expect("record json");
+    bytes.push(b'\n');
+    fs::write(version_dir.join(".zapbrew-record.json"), bytes).expect("record");
+}
+
+#[tokio::test]
+async fn wrong_schema_record_refuses_before_mutation() {
+    let fixture = Fixture::new().macos();
+    fs::create_dir_all(&fixture.env.home).expect("home");
+    let raw = json!({
+        "token": "schema-evil", "version": "1.0", "sha256": "no_check",
+        "url": "https://example.test/a.zip",
+        "artifacts": [
+            {"artifact": ["v.txt"], "target": format!("{}/victim.txt", fixture.env.home)}
+        ]
+    });
+    seed_version(
+        &fixture,
+        "schema-evil",
+        "1.0",
+        &raw,
+        fixture.env.home.as_str(),
+    );
+    fs::write(fixture.env.home.join("victim.txt"), b"v").expect("victim");
+    // Tamper: rewrite the record with an unknown schema. Fail-closed loading
+    // must refuse before any removal or command.
+    let record = json!({
+        "schema": 99,
+        "token": "schema-evil",
+        "version": "1.0",
+        "appdir": fixture.env.home.as_str(),
+        "artifacts": [{"kind": "path", "target": format!("{}/victim.txt", fixture.env.home)}],
+        "uninstall": [],
+        "zap": [],
+    });
+    seed_record_bytes(&fixture, "schema-evil", "1.0", &record);
+
+    let runner = Arc::new(RecordingRunner::default());
+    let (ctx, _r) = fixture.context_casks(vec![], runner.clone(), reqwest::Client::new());
+    let result = uninstall::run(
+        &ctx,
+        Args {
+            tokens: vec!["schema-evil".to_owned()],
+            zap: false,
+        },
+    )
+    .await;
+    assert!(result.is_err(), "unknown schema record must refuse");
+    assert!(runner.calls().is_empty(), "no host command may run");
+    assert!(
+        fixture.env.home.join("victim.txt").exists(),
+        "victim survives"
+    );
+    assert!(fixture.env.caskroom.join("schema-evil/1.0").is_dir());
+}
+
+#[tokio::test]
+async fn token_mismatch_record_refuses_before_mutation() {
+    let fixture = Fixture::new().macos();
+    fs::create_dir_all(&fixture.env.home).expect("home");
+    let raw = json!({
+        "token": "renamed", "version": "1.0", "sha256": "no_check",
+        "url": "https://example.test/a.zip",
+        "artifacts": [
+            {"artifact": ["v.txt"], "target": format!("{}/victim.txt", fixture.env.home)}
+        ]
+    });
+    seed_version(&fixture, "renamed", "1.0", &raw, fixture.env.home.as_str());
+    fs::write(fixture.env.home.join("victim.txt"), b"v").expect("victim");
+    // Tamper: the record claims a different token than its directory. Fail-closed
+    // loading must refuse before any removal or command.
+    let record = json!({
+        "schema": 1,
+        "token": "other-token",
+        "version": "1.0",
+        "appdir": fixture.env.home.as_str(),
+        "artifacts": [{"kind": "path", "target": format!("{}/victim.txt", fixture.env.home)}],
+        "uninstall": [],
+        "zap": [],
+    });
+    seed_record_bytes(&fixture, "renamed", "1.0", &record);
+
+    let runner = Arc::new(RecordingRunner::default());
+    let (ctx, _r) = fixture.context_casks(vec![], runner.clone(), reqwest::Client::new());
+    let result = uninstall::run(
+        &ctx,
+        Args {
+            tokens: vec!["renamed".to_owned()],
+            zap: false,
+        },
+    )
+    .await;
+    assert!(result.is_err(), "token-mismatched record must refuse");
+    assert!(runner.calls().is_empty(), "no host command may run");
+    assert!(
+        fixture.env.home.join("victim.txt").exists(),
+        "victim survives"
+    );
+    assert!(fixture.env.caskroom.join("renamed/1.0").is_dir());
+}
+
 fn _path(_path: &Utf8Path) {}
