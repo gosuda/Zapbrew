@@ -261,6 +261,10 @@ pub(crate) fn make_tab(
         .duration_since(UNIX_EPOCH)
         .ok()
         .and_then(|duration| i64::try_from(duration.as_secs()).ok());
+    let compiler = match ctx.env.bottle_tag {
+        BottleTag::Linux { .. } => "gcc",
+        _ => "clang",
+    };
 
     Ok(Tab {
         // Homebrew-compatible version string matching the reference tree
@@ -274,6 +278,7 @@ pub(crate) fn make_tab(
         loaded_from_internal_api: true,
         installed_on_request,
         time,
+        compiler: compiler.to_owned(),
         aliases: formula.aliases.clone(),
         runtime_dependencies: Some(runtime_dependencies),
         source: Source {

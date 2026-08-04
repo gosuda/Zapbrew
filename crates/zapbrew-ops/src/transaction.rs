@@ -361,6 +361,7 @@ impl FormulaTransaction<'_> {
             &staged,
             &self.ctx.env,
             &self.input.bottle.cellar,
+            self.input.tab.homebrew_version.as_deref(),
             self.ctx.commands.as_ref(),
         )?;
         self.input.tab.changed_files = Some(

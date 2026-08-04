@@ -25,13 +25,14 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use camino::{Utf8Path, Utf8PathBuf};
 use object::BinaryFormat;
 use object::read::File as ObjectFile;
 use zapbrew_prefix::{CommandRunner, CommandSpec, Env};
-use zapbrew_types::BottleTag;
+use zapbrew_types::{BottleTag, Version};
 
 use crate::error::PourError;
 use crate::types::RelocationReport;
@@ -42,18 +43,32 @@ const SKIP_RELOCATION: &str = ":any_skip_relocation";
 /// Relocate every file under `keg` from the bottle's build placeholders to the
 /// live `env` layout.
 ///
-/// `cellar_field` is the bottle's declared `cellar`; `:any_skip_relocation`
-/// short-circuits to an empty report. `runner` runs `codesign` for modified
-/// Mach-O images (content-detected, so the seam is exercised host-independently
-/// in tests). Returns the keg-relative paths of every file whose bytes changed.
+/// `cellar_field` is the bottle's declared `cellar`. `:any_skip_relocation`
+/// short-circuits to an empty report on macOS, and on Linux only when
+/// `homebrew_version` is >= 5.1.15 (real brew gates the skip there to avoid
+/// trusting old bottles' `:any_skip_relocation` values). `runner` runs
+/// `codesign` for modified Mach-O images (content-detected, so the seam is
+/// exercised host-independently in tests). Returns the keg-relative paths of
+/// every file whose bytes changed.
 pub fn relocate(
     keg: &zapbrew_prefix::Keg,
     env: &Env,
     cellar_field: &str,
+    homebrew_version: Option<&str>,
     runner: &dyn CommandRunner,
 ) -> Result<RelocationReport, PourError> {
     if cellar_field.trim() == SKIP_RELOCATION {
-        return Ok(RelocationReport::default());
+        match env.bottle_tag {
+            BottleTag::Linux { .. } => {
+                let version = homebrew_version
+                    .map(Version::from_str)
+                    .unwrap_or_else(|| Version::from_str(""))?;
+                if version >= Version::from_str("5.1.15")? {
+                    return Ok(RelocationReport::default());
+                }
+            }
+            _ => return Ok(RelocationReport::default()),
+        }
     }
 
     let subs = placeholder_subs(env);

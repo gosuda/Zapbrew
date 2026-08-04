@@ -92,11 +92,18 @@ impl Default for Tab {
 }
 
 fn default_installed_on_request() -> bool {
-    true
+    false
 }
 
 fn default_compiler() -> String {
-    "clang".to_string()
+    #[cfg(target_os = "linux")]
+    {
+        "gcc".to_string()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        "clang".to_string()
+    }
 }
 
 impl Tab {

@@ -35,6 +35,9 @@ pub enum PourError {
 
     #[error(transparent)]
     Prefix(#[from] zapbrew_prefix::PrefixError),
+
+    #[error(transparent)]
+    Type(#[from] zapbrew_types::TypeError),
 }
 
 impl PourError {

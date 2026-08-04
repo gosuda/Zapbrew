@@ -352,9 +352,9 @@ async fn installed_revision_link_selection_status_and_multiple_name_separator_ar
     ---
     ohai:Installed Versions
     ---
-    print:homebrew/core/sample 2.0_2 (2 files, 654B)
+    print:homebrew/core/sample 2.0_2 (2 files, 652B)
     ---
-    print:homebrew/core/sample 1.0   (2 files, 645B) [Linked]
+    print:homebrew/core/sample 1.0   (2 files, 643B) [Linked]
     ---
     ohai:Dependencies
     ---
@@ -411,7 +411,7 @@ async fn status_prefers_optlinked_over_linked_when_flags_disagree() {
     ---
     ohai:Installed Versions
     ---
-    print:homebrew/core/sample 2.0_2 (2 files, 654B) [Linked]
+    print:homebrew/core/sample 2.0_2 (2 files, 652B) [Linked]
     ---
     ohai:Dependencies
     ---
@@ -455,9 +455,9 @@ async fn status_falls_back_to_linked_when_no_optlink() {
     ---
     ohai:Installed Versions
     ---
-    print:homebrew/core/sample 2.0_2 (2 files, 653B)
+    print:homebrew/core/sample 2.0_2 (2 files, 651B)
     ---
-    print:homebrew/core/sample 1.0   (2 files, 646B) [Linked]
+    print:homebrew/core/sample 1.0   (2 files, 644B) [Linked]
     ---
     ohai:Dependencies
     ---
@@ -499,7 +499,7 @@ async fn status_uses_sole_installed_keg() {
     ---
     ohai:Installed Versions
     ---
-    print:homebrew/core/sample 1.0 (2 files, 646B)
+    print:homebrew/core/sample 1.0 (2 files, 644B)
     ---
     ohai:Dependencies
     ---
@@ -542,7 +542,7 @@ async fn status_falls_back_to_latest_when_nothing_linked() {
     ---
     ohai:Installed Versions
     ---
-    print:homebrew/core/sample 2.0_2 (2 files, 653B)
+    print:homebrew/core/sample 2.0_2 (2 files, 651B)
     ---
     ohai:Dependencies
     ---
@@ -586,7 +586,7 @@ async fn status_uses_optlinked_intent_for_keg_only_formula() {
     ---
     ohai:Installed Versions
     ---
-    print:homebrew/core/sample 2.0_2 (2 files, 654B)
+    print:homebrew/core/sample 2.0_2 (2 files, 652B)
     ---
     ohai:Dependencies
     ---

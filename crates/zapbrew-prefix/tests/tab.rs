@@ -58,7 +58,7 @@ fn unknown_and_obsolete_fields_dropped() -> Result<(), Box<dyn std::error::Error
     assert!(output_value.get("alias_path").is_none());
     assert!(output_value.get("installed_as_dependency").is_none());
     assert!(output_value.get("unknown_key").is_none());
-    assert!(tab.installed_on_request);
+    assert!(!tab.installed_on_request);
     Ok(())
 }
 

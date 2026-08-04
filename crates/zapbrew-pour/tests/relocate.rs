@@ -182,5 +182,5 @@ fn relocate_call(
     env: &Env,
     cellar_field: &str,
 ) -> Result<zapbrew_pour::RelocationReport, zapbrew_pour::PourError> {
-    zapbrew_pour::relocate(keg, env, cellar_field, &PanicRunner)
+    zapbrew_pour::relocate(keg, env, cellar_field, Some("6.0.14-zapbrew"), &PanicRunner)
 }
