@@ -18,8 +18,8 @@ use camino::Utf8PathBuf;
 use zapbrew_api::{CaskCatalog, Catalog, Resolution};
 use zapbrew_ops::{
     Ctx, OpError, Reporter, autoremove, cask, cleanup, config, deps, desc, doctor, fetch, info,
-    install, leaves, link, list, outdated, pin, reinstall, search, services, shellenv, shim, tap,
-    tap_info, uninstall, unlink, unpin, untap, update, upgrade, uses,
+    install, leaves, link, list, outdated, pin, postinstall, reinstall, search, services, shellenv,
+    shim, tap, tap_info, uninstall, unlink, unpin, untap, update, upgrade, uses,
 };
 use zapbrew_prefix::{Env, SystemCommandRunner};
 
@@ -49,6 +49,7 @@ pub enum OpKind {
     Cleanup(cleanup::Args),
     Search(search::Args),
     Desc(desc::Args),
+    Postinstall(postinstall::Args),
     Config(config::Args),
     Shellenv(shellenv::Args),
     Tap(tap::Args),
@@ -296,6 +297,11 @@ pub fn plan(command: Commands, globals: &GlobalArgs, width: usize) -> Result<Pla
                 cask: args.cask,
             }),
         },
+        Commands::Postinstall(args) => Plan {
+            needs_formula: true,
+            needs_cask: false,
+            kind: OpKind::Postinstall(postinstall::Args { names: args.names }),
+        },
         Commands::Config => Plan {
             needs_formula: false,
             needs_cask: false,
@@ -502,6 +508,7 @@ async fn execute(kind: OpKind, ctx: &Ctx) -> Result<(), OpError> {
         OpKind::Cleanup(args) => cleanup::run(ctx, args).await,
         OpKind::Search(args) => search::run(ctx, args).await,
         OpKind::Desc(args) => desc::run(ctx, args).await,
+        OpKind::Postinstall(args) => postinstall::run(ctx, args).await,
         OpKind::Config(args) => config::run(ctx, args).await,
         OpKind::Shellenv(args) => shellenv::run(ctx, args).await,
         OpKind::Tap(args) => tap::run(ctx, args).await,

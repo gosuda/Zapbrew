@@ -145,6 +145,8 @@ pub enum Commands {
     Search(SearchArgs),
     /// Show descriptions or search names/descriptions of formulae/casks.
     Desc(DescArgs),
+    /// Rerun post-install steps for installed formulae.
+    Postinstall(NamesArgs),
     /// Show the effective configuration.
     Config,
     /// Print shell integration for the environment.
@@ -582,6 +584,7 @@ mod tests {
             Commands::Cleanup(_) => "cleanup",
             Commands::Search(_) => "search",
             Commands::Desc(_) => "desc",
+            Commands::Postinstall(_) => "postinstall",
             Commands::Config => "config",
             Commands::Shellenv(_) => "shellenv",
             Commands::Tap(_) => "tap",
@@ -617,6 +620,7 @@ mod tests {
         (&["zapbrew", "cleanup"], "cleanup"),
         (&["zapbrew", "search", "wget"], "search"),
         (&["zapbrew", "desc", "wget"], "desc"),
+        (&["zapbrew", "postinstall", "wget"], "postinstall"),
         (&["zapbrew", "config"], "config"),
         (&["zapbrew", "shellenv"], "shellenv"),
         (&["zapbrew", "tap"], "tap"),

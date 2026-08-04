@@ -20,6 +20,7 @@ pub mod list;
 pub mod outdated;
 pub mod pin;
 pub mod platform;
+pub mod postinstall;
 pub mod reinstall;
 mod render;
 pub mod search;
