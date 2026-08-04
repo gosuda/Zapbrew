@@ -188,15 +188,26 @@ where
         .map_err(|source| OpError::io("read", staging, source))?;
     for entry in entries {
         let mut entry = entry.map_err(|source| OpError::io("read", staging, source))?;
-        if metadata_type(entry.header().entry_type()) {
+        let kind = entry.header().entry_type();
+        if metadata_type(kind) {
             continue;
+        }
+        // Re-validate on the extraction pass: the archive was preflighted from
+        // a separate open, so the bytes can differ between the two reads.
+        if !matches!(
+            kind,
+            EntryType::Regular | EntryType::Continuous | EntryType::Directory
+        ) {
+            return Err(OpError::InvalidState {
+                reason: format!("unsafe cask archive entry type {kind:?}"),
+            });
         }
         let raw = entry
             .path()
             .map_err(|source| OpError::io("read", staging, source))?;
         let relative = utf8_relative(&raw, staging)?;
         let target = staging.join(relative);
-        if entry.header().entry_type() == EntryType::Directory {
+        if kind == EntryType::Directory {
             fs::create_dir_all(&target).map_err(|source| OpError::io("create", &target, source))?;
         } else {
             if let Some(parent) = target.parent() {

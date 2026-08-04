@@ -99,6 +99,28 @@ fn tar_gz(entries: &[(&str, &[u8])]) -> Vec<u8> {
     encoder.finish().expect("finish gzip")
 }
 
+/// Build a `.tar.gz` with one symlink entry, to prove link entries refuse.
+fn tar_gz_with_symlink(file: (&str, &[u8]), link: (&str, &str)) -> Vec<u8> {
+    let mut builder = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::default()));
+    let mut header = tar::Header::new_gnu();
+    header.set_size(file.1.len() as u64);
+    header.set_mode(0o644);
+    header.set_cksum();
+    builder
+        .append_data(&mut header, file.0, file.1)
+        .expect("tar file entry");
+    let mut link_header = tar::Header::new_gnu();
+    link_header.set_entry_type(tar::EntryType::Symlink);
+    link_header.set_size(0);
+    link_header.set_mode(0o777);
+    link_header.set_cksum();
+    builder
+        .append_link(&mut link_header, link.0, link.1)
+        .expect("tar link entry");
+    let encoder = builder.into_inner().expect("finish tar");
+    encoder.finish().expect("finish gzip")
+}
+
 fn zip_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut cursor = std::io::Cursor::new(Vec::new());
     {
@@ -310,6 +332,33 @@ async fn zip_and_tar_and_bare_extract_place_app() {
             .expect("extract install");
         assert!(appdir.join("Config.app/Contents/info").is_file());
     }
+}
+
+#[tokio::test]
+async fn tar_with_symlink_entry_refuses_before_mutation() {
+    let fixture = Fixture::new().macos();
+    let appdir = fixture.env.home.join("Applications");
+    let server = MockServer::start().await;
+    let body = tar_gz_with_symlink(
+        ("Demo.app/Contents/info", b"x"),
+        ("Demo.app/Contents/evil-link", "/etc/passwd"),
+    );
+    let url = serve(&server, "/App.tar.gz", body.clone()).await;
+    let value = cask(
+        "linky",
+        &url,
+        &sha_hex(&body),
+        vec![json!({"app": ["Demo.app"]})],
+    );
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+    let result = install::run(&ctx, install_args(&["linky"], &appdir, false)).await;
+    let error = err(result);
+    assert!(
+        matches!(&error, OpError::InvalidState { reason } if reason.contains("unsafe cask archive entry type")),
+        "expected unsafe-entry refusal, got {error}"
+    );
+    assert!(!appdir.join("Demo.app").exists(), "no app may be deployed");
 }
 
 #[tokio::test]
