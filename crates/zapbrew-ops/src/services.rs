@@ -448,8 +448,12 @@ fn parse_keep_alive(
         Value::Bool(false) => Ok((None, None)),
         Value::Bool(true) => Ok((Some(RestartMode::Failure), Some(PlistValue::Boolean(true)))),
         Value::Object(object) => {
-            if object.get("always").and_then(Value::as_bool) == Some(true) {
-                return Ok((Some(RestartMode::Failure), Some(PlistValue::Boolean(true))));
+            if let Some(always) = object.get("always").and_then(Value::as_bool) {
+                return if always {
+                    Ok((Some(RestartMode::Failure), Some(PlistValue::Boolean(true))))
+                } else {
+                    Ok((None, None))
+                };
             }
             for (json_key, plist_key, mode) in [
                 ("successful_exit", "SuccessfulExit", RestartMode::Success),

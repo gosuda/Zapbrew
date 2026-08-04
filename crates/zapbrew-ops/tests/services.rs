@@ -166,6 +166,22 @@ fn successful_exit_false_restarts_failed_systemd_services() {
 }
 
 #[test]
+fn always_false_omits_keep_alive_settings() {
+    let fixture = Fixture::new();
+    let service = json!({
+        "run": "$HOMEBREW_PREFIX/bin/demo",
+        "keep_alive": {"always": false}
+    });
+
+    let unit = services_test_support::render_systemd_unit(&fixture.env, "demo", &service)
+        .expect("systemd unit");
+    let plist = services_test_support::render_launchd_plist(&fixture.env, "demo", &service)
+        .expect("launchd plist");
+
+    assert!(!unit.contains("\nRestart="));
+    assert!(!plist.contains("<key>KeepAlive</key>"));
+}
+#[test]
 fn renders_exact_interval_and_cron_timers() {
     let fixture = Fixture::new();
     let interval = json!({
