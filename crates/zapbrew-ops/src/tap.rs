@@ -100,6 +100,16 @@ impl TapStats {
     }
 }
 
+/// Canonical on-disk directory for a tap name such as `user/repo`.
+///
+/// Reuses [`TapName`] normalization — case-folding, `homebrew-` stripping, and
+/// the Homebrew/Linuxbrew identity mapping — so the CLI `--repository <tap>`
+/// fast path resolves the exact directory the tap operations use. Pure: no
+/// network and no existence check.
+pub fn repository_path(env: &Env, raw: &str) -> Result<Utf8PathBuf, OpError> {
+    Ok(TapName::parse(raw)?.path(env))
+}
+
 pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
     let Some(raw_name) = args.name else {
         for tap in installed(&ctx.env)? {
@@ -366,4 +376,48 @@ fn io_error(operation: &'static str, path: &Path, source: io::Error) -> OpError 
         Utf8PathBuf::from(path.to_string_lossy().into_owned()),
         source,
     )
+}
+
+#[cfg(test)]
+mod repository_path_tests {
+    use std::collections::HashMap;
+
+    use zapbrew_prefix::{Env, EnvDetectInput, SystemCommandRunner};
+
+    use super::repository_path;
+
+    fn scratch_env() -> Env {
+        Env::detect_from(
+            &EnvDetectInput {
+                os: "linux".to_owned(),
+                arch: "x86_64".to_owned(),
+                home: "/home/test".into(),
+                xdg_cache_home: None,
+                vars: HashMap::from([("HOMEBREW_PREFIX".to_owned(), "/opt/zapbrew".to_owned())]),
+                available_parallelism: 2,
+            },
+            &SystemCommandRunner,
+        )
+        .expect("scratch env")
+    }
+
+    #[test]
+    fn canonical_tap_resolves_under_library_taps() {
+        let env = scratch_env();
+        let path = repository_path(&env, "homebrew/core").expect("path");
+        assert_eq!(path, env.library.join("Taps/Homebrew/homebrew-core"));
+    }
+
+    #[test]
+    fn strips_homebrew_prefix_and_lowercases_user_and_repo() {
+        let env = scratch_env();
+        let path = repository_path(&env, "User/homebrew-Fun").expect("path");
+        assert_eq!(path, env.library.join("Taps/user/homebrew-fun"));
+    }
+
+    #[test]
+    fn invalid_tap_name_is_refused() {
+        let env = scratch_env();
+        assert!(repository_path(&env, "no-slash").is_err());
+    }
 }

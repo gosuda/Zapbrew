@@ -19,10 +19,12 @@ zapbrew-ops = { path = "../zapbrew-ops" }
 zapbrew-prefix = { path = "../zapbrew-prefix" }
 
 anyhow = { workspace = true }
+camino = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 clap_complete = { workspace = true }
 jaro_winkler = { workspace = true }
 owo-colors = { workspace = true }
+reqwest = { workspace = true }
 terminal_size = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "signal", "time"] }
 
