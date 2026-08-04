@@ -590,3 +590,240 @@ async fn macos_start_stop_restart_and_list_use_exact_launchctl_argv_and_output()
         ]
     );
 }
+
+fn calendar_dicts(plist_xml: &str) -> Vec<Vec<(String, i64)>> {
+    let parsed = plist::Value::from_reader_xml(plist_xml.as_bytes()).expect("parse plist");
+    let calendar = parsed
+        .as_dictionary()
+        .expect("plist dictionary")
+        .get("StartCalendarInterval")
+        .expect("StartCalendarInterval")
+        .as_array()
+        .expect("calendar array");
+    calendar
+        .iter()
+        .map(|entry| {
+            entry
+                .as_dictionary()
+                .expect("calendar entry")
+                .iter()
+                .map(|(key, value)| (key.clone(), value.as_signed_integer().expect("integer")))
+                .collect()
+        })
+        .collect()
+}
+
+#[test]
+fn string_run_wraps_command_in_sh_c_for_systemd_and_launchd() {
+    let fixture = Fixture::new();
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo serve --flag"});
+
+    let unit = services_test_support::render_systemd_unit(&fixture.env, "demo", &service)
+        .expect("systemd unit");
+    assert_eq!(
+        normalized(&unit, &fixture),
+        "[Unit]\nDescription=Homebrew generated unit for demo\n\n[Install]\nWantedBy=default.target\n\n[Service]\nType=simple\nExecStart=\"/bin/sh\" \"-c\" \"$ROOT/prefix/bin/demo serve --flag\"\n"
+    );
+
+    let plist = services_test_support::render_launchd_plist(&fixture.env, "demo", &service)
+        .expect("launchd plist");
+    let parsed = plist::Value::from_reader_xml(plist.as_bytes()).expect("parse plist");
+    let arguments: Vec<String> = parsed
+        .as_dictionary()
+        .expect("plist dictionary")
+        .get("ProgramArguments")
+        .expect("ProgramArguments")
+        .as_array()
+        .expect("arguments array")
+        .iter()
+        .map(|value| value.as_string().expect("argument string").to_owned())
+        .collect();
+    assert_eq!(
+        arguments,
+        vec![
+            "/bin/sh".to_owned(),
+            "-c".to_owned(),
+            format!("{}/bin/demo serve --flag", fixture.env.prefix),
+        ]
+    );
+}
+
+#[test]
+fn cron_step_field_renders_native_systemd_list_and_launchd_array() {
+    let fixture = Fixture::new();
+    let service = json!({
+        "run": "$HOMEBREW_PREFIX/bin/demo",
+        "run_type": "cron",
+        "cron": "*/15 * * * *"
+    });
+
+    assert_eq!(
+        services_test_support::render_systemd_timer(&fixture.env, "demo", &service)
+            .expect("cron timer"),
+        "[Unit]\nDescription=Homebrew generated timer for demo\n\n[Install]\nWantedBy=timers.target\n\n[Timer]\nUnit=homebrew.demo.service\nPersistent=true\nOnCalendar=*-*-* *:00,15,30,45:00\n"
+    );
+
+    let plist = services_test_support::render_launchd_plist(&fixture.env, "demo", &service)
+        .expect("launchd plist");
+    assert_eq!(
+        calendar_dicts(&plist),
+        vec![
+            vec![("Minute".to_owned(), 0)],
+            vec![("Minute".to_owned(), 15)],
+            vec![("Minute".to_owned(), 30)],
+            vec![("Minute".to_owned(), 45)],
+        ]
+    );
+}
+
+#[test]
+fn cron_list_and_range_expand_across_days_and_weekday_names() {
+    let fixture = Fixture::new();
+    let list = json!({
+        "run": "$HOMEBREW_PREFIX/bin/demo",
+        "run_type": "cron",
+        "cron": "30 2 1,15 * *"
+    });
+    let range = json!({
+        "run": "$HOMEBREW_PREFIX/bin/demo",
+        "run_type": "cron",
+        "cron": "0 12 * * 1-5"
+    });
+
+    assert_eq!(
+        services_test_support::render_systemd_timer(&fixture.env, "demo", &list)
+            .expect("list timer"),
+        "[Unit]\nDescription=Homebrew generated timer for demo\n\n[Install]\nWantedBy=timers.target\n\n[Timer]\nUnit=homebrew.demo.service\nPersistent=true\nOnCalendar=*-*-1,15 02:30:00\n"
+    );
+    assert_eq!(
+        calendar_dicts(
+            &services_test_support::render_launchd_plist(&fixture.env, "demo", &list)
+                .expect("list plist")
+        ),
+        vec![
+            vec![
+                ("Minute".to_owned(), 30),
+                ("Hour".to_owned(), 2),
+                ("Day".to_owned(), 1),
+            ],
+            vec![
+                ("Minute".to_owned(), 30),
+                ("Hour".to_owned(), 2),
+                ("Day".to_owned(), 15),
+            ],
+        ]
+    );
+
+    assert_eq!(
+        services_test_support::render_systemd_timer(&fixture.env, "demo", &range)
+            .expect("range timer"),
+        "[Unit]\nDescription=Homebrew generated timer for demo\n\n[Install]\nWantedBy=timers.target\n\n[Timer]\nUnit=homebrew.demo.service\nPersistent=true\nOnCalendar=Mon,Tue,Wed,Thu,Fri *-*-* 12:00:00\n"
+    );
+    assert_eq!(
+        calendar_dicts(
+            &services_test_support::render_launchd_plist(&fixture.env, "demo", &range)
+                .expect("range plist")
+        ),
+        (1..=5)
+            .map(|weekday| vec![
+                ("Minute".to_owned(), 0),
+                ("Hour".to_owned(), 12),
+                ("Weekday".to_owned(), weekday),
+            ])
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn cron_sunday_zero_and_seven_dedupe_in_systemd_but_stay_raw_in_launchd() {
+    let fixture = Fixture::new();
+    let service = json!({
+        "run": "$HOMEBREW_PREFIX/bin/demo",
+        "run_type": "cron",
+        "cron": "0 0 * * 0,7"
+    });
+
+    assert_eq!(
+        services_test_support::render_systemd_timer(&fixture.env, "demo", &service)
+            .expect("sunday timer"),
+        "[Unit]\nDescription=Homebrew generated timer for demo\n\n[Install]\nWantedBy=timers.target\n\n[Timer]\nUnit=homebrew.demo.service\nPersistent=true\nOnCalendar=Sun *-*-* 00:00:00\n"
+    );
+    assert_eq!(
+        calendar_dicts(
+            &services_test_support::render_launchd_plist(&fixture.env, "demo", &service)
+                .expect("sunday plist")
+        ),
+        vec![
+            vec![
+                ("Minute".to_owned(), 0),
+                ("Hour".to_owned(), 0),
+                ("Weekday".to_owned(), 0),
+            ],
+            vec![
+                ("Minute".to_owned(), 0),
+                ("Hour".to_owned(), 0),
+                ("Weekday".to_owned(), 7),
+            ],
+        ]
+    );
+}
+
+#[tokio::test]
+async fn malformed_cron_fields_refuse_before_writing_any_service_file() {
+    let fixture = Fixture::new();
+    let cases = [
+        ("zerostep", "*/0 * * * *"),
+        ("descending", "0 3-1 * * *"),
+        ("outofrange", "61 * * * *"),
+        ("emptyterm", "1,,2 * * * *"),
+        ("barestar", "1,* * * * *"),
+        ("fieldcount", "@hourly"),
+        ("nonnumeric", "x * * * *"),
+    ];
+    let mut formulae = Vec::new();
+    for (name, cron) in cases {
+        install(&fixture, name);
+        formulae.push(service_formula(
+            name,
+            json!({"run": "$HOMEBREW_PREFIX/bin/demo", "run_type": "cron", "cron": cron}),
+        ));
+    }
+    let (ctx, reporter) = fixture.context(formulae);
+
+    let directory = fixture.env.home.join(".config/systemd/user");
+    for (name, cron) in cases {
+        let error = services::run(&ctx, run_args(ServiceAction::Start, &[name]))
+            .await
+            .expect_err("malformed cron");
+        assert_eq!(
+            error.to_string(),
+            format!("Formula `{name}` has invalid service cron schedule `{cron}`.")
+        );
+        assert!(!directory.join(format!("homebrew.{name}.service")).exists());
+        assert!(!directory.join(format!("homebrew.{name}.timer")).exists());
+    }
+    assert!(reporter.take().is_empty());
+}
+
+#[tokio::test]
+async fn broad_cartesian_cron_refuses_before_allocation_and_io() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let cron = "0-59 0-23 1-31 * *";
+    let (ctx, reporter) = fixture.context(vec![service_formula(
+        "demo",
+        json!({"run": "$HOMEBREW_PREFIX/bin/demo", "run_type": "cron", "cron": cron}),
+    )]);
+
+    let error = services::run(&ctx, run_args(ServiceAction::Start, &["demo"]))
+        .await
+        .expect_err("broad cron");
+    assert_eq!(
+        error.to_string(),
+        format!("Formula `demo` has a service cron schedule `{cron}` that expands too broadly.")
+    );
+    let directory = fixture.env.home.join(".config/systemd/user");
+    assert!(!directory.join("homebrew.demo.service").exists());
+    assert!(!directory.join("homebrew.demo.timer").exists());
+    assert!(reporter.take().is_empty());
+}

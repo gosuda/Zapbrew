@@ -37,11 +37,43 @@ enum Schedule {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Cron {
-    minute: String,
-    hour: String,
-    day: String,
-    month: String,
-    weekday: String,
+    minute: CronField,
+    hour: CronField,
+    day: CronField,
+    month: CronField,
+    weekday: CronField,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CronField {
+    Any,
+    /// Sorted, deduplicated, non-empty; every element within the field's bounds.
+    Set(Vec<u32>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CronKind {
+    Minute,
+    Hour,
+    Day,
+    Month,
+    Weekday,
+}
+
+impl CronKind {
+    fn bounds(self) -> (u32, u32) {
+        match self {
+            CronKind::Minute => (0, 59),
+            CronKind::Hour => (0, 23),
+            CronKind::Day => (1, 31),
+            CronKind::Month => (1, 12),
+            CronKind::Weekday => (0, 7),
+        }
+    }
+
+    fn systemd_padded(self) -> bool {
+        matches!(self, CronKind::Minute | CronKind::Hour)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -362,7 +394,11 @@ fn parse_run(env: &Env, name: &str, value: Option<&Value>) -> Result<Vec<String>
         ))
     })?;
     match value {
-        Value::String(command) => Ok(vec![substitute(env, name, command)?]),
+        Value::String(command) => Ok(vec![
+            "/bin/sh".to_owned(),
+            "-c".to_owned(),
+            substitute(env, name, command)?,
+        ]),
         Value::Array(arguments) => {
             if arguments.is_empty() {
                 return Err(refusal(format!(
@@ -417,26 +453,120 @@ fn parse_schedule(name: &str, object: &Map<String, Value>) -> Result<Schedule, O
 }
 
 fn parse_cron(name: &str, value: &str) -> Result<Cron, OpError> {
+    let invalid = || {
+        refusal(format!(
+            "Formula `{name}` has invalid service cron schedule `{value}`."
+        ))
+    };
     let fields = value.split_whitespace().collect::<Vec<_>>();
     let [minute, hour, day, month, weekday] = fields.as_slice() else {
-        return Err(refusal(format!(
-            "Formula `{name}` has invalid service cron schedule `{value}`."
-        )));
+        return Err(invalid());
     };
-    for field in &fields {
-        if *field != "*" && field.parse::<u32>().is_err() {
-            return Err(refusal(format!(
-                "Formula `{name}` has invalid service cron schedule `{value}`."
-            )));
-        }
+    let cron = Cron {
+        minute: parse_cron_field(CronKind::Minute, minute).ok_or_else(invalid)?,
+        hour: parse_cron_field(CronKind::Hour, hour).ok_or_else(invalid)?,
+        day: parse_cron_field(CronKind::Day, day).ok_or_else(invalid)?,
+        month: parse_cron_field(CronKind::Month, month).ok_or_else(invalid)?,
+        weekday: parse_cron_field(CronKind::Weekday, weekday).ok_or_else(invalid)?,
+    };
+    if cron_combinations(&cron).is_none_or(|count| count > MAX_CRON_COMBINATIONS) {
+        return Err(refusal(format!(
+            "Formula `{name}` has a service cron schedule `{value}` that expands too broadly."
+        )));
     }
-    Ok(Cron {
-        minute: (*minute).to_owned(),
-        hour: (*hour).to_owned(),
-        day: (*day).to_owned(),
-        month: (*month).to_owned(),
-        weekday: (*weekday).to_owned(),
+    Ok(cron)
+}
+
+/// Upper bound on launchd `StartCalendarInterval` combinations, enforced before
+/// any Cartesian expansion is allocated.
+const MAX_CRON_COMBINATIONS: u64 = 4096;
+
+/// Number of launchd interval dictionaries this cron expands to (the product of
+/// each non-`Any` field's set length), or `None` on overflow.
+fn cron_combinations(cron: &Cron) -> Option<u64> {
+    [
+        &cron.minute,
+        &cron.hour,
+        &cron.day,
+        &cron.month,
+        &cron.weekday,
+    ]
+    .into_iter()
+    .try_fold(1u64, |total, field| match field {
+        CronField::Any => Some(total),
+        CronField::Set(values) => total.checked_mul(values.len() as u64),
     })
+}
+
+/// Parse a single cron field into `Any` or a validated `Set`. Returns `None` for
+/// any malformed token, out-of-range value, empty term, bare `*` inside a list,
+/// descending range, or zero step.
+fn parse_cron_field(kind: CronKind, token: &str) -> Option<CronField> {
+    if token == "*" {
+        return Some(CronField::Any);
+    }
+    let (min, max) = kind.bounds();
+    let mut values = Vec::new();
+    for term in token.split(',') {
+        parse_cron_term(term, min, max, &mut values)?;
+    }
+    values.sort_unstable();
+    values.dedup();
+    // `split(',')` yields at least one term and every accepted term pushes at
+    // least one value, so the set is non-empty here.
+    Some(CronField::Set(values))
+}
+
+/// Expand one comma-separated cron term (`A`, `A-B`, `*/N`, `A-B/N`, `A/N`) into
+/// `out`, enforcing bounds. Returns `None` on any malformed or out-of-range term.
+fn parse_cron_term(term: &str, min: u32, max: u32, out: &mut Vec<u32>) -> Option<()> {
+    if term.is_empty() {
+        return None;
+    }
+    let (base, step, has_step) = match term.split_once('/') {
+        Some((base, step)) => {
+            let step = step.parse::<u32>().ok()?;
+            if step == 0 {
+                return None;
+            }
+            (base, step, true)
+        }
+        None => (term, 1, false),
+    };
+    if base == "*" {
+        // A bare `*` term only reaches here inside a list; the whole-field `*`
+        // was already handled. Accept it only as the `*/N` wildcard-step form.
+        if !has_step {
+            return None;
+        }
+        return push_cron_range(out, min, max, step);
+    }
+    if let Some((start, end)) = base.split_once('-') {
+        let start = start.parse::<u32>().ok()?;
+        let end = end.parse::<u32>().ok()?;
+        if start > end || start < min || end > max {
+            return None;
+        }
+        return push_cron_range(out, start, end, step);
+    }
+    let single = base.parse::<u32>().ok()?;
+    if single < min || single > max {
+        return None;
+    }
+    if has_step {
+        return push_cron_range(out, single, max, step);
+    }
+    out.push(single);
+    Some(())
+}
+
+fn push_cron_range(out: &mut Vec<u32>, start: u32, end: u32, step: u32) -> Option<()> {
+    let mut value = start;
+    while value <= end {
+        out.push(value);
+        value = value.checked_add(step)?;
+    }
+    Some(())
 }
 
 fn parse_keep_alive(
@@ -733,10 +863,7 @@ fn render_launchd_plist(_env: &Env, name: &str, config: &ServiceConfig) -> Resul
             );
         }
         Schedule::Cron(cron) => {
-            values.insert(
-                "StartCalendarInterval".to_owned(),
-                PlistValue::Dictionary(plist_calendar(cron)?),
-            );
+            values.insert("StartCalendarInterval".to_owned(), plist_calendar(cron));
         }
     }
     insert_string(&mut values, "WorkingDirectory", &config.working_dir);
@@ -756,48 +883,95 @@ fn insert_string(values: &mut BTreeMap<String, PlistValue>, key: &str, value: &O
     }
 }
 
-fn plist_calendar(cron: &Cron) -> Result<plist::Dictionary, OpError> {
-    let mut dictionary = plist::Dictionary::new();
-    for (key, value) in [
+fn plist_calendar(cron: &Cron) -> PlistValue {
+    let fields = [
         ("Minute", &cron.minute),
         ("Hour", &cron.hour),
         ("Day", &cron.day),
         ("Month", &cron.month),
         ("Weekday", &cron.weekday),
-    ] {
-        if value == "*" {
-            continue;
-        }
-        let number = value
-            .parse::<u64>()
-            .map_err(|source| OpError::InvalidState {
-                reason: format!("validated cron value `{value}` stopped parsing: {source}"),
-            })?;
-        dictionary.insert(key.to_owned(), PlistValue::Integer(number.into()));
+    ];
+    let active: Vec<(&str, &[u32])> = fields
+        .iter()
+        .filter_map(|(key, field)| match field {
+            CronField::Any => None,
+            CronField::Set(values) => Some((*key, values.as_slice())),
+        })
+        .collect();
+
+    // Every field single-valued (or Any) renders as one dictionary, byte-identical
+    // to the historic single-value launchd output.
+    if active.iter().all(|(_, values)| values.len() == 1) {
+        let entries: Vec<(&str, u32)> = active
+            .iter()
+            .filter_map(|(key, values)| values.first().map(|value| (*key, *value)))
+            .collect();
+        return PlistValue::Dictionary(calendar_dict(&entries));
     }
-    Ok(dictionary)
+
+    // Cartesian product over non-Any fields in Minute..Weekday order, last field
+    // varying fastest (row-major). Bounded to MAX_CRON_COMBINATIONS at parse time.
+    let mut rows: Vec<Vec<(&str, u32)>> = vec![Vec::new()];
+    for (key, values) in &active {
+        let mut next = Vec::with_capacity(rows.len() * values.len());
+        for row in &rows {
+            for value in *values {
+                let mut extended = row.clone();
+                extended.push((*key, *value));
+                next.push(extended);
+            }
+        }
+        rows = next;
+    }
+    PlistValue::Array(
+        rows.iter()
+            .map(|entries| PlistValue::Dictionary(calendar_dict(entries)))
+            .collect(),
+    )
+}
+
+fn calendar_dict(entries: &[(&str, u32)]) -> plist::Dictionary {
+    let mut dictionary = plist::Dictionary::new();
+    for (key, value) in entries {
+        dictionary.insert((*key).to_owned(), PlistValue::Integer((*value).into()));
+    }
+    dictionary
 }
 
 fn systemd_calendar(cron: &Cron) -> String {
-    let minute = pad_cron(&cron.minute);
-    let hour = pad_cron(&cron.hour);
-    let weekday = if cron.weekday == "*" {
-        String::new()
-    } else {
-        const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-        cron.weekday
-            .parse::<usize>()
-            .ok()
-            .and_then(|value| DAYS.get(value % 7))
-            .map_or_else(String::new, |day| format!("{day} "))
+    let minute = systemd_field(CronKind::Minute, &cron.minute);
+    let hour = systemd_field(CronKind::Hour, &cron.hour);
+    let day = systemd_field(CronKind::Day, &cron.day);
+    let month = systemd_field(CronKind::Month, &cron.month);
+    let weekday = match &cron.weekday {
+        CronField::Any => String::new(),
+        CronField::Set(values) => {
+            const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+            let mut indices: Vec<usize> = values.iter().map(|value| *value as usize % 7).collect();
+            indices.sort_unstable();
+            indices.dedup();
+            let names: Vec<&str> = indices.iter().map(|index| DAYS[*index]).collect();
+            format!("{} ", names.join(","))
+        }
     };
-    format!("{weekday}*-{}-{} {hour}:{minute}:00", cron.month, cron.day)
+    format!("{weekday}*-{month}-{day} {hour}:{minute}:00")
 }
 
-fn pad_cron(value: &str) -> String {
-    value
-        .parse::<u32>()
-        .map_or_else(|_| value.to_owned(), |number| format!("{number:02}"))
+fn systemd_field(kind: CronKind, field: &CronField) -> String {
+    match field {
+        CronField::Any => "*".to_owned(),
+        CronField::Set(values) => values
+            .iter()
+            .map(|value| {
+                if kind.systemd_padded() {
+                    format!("{value:02}")
+                } else {
+                    value.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(","),
+    }
 }
 
 fn systemd_quote(value: &str) -> String {
