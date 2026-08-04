@@ -750,11 +750,19 @@ fn rewrite_interp(
         return Ok(true);
     }
 
-    // Grown interpreter path: append into the extended final PT_LOAD.
+    // Grown interpreter path: append into the extended final PT_LOAD (or a
+    // fresh segment when the final load cannot grow). The append may relocate
+    // the program-header table, so re-decode to repoint the current entry.
     let mut payload = desired.clone();
     payload.push(0);
     let (file_offset, vaddr) = append_into_last_load(buf, &payload, little)?;
-    let header = interp.header_offset;
+    let header = decode_elf64(buf)
+        .ok_or_else(|| "cannot re-decode ELF after interp append".to_owned())?
+        .1
+        .iter()
+        .find(|phdr| phdr.p_type == PT_INTERP)
+        .ok_or_else(|| "PT_INTERP vanished after interp append".to_owned())?
+        .header_offset;
     write_u64(buf, header + 8, little, file_offset)?; // p_offset
     write_u64(buf, header + 16, little, vaddr)?; // p_vaddr
     write_u64(buf, header + 24, little, vaddr)?; // p_paddr
@@ -947,10 +955,13 @@ fn rewrite_gcc_lib(segment: &str) -> String {
     segment.to_owned()
 }
 
-/// Append `payload` at the end of `buf` inside the extended final `PT_LOAD`
-/// (the loadable segment with the highest vaddr), returning the appended data's
-/// file offset and virtual address. Re-reads the segment so repeated appends
-/// stay consistent.
+/// Append `payload` at the end of `buf`, returning the appended data's file
+/// offset and virtual address. Preferred: extend the final `PT_LOAD` in place
+/// (capacity-preserving). When that segment carries BSS (`p_memsz > p_filesz`)
+/// or is not the terminal file extent — common for shared libraries whose
+/// section headers follow the last load — append a fresh read-only `PT_LOAD`
+/// at EOF and move the program-header table to cover it, the same shape
+/// patchelf uses to grow strings without disturbing existing mappings.
 fn append_into_last_load(
     buf: &mut Vec<u8>,
     payload: &[u8],
@@ -964,48 +975,141 @@ fn append_into_last_load(
         .max_by_key(|phdr| phdr.p_vaddr)
         .ok_or_else(|| "no PT_LOAD segment to extend".to_owned())?;
 
-    // Growing is only safe when the segment carries no BSS and its file extent
-    // is exactly the current end of file: raising p_filesz over a
-    // p_memsz > p_filesz tail would overwrite bytes the loader must zero-fill,
-    // and extending a non-terminal extent would fold later file bytes into
-    // this mapping.
-    if last.p_memsz != last.p_filesz {
-        return Err("final PT_LOAD has BSS (p_memsz != p_filesz), cannot extend".to_owned());
-    }
+    // Growing the final load in place is only safe when the segment carries no
+    // BSS and its file extent is exactly the current end of file: raising
+    // p_filesz over a p_memsz > p_filesz tail would overwrite bytes the loader
+    // must zero-fill, and extending a non-terminal extent would fold later file
+    // bytes into this mapping.
     let extent_end = last
         .p_offset
         .checked_add(last.p_filesz)
         .ok_or_else(|| "final PT_LOAD extent overflows".to_owned())?;
-    if extent_end != buf.len() as u64 {
-        return Err("final PT_LOAD is not the terminal file extent".to_owned());
+    if last.p_memsz == last.p_filesz && extent_end == buf.len() as u64 {
+        let align = if last.p_align > 1 { last.p_align } else { 16 };
+        if align > MAX_SEGMENT_ALIGN {
+            return Err("unreasonable final PT_LOAD alignment".to_owned());
+        }
+        let file_offset = round_up(buf.len() as u64, align)
+            .ok_or_else(|| "aligned append offset overflows".to_owned())?;
+        while (buf.len() as u64) < file_offset {
+            buf.push(0);
+        }
+        // vaddr - offset is invariant for the segment, so congruence mod
+        // p_align is preserved for any appended file offset.
+        let delta = file_offset
+            .checked_sub(last.p_offset)
+            .ok_or_else(|| "append offset precedes final PT_LOAD".to_owned())?;
+        let vaddr = last
+            .p_vaddr
+            .checked_add(delta)
+            .ok_or_else(|| "appended vaddr overflows".to_owned())?;
+        buf.extend_from_slice(payload);
+
+        let new_size = (buf.len() as u64)
+            .checked_sub(last.p_offset)
+            .ok_or_else(|| "extended PT_LOAD size overflows".to_owned())?;
+        write_u64(buf, last.header_offset + 32, little, new_size)?; // p_filesz
+        write_u64(buf, last.header_offset + 40, little, new_size)?; // p_memsz
+        return Ok((file_offset, vaddr));
     }
 
-    let align = if last.p_align > 1 { last.p_align } else { 16 };
-    if align > MAX_SEGMENT_ALIGN {
-        return Err("unreasonable final PT_LOAD alignment".to_owned());
+    append_new_load(buf, payload, little)
+}
+
+/// Append `payload` behind a brand-new read-only `PT_LOAD` at EOF, moving the
+/// program-header table so the new header is loadable. Returns the payload's
+/// file offset and virtual address.
+fn append_new_load(buf: &mut Vec<u8>, payload: &[u8], little: bool) -> Result<(u64, u64), String> {
+    let align: u64 = 0x1000;
+    let (_, phdrs) =
+        decode_elf64(buf).ok_or_else(|| "cannot re-decode ELF for new segment".to_owned())?;
+
+    // Validate the program-header table before mutating anything: the table is
+    // moved to EOF below, so a malformed e_phoff/e_phentsize/e_phnum must
+    // reject without touching `buf`. PN_XNUM (e_phnum == 0xFFFF) is unsupported.
+    let e_phoff = rd_u64(buf, 32, little).ok_or_else(|| "cannot read e_phoff".to_owned())?;
+    let e_phentsize =
+        usize::from(rd_u16(buf, 54, little).ok_or_else(|| "cannot read e_phentsize".to_owned())?);
+    let e_phnum =
+        usize::from(rd_u16(buf, 56, little).ok_or_else(|| "cannot read e_phnum".to_owned())?);
+    if e_phnum == 0xFFFF {
+        return Err("PN_XNUM program headers are unsupported".to_owned());
     }
+    if e_phentsize < PHDR64_LEN {
+        return Err("program header table too narrow".to_owned());
+    }
+    let old_table = usize::try_from(e_phoff)
+        .ok()
+        .and_then(|start| {
+            start
+                .checked_add(e_phnum.checked_mul(e_phentsize)?)
+                .map(|end| (start, end))
+        })
+        .ok_or_else(|| "program header table outside file".to_owned())?;
+    let table = buf
+        .get(old_table.0..old_table.1)
+        .ok_or_else(|| "program header table outside file".to_owned())?
+        .to_vec();
+
+    let load_end = phdrs
+        .iter()
+        .filter(|phdr| phdr.p_type == PT_LOAD)
+        .map(|phdr| {
+            phdr.p_vaddr
+                .checked_add(phdr.p_memsz)
+                .ok_or_else(|| "PT_LOAD span overflows".to_owned())
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .max()
+        .ok_or_else(|| "no PT_LOAD segment for new segment".to_owned())?;
+    let vaddr =
+        round_up(load_end, align).ok_or_else(|| "new segment vaddr overflows".to_owned())?;
     let file_offset = round_up(buf.len() as u64, align)
-        .ok_or_else(|| "aligned append offset overflows".to_owned())?;
+        .ok_or_else(|| "new segment offset overflows".to_owned())?;
     while (buf.len() as u64) < file_offset {
         buf.push(0);
     }
-    // vaddr - offset is invariant for the segment, so congruence mod p_align is
-    // preserved for any appended file offset.
-    let delta = file_offset
-        .checked_sub(last.p_offset)
-        .ok_or_else(|| "append offset precedes final PT_LOAD".to_owned())?;
-    let vaddr = last
-        .p_vaddr
-        .checked_add(delta)
-        .ok_or_else(|| "appended vaddr overflows".to_owned())?;
     buf.extend_from_slice(payload);
+    let size = payload.len() as u64;
 
-    let new_size = (buf.len() as u64)
-        .checked_sub(last.p_offset)
-        .ok_or_else(|| "extended PT_LOAD size overflows".to_owned())?;
-    write_u64(buf, last.header_offset + 32, little, new_size)?; // p_filesz
-    write_u64(buf, last.header_offset + 40, little, new_size)?; // p_memsz
+    // Move the program-header table (existing entries + the new one) to EOF so
+    // e_phnum can grow; nothing references the old table location except
+    // e_phoff, which we repoint.
+    let table_offset = buf.len() as u64;
+    buf.extend_from_slice(&table);
+    buf.resize(buf.len() + e_phentsize, 0);
+    let new_header = buf.len() as u64 - e_phentsize as u64;
+
+    let new_phdr = Phdr64 {
+        header_offset: usize::try_from(new_header)
+            .map_err(|_| "new program header offset overflows".to_owned())?,
+        p_type: PT_LOAD,
+        p_offset: file_offset,
+        p_vaddr: vaddr,
+        p_filesz: size,
+        p_memsz: size,
+        p_align: align,
+    };
+    write_phdr(buf, &new_phdr, little)?;
+    write_u64(buf, 32, little, table_offset)?; // e_phoff
+    write_u16(buf, 56, little, (e_phnum + 1) as u16)?; // e_phnum
     Ok((file_offset, vaddr))
+}
+
+/// Serialize one `Phdr64` at its recorded header offset.
+fn write_phdr(buf: &mut [u8], phdr: &Phdr64, little: bool) -> Result<(), String> {
+    const PF_R: u32 = 4;
+    let base = phdr.header_offset;
+    write_u32(buf, base, little, phdr.p_type)?;
+    write_u32(buf, base + 4, little, PF_R)?; // p_flags: read-only data
+    write_u64(buf, base + 8, little, phdr.p_offset)?;
+    write_u64(buf, base + 16, little, phdr.p_vaddr)?;
+    write_u64(buf, base + 24, little, phdr.p_vaddr)?; // p_paddr
+    write_u64(buf, base + 32, little, phdr.p_filesz)?;
+    write_u64(buf, base + 40, little, phdr.p_memsz)?;
+    write_u64(buf, base + 48, little, phdr.p_align)?;
+    Ok(())
 }
 
 /// Repoint the `.dynstr` section header (sh_addr matching the old string-table
@@ -1147,6 +1251,24 @@ fn rd_u64(buf: &[u8], offset: usize, little: bool) -> Option<u64> {
 }
 
 fn write_u64(buf: &mut [u8], offset: usize, little: bool, value: u64) -> Result<(), String> {
+    let encoded = if little {
+        value.to_le_bytes()
+    } else {
+        value.to_be_bytes()
+    };
+    write_bytes(buf, offset, &encoded)
+}
+
+fn write_u32(buf: &mut [u8], offset: usize, little: bool, value: u32) -> Result<(), String> {
+    let encoded = if little {
+        value.to_le_bytes()
+    } else {
+        value.to_be_bytes()
+    };
+    write_bytes(buf, offset, &encoded)
+}
+
+fn write_u16(buf: &mut [u8], offset: usize, little: bool, value: u16) -> Result<(), String> {
     let encoded = if little {
         value.to_le_bytes()
     } else {
@@ -1775,7 +1897,7 @@ mod tests {
     }
 
     #[test]
-    fn elf_grow_with_bss_in_final_load_rejected_unchanged() {
+    fn elf_grow_with_bss_in_final_load_appends_new_segment() {
         let mut elf = build_elf64(
             "@@HOMEBREW_PREFIX@@/lib/ld.so",
             "@@HOMEBREW_PREFIX@@/lib/foo",
@@ -1784,30 +1906,50 @@ mod tests {
         let phoff = EHDR_MIN_LEN;
         let filesz = some(rd_u64(&elf, phoff + 32, true), "filesz");
         wr64(&mut elf, phoff + 40, filesz + 64);
-        let before = elf.clone();
+        let phnum = usize::from(some(rd_u16(&elf, 56, true), "phnum"));
         let prefix = "/a/very/long/custom/homebrew/prefix/location/deep";
-        let result = relocate_bytes(&elf, prefix, false);
-        assert!(matches!(result, Err(PourError::Relocation { .. })));
-        assert_eq!(elf, before);
+        let (relocated, _) = some(okr(relocate_bytes(&elf, prefix, false), "plan"), "changed");
+        // The grown string lands in a fresh PT_LOAD; the file stays valid ELF
+        // and the runpath/interp are correctly rewritten.
+        assert_eq!(object_format(&relocated), Some(BinaryFormat::Elf));
+        // Both the grown interpreter and the grown runpath append one segment.
+        assert_eq!(
+            usize::from(some(rd_u16(&relocated, 56, true), "phnum")),
+            phnum + 2
+        );
+        assert_eq!(
+            read_runpath(&relocated),
+            format!("{prefix}/lib/foo:{prefix}/lib")
+        );
+        assert_eq!(read_interp(&relocated), format!("{prefix}/lib/ld.so"));
     }
 
     #[test]
-    fn elf_grow_with_nonterminal_final_load_rejected_unchanged() {
+    fn elf_grow_with_nonterminal_final_load_appends_new_segment() {
         let mut elf = build_elf64(
             "@@HOMEBREW_PREFIX@@/lib/ld.so",
             "@@HOMEBREW_PREFIX@@/lib/foo",
         );
         // Truncate the PT_LOAD file extent (memsz kept equal) so it no longer
-        // ends the file.
+        // ends the file (section-header-like tail follows).
         let phoff = EHDR_MIN_LEN;
         let filesz = some(rd_u64(&elf, phoff + 32, true), "filesz");
         wr64(&mut elf, phoff + 32, filesz - 8);
         wr64(&mut elf, phoff + 40, filesz - 8);
-        let before = elf.clone();
+        let phnum = usize::from(some(rd_u16(&elf, 56, true), "phnum"));
         let prefix = "/a/very/long/custom/homebrew/prefix/location/deep";
-        let result = relocate_bytes(&elf, prefix, false);
-        assert!(matches!(result, Err(PourError::Relocation { .. })));
-        assert_eq!(elf, before);
+        let (relocated, _) = some(okr(relocate_bytes(&elf, prefix, false), "plan"), "changed");
+        assert_eq!(object_format(&relocated), Some(BinaryFormat::Elf));
+        // Both the grown interpreter and the grown runpath append one segment.
+        assert_eq!(
+            usize::from(some(rd_u16(&relocated, 56, true), "phnum")),
+            phnum + 2
+        );
+        assert_eq!(
+            read_runpath(&relocated),
+            format!("{prefix}/lib/foo:{prefix}/lib")
+        );
+        assert_eq!(read_interp(&relocated), format!("{prefix}/lib/ld.so"));
     }
 
     /// Hand-assemble a thin Mach-O 64 header with one `LC_RPATH` whose string
