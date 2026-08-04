@@ -22,12 +22,16 @@ pub mod platform;
 pub mod reinstall;
 mod render;
 pub mod search;
+pub mod shellenv;
 mod size;
 pub mod state;
+pub mod tap;
+pub mod tap_info;
 mod transaction;
 pub mod uninstall;
 pub mod unlink;
 pub mod unpin;
+pub mod untap;
 pub mod upgrade;
 pub mod uses;
 
@@ -101,5 +105,20 @@ pub mod doctor_test_support {
         let findings = findings(ctx, path_entries, unwritable)?;
         crate::doctor::report(ctx, findings);
         Ok(())
+    }
+}
+
+#[doc(hidden)]
+pub mod shellenv_test_support {
+    use std::ffi::OsStr;
+
+    use crate::{Ctx, OpError, shellenv};
+
+    pub async fn run_with_detected(
+        ctx: &Ctx,
+        args: shellenv::Args,
+        detected: Option<&str>,
+    ) -> Result<(), OpError> {
+        shellenv::run_with_detected(ctx, args, detected.map(OsStr::new)).await
     }
 }
