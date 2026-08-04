@@ -1,6 +1,7 @@
 //! Homebrew-style verbs: install, uninstall, upgrade, outdated, autoremove, cleanup, pin, deps, and related commands.
 
 pub mod autoremove;
+pub mod cask;
 pub mod cleanup;
 pub mod config;
 mod context;

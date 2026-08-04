@@ -17,6 +17,25 @@ use zapbrew_types::{BottleFile, BottleTag, Checksum, FormulaName, PkgVersion};
 
 use crate::error::NetError;
 
+/// Compute the cache layout for a non-GHCR artifact URL.
+pub(crate) fn artifact_cache_paths(env: &Env, url: &str) -> Result<CachePaths, NetError> {
+    let path = url.split(['?', '#']).next().unwrap_or_default();
+    let basename = path.rsplit('/').next().unwrap_or_default();
+    validate_segment("artifact", basename)?;
+
+    let url_hash = hex_sha256(url.as_bytes());
+    let hashed_name = format!("{url_hash}--{basename}");
+    validate_download_name(&hashed_name, &url_hash, basename)?;
+
+    let final_path = env.cache.join("downloads").join(&hashed_name);
+    Ok(CachePaths {
+        incomplete: incomplete_path(&final_path),
+        final_path,
+        alias: env.cache.join(basename),
+        relative_target: relative_alias_target(&hashed_name),
+    })
+}
+
 /// Length of a lowercase-hex SHA-256 digest.
 const HASH_HEX_LEN: usize = 64;
 

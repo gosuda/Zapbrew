@@ -94,6 +94,38 @@ impl Fixture {
         Self { _temp: temp, env }
     }
 
+    pub fn macos(mut self) -> Self {
+        self.env.bottle_tag = "sequoia".parse().expect("macOS bottle tag");
+        self
+    }
+
+    pub fn context_casks(
+        &self,
+        casks: Vec<Value>,
+        commands: Arc<dyn CommandRunner>,
+        http: reqwest::Client,
+    ) -> (Ctx, Arc<RecordingReporter>) {
+        let payload = serde_json::to_vec(&casks).expect("cask payload");
+        let catalog =
+            Arc::new(Catalog::from_payload(b"[]", &self.env.bottle_tag).expect("catalog"));
+        let casks = Arc::new(
+            CaskCatalog::from_payload(&payload, &self.env.bottle_tag).expect("cask catalog"),
+        );
+        let recording = Arc::new(RecordingReporter::default());
+        let reporter: Arc<dyn Reporter> = recording.clone();
+        (
+            Ctx {
+                env: self.env.clone(),
+                http,
+                catalog,
+                casks,
+                commands,
+                reporter,
+            },
+            recording,
+        )
+    }
+
     pub fn context(&self, formulae: Vec<Value>) -> (Ctx, Arc<RecordingReporter>) {
         let payload = serde_json::to_vec(&formulae).expect("catalog payload");
         let catalog =

@@ -12,7 +12,10 @@ use camino::Utf8PathBuf;
 use tempfile::TempDir;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
-use zapbrew_net::{CachedBottle, DownloadRequest, NetError, download_all, fetch_bottle};
+use zapbrew_net::{
+    CachedArtifact, CachedBottle, DownloadRequest, NetError, download_all, fetch_artifact,
+    fetch_bottle,
+};
 use zapbrew_prefix::{CommandOutput, CommandRunner, CommandSpec, Env, EnvDetectInput};
 use zapbrew_types::{BottleFile, BottleTag, Checksum, FormulaName, PkgVersion};
 
@@ -441,4 +444,101 @@ async fn download_all_preserves_order_under_concurrency() {
     assert_eq!(bodies[0], BODY_C0);
     assert_eq!(bodies[1], BODY_C1);
     assert_eq!(bodies[2], BODY_C2);
+}
+
+fn artifact_path(name: &str) -> String {
+    format!("/downloads/{name}")
+}
+
+fn artifact_url(server: &MockServer, name: &str) -> String {
+    format!("{}{}", server.uri(), artifact_path(name))
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn fetch_artifact_verifies_checksum_and_sends_no_auth() {
+    let server = MockServer::start().await;
+    let url = artifact_url(&server, "App.zip");
+    Mock::given(method("GET"))
+        .and(path(artifact_path("App.zip")))
+        .and(header("accept", "application/octet-stream"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let (_dir, env) = test_env();
+    let sha = Checksum::from_str(SHA_HELLO).expect("sha");
+    let cached = match fetch_artifact(&env, &http(), &url, Some(&sha)).await {
+        Ok(cached) => cached,
+        Err(err) => panic!("expected Ok, got {err}"),
+    };
+    assert!(!cached.reused);
+    assert!(cached.path.is_file());
+    assert!(cached.alias.exists());
+    assert_eq!(cached.alias.file_name(), Some("App.zip"));
+    let bytes = std::fs::read(cached.path.as_std_path()).expect("read final");
+    assert_eq!(bytes, BODY_HELLO);
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn fetch_artifact_no_check_skips_checksum() {
+    let server = MockServer::start().await;
+    let url = artifact_url(&server, "unchecked.dmg");
+    Mock::given(method("GET"))
+        .and(path(artifact_path("unchecked.dmg")))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_WRONG))
+        .mount(&server)
+        .await;
+
+    let (_dir, env) = test_env();
+    let cached: CachedArtifact = match fetch_artifact(&env, &http(), &url, None).await {
+        Ok(cached) => cached,
+        Err(err) => panic!("expected Ok, got {err}"),
+    };
+    assert!(!cached.reused);
+    let bytes = std::fs::read(cached.path.as_std_path()).expect("read final");
+    assert_eq!(bytes, BODY_WRONG);
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn fetch_artifact_checksum_mismatch_fails() {
+    let server = MockServer::start().await;
+    let url = artifact_url(&server, "bad.zip");
+    Mock::given(method("GET"))
+        .and(path(artifact_path("bad.zip")))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_WRONG))
+        .mount(&server)
+        .await;
+
+    let (_dir, env) = test_env();
+    let sha = Checksum::from_str(SHA_FULL).expect("sha");
+    match fetch_artifact(&env, &http(), &url, Some(&sha)).await {
+        Ok(cached) => panic!("expected Err, got Ok(reused={})", cached.reused),
+        Err(NetError::ChecksumMismatch { .. }) => {}
+        Err(other) => panic!("expected ChecksumMismatch, got {other}"),
+    }
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn fetch_artifact_reuses_valid_final() {
+    let server = MockServer::start().await;
+    let url = artifact_url(&server, "reuse.tar.gz");
+    Mock::given(method("GET"))
+        .and(path(artifact_path("reuse.tar.gz")))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let (_dir, env) = test_env();
+    let sha = Checksum::from_str(SHA_HELLO).expect("sha");
+    let first = fetch_artifact(&env, &http(), &url, Some(&sha))
+        .await
+        .expect("first fetch");
+    assert!(!first.reused);
+    let second = fetch_artifact(&env, &http(), &url, Some(&sha))
+        .await
+        .expect("second fetch");
+    assert!(second.reused);
+    assert_eq!(first.path, second.path);
 }

@@ -8,15 +8,111 @@ use reqwest::{Client, StatusCode};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 use zapbrew_prefix::Env;
-use zapbrew_types::{BottleFile, FormulaName, PkgVersion};
+use zapbrew_types::{BottleFile, Checksum, FormulaName, PkgVersion};
 
-use crate::cache::{CachePaths, cache_paths, checksum_file, publish};
+use crate::cache::{CachePaths, artifact_cache_paths, cache_paths, checksum_file, publish};
 use crate::error::NetError;
 use crate::progress::download_progress;
-use crate::types::{CachedBottle, DownloadRequest};
+use crate::types::{CachedArtifact, CachedBottle, DownloadRequest};
 
 /// Maximum download attempts (brew `retryable_download` default).
 const MAX_ATTEMPTS: u32 = 5;
+
+/// Fetch one cask-style artifact into `$HOMEBREW_CACHE`.
+///
+/// Uses the same content-addressed `downloads/` layout, `.incomplete` resume,
+/// retry policy, and fsync + atomic publish as bottles, but sends no GHCR
+/// bearer authorization header. `sha256 == None` skips checksum verification.
+pub async fn fetch_artifact(
+    env: &Env,
+    http: &Client,
+    url: &str,
+    sha256: Option<&Checksum>,
+) -> Result<CachedArtifact, NetError> {
+    let paths = artifact_cache_paths(env, url)?;
+    let expected = sha256;
+
+    if let Some(expected) = expected
+        && paths.final_path.is_file()
+        && let Ok(actual) = checksum_file(&paths.final_path)
+        && &actual == expected
+    {
+        return Ok(CachedArtifact {
+            path: paths.final_path,
+            alias: paths.alias,
+            reused: true,
+        });
+    }
+
+    if let Some(expected) = expected
+        && paths.incomplete.is_file()
+        && let Ok(actual) = checksum_file(&paths.incomplete)
+        && &actual == expected
+    {
+        publish(&paths)?;
+        return Ok(CachedArtifact {
+            path: paths.final_path,
+            alias: paths.alias,
+            reused: false,
+        });
+    }
+
+    let mut last_error: Option<NetError> = None;
+
+    for attempt in 0..MAX_ATTEMPTS {
+        match attempt_artifact_download(env, http, url, &paths).await {
+            Ok(()) => {
+                if let Some(expected) = expected {
+                    match checksum_file(&paths.incomplete) {
+                        Ok(actual) if &actual == expected => {
+                            publish(&paths)?;
+                            return Ok(CachedArtifact {
+                                path: paths.final_path.clone(),
+                                alias: paths.alias.clone(),
+                                reused: false,
+                            });
+                        }
+                        Ok(actual) => {
+                            let _ = std::fs::remove_file(paths.incomplete.as_std_path());
+                            last_error = Some(NetError::ChecksumMismatch {
+                                expected: expected.clone(),
+                                actual,
+                                path: paths.incomplete.clone(),
+                            });
+                        }
+                        Err(err) => {
+                            let _ = std::fs::remove_file(paths.incomplete.as_std_path());
+                            last_error = Some(err);
+                        }
+                    }
+                } else {
+                    publish(&paths)?;
+                    return Ok(CachedArtifact {
+                        path: paths.final_path.clone(),
+                        alias: paths.alias.clone(),
+                        reused: false,
+                    });
+                }
+            }
+            Err(err) => {
+                // Network / HTTP / IO / invalid-response: keep `.incomplete` for resume.
+                last_error = Some(err);
+            }
+        }
+
+        if attempt + 1 < MAX_ATTEMPTS {
+            let secs = retry_delay_secs(attempt);
+            if secs > 0 {
+                tokio::time::sleep(Duration::from_secs(secs)).await;
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| NetError::InvalidResponse {
+        url: url.to_owned(),
+        reason: "download failed without a recorded error".to_owned(),
+    }))
+}
 
 /// Fetch one bottle into `$HOMEBREW_CACHE`, reusing a valid final when present.
 ///
@@ -145,6 +241,106 @@ pub async fn download_all(
         }
     }
     Ok(bottles)
+}
+
+/// One streaming cask-style artifact attempt (no checksum / publish).
+async fn attempt_artifact_download(
+    env: &Env,
+    http: &Client,
+    url: &str,
+    paths: &CachePaths,
+) -> Result<(), NetError> {
+    let existing = incomplete_len(&paths.incomplete)?;
+
+    let mut request = http.get(url).header(ACCEPT, "application/octet-stream");
+
+    if existing > 0 {
+        request = request.header(RANGE, format!("bytes={existing}-"));
+    }
+
+    let response = request.send().await.map_err(|source| NetError::Http {
+        url: url.to_owned(),
+        source,
+    })?;
+
+    let status = response.status();
+    let append = if status == StatusCode::PARTIAL_CONTENT {
+        let start = response
+            .headers()
+            .get(CONTENT_RANGE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(parse_content_range_start);
+        match start {
+            Some(start) if start == existing => true,
+            _ => {
+                return Err(NetError::InvalidResponse {
+                    url: url.to_owned(),
+                    reason: format!("206 Content-Range missing or not starting at {existing}"),
+                });
+            }
+        }
+    } else if status == StatusCode::OK {
+        false
+    } else {
+        return Err(NetError::InvalidResponse {
+            url: url.to_owned(),
+            reason: format!("unexpected status {status}"),
+        });
+    };
+
+    if let Some(parent) = paths.incomplete.parent() {
+        tokio::fs::create_dir_all(parent.as_std_path())
+            .await
+            .map_err(|source| NetError::io("create", parent, source))?;
+    }
+
+    let mut file = if append {
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(paths.incomplete.as_std_path())
+            .await
+            .map_err(|source| NetError::io("open", &paths.incomplete, source))?
+    } else {
+        OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(paths.incomplete.as_std_path())
+            .await
+            .map_err(|source| NetError::io("open", &paths.incomplete, source))?
+    };
+
+    let content_len = response.content_length();
+    let total = content_len.map(|len| {
+        if append {
+            existing.saturating_add(len)
+        } else {
+            len
+        }
+    });
+    let progress = download_progress(env, total);
+    if append {
+        progress.set_position(existing);
+    }
+
+    let mut body = response.bytes_stream();
+    while let Some(chunk) = body.next().await {
+        let chunk = chunk.map_err(|source| NetError::Http {
+            url: url.to_owned(),
+            source,
+        })?;
+        file.write_all(&chunk)
+            .await
+            .map_err(|source| NetError::io("write", &paths.incomplete, source))?;
+        progress.inc(chunk.len() as u64);
+    }
+
+    file.flush()
+        .await
+        .map_err(|source| NetError::io("flush", &paths.incomplete, source))?;
+    progress.finish_and_clear();
+    Ok(())
 }
 
 /// One streaming attempt into `paths.incomplete` (no checksum / publish).

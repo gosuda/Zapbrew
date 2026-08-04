@@ -9,26 +9,30 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+bzip2.workspace = true
 camino.workspace = true
+flate2.workspace = true
 jiff.workspace = true
+lzma-rust2.workspace = true
 plist.workspace = true
 regex.workspace = true
 reqwest.workspace = true
 rustix.workspace = true
+ruzstd.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 tokio.workspace = true
+tar.workspace = true
 zapbrew-api = { path = "../zapbrew-api" }
 zapbrew-net = { path = "../zapbrew-net" }
 zapbrew-pour = { path = "../zapbrew-pour" }
 zapbrew-prefix = { path = "../zapbrew-prefix" }
 zapbrew-types = { path = "../zapbrew-types" }
+zip.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
 insta.workspace = true
-flate2.workspace = true
 sha2.workspace = true
-tar.workspace = true
 wiremock.workspace = true

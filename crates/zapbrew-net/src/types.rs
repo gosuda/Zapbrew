@@ -6,6 +6,17 @@
 use camino::Utf8PathBuf;
 use zapbrew_types::{BottleFile, FormulaName, PkgVersion};
 
+/// A generic artifact successfully fetched into the cache.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachedArtifact {
+    /// Content-addressed final path under `$CACHE/downloads`.
+    pub path: Utf8PathBuf,
+    /// Friendly basename alias under `$CACHE`.
+    pub alias: Utf8PathBuf,
+    /// True when no response body was downloaded.
+    pub reused: bool,
+}
+
 /// A bottle successfully fetched into the cache.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CachedBottle {
