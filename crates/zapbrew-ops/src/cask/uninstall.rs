@@ -9,8 +9,8 @@ use zapbrew_prefix::CommandSpec;
 use super::artifact::{Action, Plan};
 use super::transaction::installed_version_dirs;
 use super::{
-    acquire_locks, checked_command, expand_path, path_exists, remove_entry, require_macos,
-    string_values,
+    acquire_locks, checked_command, confined_caskroom_child, expand_path, path_exists,
+    remove_entry, require_macos, string_values,
 };
 use crate::{Ctx, OpError};
 
@@ -46,7 +46,7 @@ fn resolve_installed(ctx: &Ctx, requested: &str) -> Result<String, OpError> {
     if let Some(cask) = ctx.casks.get(requested) {
         return Ok(cask.token.clone());
     }
-    let dir = ctx.env.caskroom.join(requested);
+    let dir = confined_caskroom_child(ctx, requested)?;
     if fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink()) {
         return Ok(requested.to_owned());
     }
@@ -64,18 +64,18 @@ pub(super) fn remove(ctx: &Ctx, token: &str, zap: bool) -> Result<(), OpError> {
         .ok_or_else(|| OpError::InvalidState {
             reason: format!("installed cask version has no basename: {version_dir}"),
         })?;
-    let appdir = Utf8Path::new("/Applications");
-    let plan = stored_plan(ctx, token, version, appdir)?;
+    let appdir = super::state::read(version_dir)?;
+    let plan = stored_plan(ctx, token, version, &appdir)?;
 
-    preflight_directives(ctx, &plan.uninstall, appdir)?;
+    preflight_directives(ctx, &plan.uninstall, &appdir)?;
     if zap {
-        preflight_directives(ctx, &plan.zap, appdir)?;
+        preflight_directives(ctx, &plan.zap, &appdir)?;
     }
 
     reverse_actions(&plan, version_dir)?;
-    run_directives(ctx, &plan.uninstall, appdir)?;
+    run_directives(ctx, &plan.uninstall, &appdir)?;
     if zap {
-        run_directives(ctx, &plan.zap, appdir)?;
+        run_directives(ctx, &plan.zap, &appdir)?;
     }
     remove_entry(version_dir)?;
     remove_version_receipts(&token_dir, version)?;

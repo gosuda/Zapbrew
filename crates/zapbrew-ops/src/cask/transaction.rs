@@ -52,8 +52,10 @@ pub(super) async fn install(ctx: &Ctx, request: CaskInstall<'_>) -> Result<(), O
 
         if path_exists(&final_dir) {
             // Force reinstall of an existing version: back up the prior deployed
-            // artifacts (from the stored receipt) and version before replacing.
-            let old_plan = super::uninstall::stored_plan(ctx, &cask.token, version, appdir)?;
+            // artifacts (from the stored receipt against the install-time appdir)
+            // and version before replacing.
+            let old_appdir = super::state::read(&final_dir)?;
+            let old_plan = super::uninstall::stored_plan(ctx, &cask.token, version, &old_appdir)?;
             let backup_root = unique_stage(ctx, &format!("{}-replaced", cask.token))?;
             old_targets = Some(backup_root.clone());
             artifact::backup_old_targets(&old_plan, &backup_root, &mut journal)?;
@@ -68,6 +70,9 @@ pub(super) async fn install(ctx: &Ctx, request: CaskInstall<'_>) -> Result<(), O
             old_version = Some(backup);
         }
 
+        // Persist install-time state in the staged tree before any artifact
+        // application; atomic promotion carries it into the version directory.
+        super::state::write(&staging, appdir)?;
         artifact::apply(ctx, plan, &staging, &final_dir, &mut journal)?;
         let written = write_receipt(ctx, cask, version)?;
         receipt = Some(written);

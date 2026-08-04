@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Component, Path};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::{Utf8Component, Utf8Path, Utf8PathBuf};
 use serde_json::Value;
 use zapbrew_api::Cask;
 use zapbrew_prefix::{CommandSpec, LockGuard};
@@ -15,6 +15,7 @@ mod archive;
 mod artifact;
 pub mod install;
 pub mod list;
+mod state;
 mod transaction;
 pub mod uninstall;
 
@@ -135,6 +136,24 @@ fn safe_lexical(path: &Path) -> bool {
 
 fn path_exists(path: &Utf8Path) -> bool {
     fs::symlink_metadata(path).is_ok()
+}
+
+/// Resolve a raw (non-catalog) token to its exact Caskroom child, confining it to
+/// one nonempty normal relative path component. Empties, `.`, `..`, separators,
+/// absolute paths, and nested paths are rejected before any join so a traversal
+/// token can never leave the Caskroom.
+fn confined_caskroom_child(ctx: &Ctx, token: &str) -> Result<Utf8PathBuf, OpError> {
+    let mut components = Utf8Path::new(token).components();
+    let single = matches!(
+        (components.next(), components.next()),
+        (Some(Utf8Component::Normal(name)), None) if name == token
+    );
+    if !single {
+        return Err(OpError::Refusal {
+            message: format!("Cask '{token}' is unavailable."),
+        });
+    }
+    Ok(ctx.env.caskroom.join(token))
 }
 
 fn remove_entry(path: &Utf8Path) -> Result<(), OpError> {

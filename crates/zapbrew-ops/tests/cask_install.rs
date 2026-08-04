@@ -12,6 +12,7 @@ use support::{Fixture, fingerprint};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use zapbrew_ops::cask::install::{self, Args};
+use zapbrew_ops::cask::uninstall;
 use zapbrew_ops::{Ctx, OpError};
 use zapbrew_prefix::{CommandOutput, CommandRunner, CommandSpec};
 
@@ -517,6 +518,14 @@ async fn force_reinstall_failure_restores_old_artifact_and_version() {
     )
     .expect("write receipt");
     std::fs::create_dir_all(fixture.env.caskroom.join("editor/1.0")).expect("version dir");
+    std::fs::write(
+        fixture
+            .env
+            .caskroom
+            .join("editor/1.0/.zapbrew-install-state.json"),
+        format!("{{\"appdir\":\"{appdir}\"}}\n"),
+    )
+    .expect("old install state");
     std::fs::create_dir_all(appdir.join("Editor.app")).expect("old app");
     std::fs::write(appdir.join("Editor.app/run"), b"old-editor").expect("old run");
     // Unrelated occupant at the second app's target: the reinstall must refuse it.
@@ -628,6 +637,115 @@ async fn dmg_source_through_staging_symlink_refuses_before_mutation() {
         b"external-sentinel"
     );
     assert_eq!(fingerprint(&external), before);
+}
+
+#[tokio::test]
+async fn custom_appdir_uninstall_removes_stored_target_without_appdir_arg() {
+    let server = MockServer::start().await;
+    let body = tar_gz(&[("Custom.app/run", b"custom")]);
+    let sha = sha_hex(&body);
+    let url = serve(&server, "/Custom.tar.gz", body).await;
+    let value = cask("custom", &url, &sha, vec![json!({"app": ["Custom.app"]})]);
+
+    let fixture = Fixture::new().macos();
+    // Install into a scratch appdir that is not /Applications.
+    let appdir = fixture.env.home.join("Scratch/Applications");
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+    install::run(&ctx, install_args(&["custom"], &appdir, false))
+        .await
+        .expect("install into custom appdir");
+    assert!(
+        appdir.join("Custom.app/run").is_file(),
+        "app lands in custom appdir"
+    );
+
+    // Uninstall takes no appdir argument; it must read the install-time appdir
+    // from the promoted state and remove the custom target, not /Applications.
+    uninstall::run(
+        &ctx,
+        uninstall::Args {
+            tokens: vec!["custom".to_owned()],
+            zap: false,
+        },
+    )
+    .await
+    .expect("uninstall without appdir arg");
+    assert!(
+        !appdir.join("Custom.app").exists(),
+        "custom-appdir target must be removed"
+    );
+    assert!(
+        !fixture.env.caskroom.join("custom").exists(),
+        "version tree must be removed"
+    );
+    assert!(
+        !Utf8Path::new("/Applications/Custom.app").exists(),
+        "/Applications must be untouched"
+    );
+}
+
+#[tokio::test]
+async fn force_reinstall_with_changed_appdir_uses_each_plan_own_appdir() {
+    let server = MockServer::start().await;
+    let first = tar_gz(&[("Mover.app/run", b"first")]);
+    let first_sha = sha_hex(&first);
+    let first_url = serve(&server, "/Mover1.tar.gz", first).await;
+    let second = tar_gz(&[("Mover.app/run", b"second")]);
+    let second_sha = sha_hex(&second);
+    let second_url = serve(&server, "/Mover2.tar.gz", second).await;
+
+    let fixture = Fixture::new().macos();
+    let appdir_a = fixture.env.home.join("A/Applications");
+    let appdir_b = fixture.env.home.join("B/Applications");
+
+    // First install lands in appdir A.
+    let (ctx_a, _r) = fixture.context_casks(
+        vec![cask(
+            "mover",
+            &first_url,
+            &first_sha,
+            vec![json!({"app": ["Mover.app"]})],
+        )],
+        Arc::new(PanicRunner),
+        reqwest::Client::new(),
+    );
+    install::run(&ctx_a, install_args(&["mover"], &appdir_a, false))
+        .await
+        .expect("first install");
+    assert_eq!(
+        std::fs::read(appdir_a.join("Mover.app/run")).expect("a run"),
+        b"first"
+    );
+
+    // Force reinstall targets appdir B. The old plan is reconstructed against the
+    // stored appdir A, so A's target is backed up and cleared; the new plan uses
+    // B, so B receives the new artifact.
+    let (ctx_b, _r2) = fixture.context_casks(
+        vec![cask(
+            "mover",
+            &second_url,
+            &second_sha,
+            vec![json!({"app": ["Mover.app"]})],
+        )],
+        Arc::new(PanicRunner),
+        reqwest::Client::new(),
+    );
+    install::run(&ctx_b, install_args(&["mover"], &appdir_b, true))
+        .await
+        .expect("force reinstall into changed appdir");
+
+    assert!(
+        !appdir_a.join("Mover.app").exists(),
+        "old appdir target removed"
+    );
+    assert_eq!(
+        std::fs::read(appdir_b.join("Mover.app/run")).expect("b run"),
+        b"second"
+    );
+    let staging = fixture.env.caskroom.join(".staging");
+    let leftovers = std::fs::read_dir(&staging).map(|e| e.count()).unwrap_or(0);
+    assert_eq!(leftovers, 0, "staging empty after success");
 }
 
 fn _use_ctx(_ctx: &Ctx) {}

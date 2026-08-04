@@ -40,6 +40,7 @@ impl CommandRunner for RecordingRunner {
 fn receipt(fixture: &Fixture, token: &str, raw: &Value) {
     let version = fixture.env.caskroom.join(token).join("1.0");
     fs::create_dir_all(&version).expect("version");
+    write_state(fixture, token, "/Applications");
     let path = fixture
         .env
         .caskroom
@@ -48,6 +49,19 @@ fn receipt(fixture: &Fixture, token: &str, raw: &Value) {
         .join(format!("{token}.json"));
     fs::create_dir_all(path.parent().expect("parent")).expect("receipt parent");
     fs::write(path, serde_json::to_vec_pretty(raw).expect("raw")).expect("receipt");
+}
+
+/// Write the install-state sidecar that a real install promotes into the version
+/// tree; uninstall reads the install-time appdir from it.
+fn write_state(fixture: &Fixture, token: &str, appdir: &str) {
+    let path = fixture
+        .env
+        .caskroom
+        .join(token)
+        .join("1.0")
+        .join(".zapbrew-install-state.json");
+    fs::create_dir_all(path.parent().expect("state parent")).expect("state dir");
+    fs::write(path, format!("{{\"appdir\":\"{appdir}\"}}\n")).expect("state");
 }
 
 fn cask(fixture: &Fixture) -> Value {
@@ -178,6 +192,7 @@ async fn missing_install_and_missing_receipt_refuse() {
     );
 
     fs::create_dir_all(fixture.env.caskroom.join("broken/1.0")).expect("version");
+    write_state(&fixture, "broken", "/Applications");
     let broken = uninstall::run(
         &ctx,
         Args {
@@ -322,6 +337,76 @@ async fn traversal_launchctl_label_refuses_before_any_command() {
         b"external-sentinel"
     );
     assert!(fixture.env.caskroom.join("evil-label/1.0").is_dir());
+}
+
+#[tokio::test]
+async fn traversal_and_nested_and_absolute_tokens_refuse_before_join() {
+    let fixture = Fixture::new().macos();
+    // A sentinel a naive `caskroom.join("../evil")` would reach; it must survive.
+    let escape = fixture
+        .env
+        .caskroom
+        .parent()
+        .expect("caskroom parent")
+        .join("evil");
+    fs::create_dir_all(&escape).expect("escape sentinel");
+    let runner = Arc::new(RecordingRunner::default());
+    let (ctx, _reporter) = fixture.context_casks(vec![], runner.clone(), reqwest::Client::new());
+
+    for token in ["../evil", "nested/token", "/etc", ".", "..", ""] {
+        let result = uninstall::run(
+            &ctx,
+            Args {
+                tokens: vec![token.to_owned()],
+                zap: false,
+            },
+        )
+        .await;
+        assert!(
+            matches!(&result, Err(OpError::Refusal { message }) if message == &format!("Cask '{token}' is unavailable.")),
+            "token {token:?} must refuse as unavailable, got {result:?}"
+        );
+    }
+    assert!(runner.calls().is_empty(), "no host command may run");
+    assert!(escape.is_dir(), "traversal sentinel must be untouched");
+}
+
+#[tokio::test]
+async fn symlink_token_refuses_and_preserves_target() {
+    let fixture = Fixture::new().macos();
+    let raw = json!({
+        "token": "real",
+        "version": "1.0",
+        "sha256": "no_check",
+        "url": "https://example.test/app.zip",
+        "artifacts": [{"artifact": ["stored.txt"], "target": format!("{}/installed.txt", fixture.env.home)}]
+    });
+    fs::create_dir_all(&fixture.env.home).expect("home");
+    receipt(&fixture, "real", &raw);
+    // A Caskroom entry that is itself a symlink to the real install must not be a
+    // valid uninstall target: no-follow metadata rejects it.
+    let link = fixture.env.caskroom.join("link");
+    std::os::unix::fs::symlink(fixture.env.caskroom.join("real"), &link).expect("symlink");
+    let runner = Arc::new(RecordingRunner::default());
+    let (ctx, _reporter) = fixture.context_casks(vec![], runner.clone(), reqwest::Client::new());
+
+    let result = uninstall::run(
+        &ctx,
+        Args {
+            tokens: vec!["link".to_owned()],
+            zap: false,
+        },
+    )
+    .await;
+    assert!(
+        matches!(&result, Err(OpError::Refusal { message }) if message == "Cask 'link' is unavailable."),
+        "symlink token must refuse, got {result:?}"
+    );
+    assert!(runner.calls().is_empty());
+    assert!(
+        fixture.env.caskroom.join("real/1.0").is_dir(),
+        "real install survives"
+    );
 }
 
 fn _path(_path: &Utf8Path) {}
