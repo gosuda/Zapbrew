@@ -280,8 +280,18 @@ pub fn plan(command: Commands, globals: &GlobalArgs, width: usize) -> Result<Pla
         },
         Commands::Desc(args) => Plan {
             needs_formula: true,
-            needs_cask: false,
-            kind: OpKind::Desc(desc::Args { names: args.names }),
+            needs_cask: args.search.is_some()
+                || args.search_name.is_some()
+                || args.search_description.is_some()
+                || args.cask,
+            kind: OpKind::Desc(desc::Args {
+                names: args.names,
+                search: args.search,
+                search_name: args.search_name,
+                search_description: args.search_description,
+                formula: args.formula,
+                cask: args.cask,
+            }),
         },
         Commands::Config => Plan {
             needs_formula: false,

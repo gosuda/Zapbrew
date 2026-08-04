@@ -132,6 +132,7 @@ async fn hit_alias_oldname_null_and_argument_order_are_exact_and_read_only() {
                 "beta".to_owned(),
                 "first".to_owned(),
             ],
+            ..Default::default()
         },
     )
     .await
@@ -157,6 +158,7 @@ async fn missing_formula_is_typed_and_emits_nothing() {
         &ctx,
         Args {
             names: vec!["missing".to_owned()],
+            ..Default::default()
         },
     )
     .await
@@ -171,4 +173,68 @@ async fn missing_formula_is_typed_and_emits_nothing() {
         "No available formula with the name \"missing\"."
     );
     assert!(reporter.take().is_empty());
+}
+
+#[tokio::test]
+async fn search_finds_name_and_description_matches() {
+    let temp = TempDir::new().expect("temp");
+    let (ctx, reporter) = context(env(&temp));
+
+    desc::run(
+        &ctx,
+        Args {
+            search: Some("alpha".to_owned()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("search");
+
+    let got = reporter.take().join("\n");
+    assert!(
+        got.contains("homebrew/core/alpha: Alpha description"),
+        "{got}"
+    );
+}
+
+#[tokio::test]
+async fn search_name_only_matches_names() {
+    let temp = TempDir::new().expect("temp");
+    let (ctx, reporter) = context(env(&temp));
+
+    desc::run(
+        &ctx,
+        Args {
+            search_name: Some("^alpha$".to_owned()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("search name");
+
+    let got = reporter.take().join("\n");
+    assert!(got.contains("homebrew/core/alpha"), "{got}");
+    assert!(!got.contains("Gamma"), "{got}");
+}
+
+#[tokio::test]
+async fn search_description_only_matches_descriptions() {
+    let temp = TempDir::new().expect("temp");
+    let (ctx, reporter) = context(env(&temp));
+
+    desc::run(
+        &ctx,
+        Args {
+            search_description: Some("Gamma".to_owned()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("search description");
+
+    let got = reporter.take().join("\n");
+    assert!(
+        got.contains("other/tools/gamma: Gamma description"),
+        "{got}"
+    );
 }

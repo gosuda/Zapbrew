@@ -54,7 +54,7 @@ pub struct Cli {
 #[derive(Debug, Args)]
 pub struct GlobalArgs {
     /// Enable debug output.
-    #[arg(short = 'd', long, global = true)]
+    #[arg(long, global = true)]
     pub debug: bool,
 
     /// Suppress non-essential output.
@@ -119,8 +119,8 @@ pub enum Commands {
     Cleanup(CleanupArgs),
     /// Search for formulae and casks.
     Search(SearchArgs),
-    /// Show descriptions of formulae.
-    Desc(NamesArgs),
+    /// Show descriptions or search names/descriptions of formulae/casks.
+    Desc(DescArgs),
     /// Show the effective configuration.
     Config,
     /// Print shell integration for the environment.
@@ -148,6 +148,33 @@ pub enum Commands {
 pub struct NamesArgs {
     /// Formula names.
     pub names: Vec<String>,
+}
+
+/// Homebrew `desc` arguments: named lookup or regex search across names/descriptions.
+#[derive(Debug, Args)]
+pub struct DescArgs {
+    /// Formula, cask, or search text.
+    pub names: Vec<String>,
+
+    /// Search names and descriptions for <text>.
+    #[arg(short = 's', long, group = "search_mode")]
+    pub search: Option<String>,
+
+    /// Search only names.
+    #[arg(short = 'n', long, group = "search_mode")]
+    pub search_name: Option<String>,
+
+    /// Search only descriptions.
+    #[arg(short = 'd', long, group = "search_mode")]
+    pub search_description: Option<String>,
+
+    /// Treat named arguments as formulae.
+    #[arg(long)]
+    pub formula: bool,
+
+    /// Treat named arguments as casks.
+    #[arg(long, conflicts_with = "formula")]
+    pub cask: bool,
 }
 
 #[derive(Debug, Args)]
@@ -622,7 +649,7 @@ mod tests {
 
     #[test]
     fn globals_before_and_after_subcommand() {
-        let before = parse(&["zapbrew", "-d", "-q", "install", "wget"]);
+        let before = parse(&["zapbrew", "--debug", "-q", "install", "wget"]);
         assert!(before.globals.debug);
         assert!(before.globals.quiet);
         assert!(!before.globals.verbose);

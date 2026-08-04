@@ -13,7 +13,8 @@ use zapbrew_prefix::Env;
 use crate::cli::Cli;
 
 /// Message refusing more than one simultaneous path query.
-const MULTIPLE: &str = "only one of --prefix, --cellar, --caskroom, --cache, --repository, --taps may be given";
+const MULTIPLE: &str =
+    "only one of --prefix, --cellar, --caskroom, --cache, --repository, --taps may be given";
 
 /// Message refusing `--cache <formula>`; the download path needs catalog
 /// metadata the approved plan does not require here.
