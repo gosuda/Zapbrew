@@ -16,6 +16,8 @@ use crate::error::ApiError;
 // in every build, and no environment variable or runtime flag can bypass it. A
 // `test-trust-root` build simply loses the ability to verify real Homebrew
 // catalogs. This feature is nondefault and absent from the normal/build graph.
+#[cfg(all(feature = "test-trust-root", not(debug_assertions)))]
+compile_error!("test-trust-root is forbidden in release builds");
 #[cfg(not(feature = "test-trust-root"))]
 const TRUST_ROOT_PEM: &str = include_str!("homebrew-1.pem");
 #[cfg(feature = "test-trust-root")]
