@@ -67,6 +67,9 @@ pub enum OpError {
         keg: Utf8PathBuf,
         leftovers: Vec<Utf8PathBuf>,
     },
+
+    #[error("doctor found problems")]
+    DoctorProblemsFound,
 }
 
 impl OpError {

@@ -107,8 +107,13 @@ pub mod doctor_test_support {
         unwritable: &BTreeSet<Utf8PathBuf>,
     ) -> Result<(), OpError> {
         let findings = findings(ctx, path_entries, unwritable)?;
+        let has_findings = !findings.is_empty();
         crate::doctor::report(ctx, findings);
-        Ok(())
+        if has_findings {
+            Err(OpError::DoctorProblemsFound)
+        } else {
+            Ok(())
+        }
     }
 }
 

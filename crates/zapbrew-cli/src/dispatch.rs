@@ -511,6 +511,9 @@ fn finish(result: Result<(), OpError>, ctx: &Ctx) -> ExitCode {
 /// Report an error once, appending a catalog-computed did-you-mean suffix for a
 /// missing formula. Every other error renders through the shared owner.
 fn report(ctx: &Ctx, err: &OpError) {
+    if matches!(err, OpError::DoctorProblemsFound) {
+        return;
+    }
     if let OpError::MissingFormula { name } = err
         && let Resolution::Missing { did_you_mean } = ctx.catalog.resolve(name)
         && !did_you_mean.is_empty()

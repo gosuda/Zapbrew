@@ -25,6 +25,24 @@ fn clean_report_is_exact_and_checker_does_not_mutate_or_run_commands() {
         fingerprint(ctx.env.prefix.parent().expect("scratch root"))
     );
 }
+#[tokio::test]
+async fn doctor_run_returns_error_when_findings_exist() {
+    let fixture = Fixture::new();
+    fs::create_dir_all(fixture.env.prefix.join("bin")).expect("bin");
+    symlink("missing", fixture.env.prefix.join("bin/broken")).expect("broken symlink");
+    let (ctx, reporter) = fixture.context(Vec::new());
+
+    let result = zapbrew_ops::doctor::run(&ctx, zapbrew_ops::doctor::Args).await;
+    assert!(matches!(
+        result,
+        Err(zapbrew_ops::OpError::DoctorProblemsFound)
+    ));
+    let log = reporter.take();
+    assert!(
+        log.iter()
+            .any(|item| item.starts_with("opoo:Broken symlinks were found:"))
+    );
+}
 
 #[test]
 fn reports_sorted_broken_symlinks_and_incomplete_downloads() {
@@ -194,8 +212,9 @@ fn injected_writability_reports_sorted_prefix_and_cache_paths() {
     let (ctx, reporter) = fixture.context(Vec::new());
     let unwritable = BTreeSet::from([ctx.env.prefix.clone(), ctx.env.cache.clone()]);
 
-    doctor_test_support::run_with(&ctx, &[ctx.env.prefix.join("bin")], &unwritable)
-        .expect("doctor");
+    let err = doctor_test_support::run_with(&ctx, &[ctx.env.prefix.join("bin")], &unwritable)
+        .expect_err("doctor problems found");
+    assert!(matches!(err, zapbrew_ops::OpError::DoctorProblemsFound));
     assert_eq!(
         reporter.take(),
         [format!(

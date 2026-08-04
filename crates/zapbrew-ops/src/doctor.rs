@@ -17,13 +17,16 @@ pub async fn run(ctx: &Ctx, _args: Args) -> Result<(), OpError> {
             .collect::<Vec<_>>(),
         None => Vec::new(),
     };
-    report(
-        ctx,
-        findings(ctx, &path_entries, &|path| {
-            access(path.as_std_path(), Access::WRITE_OK).is_ok()
-        })?,
-    );
-    Ok(())
+    let items = findings(ctx, &path_entries, &|path| {
+        access(path.as_std_path(), Access::WRITE_OK).is_ok()
+    })?;
+    let has_findings = !items.is_empty();
+    report(ctx, items);
+    if has_findings {
+        Err(OpError::DoctorProblemsFound)
+    } else {
+        Ok(())
+    }
 }
 
 pub(crate) fn report(ctx: &Ctx, findings: Vec<String>) {
