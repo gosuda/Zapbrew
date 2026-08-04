@@ -51,11 +51,20 @@ impl CommandRunner for CloneRunner {
         self.calls.lock().expect("runner lock").push(argv);
 
         match &self.result {
-            ResultKind::Failure => Ok(CommandOutput::new(
-                ExitStatus::from_raw(17 << 8),
-                Vec::new(),
-                b"clone rejected\n".to_vec(),
-            )),
+            ResultKind::Failure => {
+                let destination = spec
+                    .arguments()
+                    .last()
+                    .map(PathBuf::from)
+                    .ok_or_else(|| io::Error::other("clone destination missing"))?;
+                fs::create_dir_all(&destination)?;
+                fs::write(destination.join("partial"), b"partial")?;
+                Ok(CommandOutput::new(
+                    ExitStatus::from_raw(17 << 8),
+                    Vec::new(),
+                    b"clone rejected\n".to_vec(),
+                ))
+            }
             ResultKind::Clone(files) => {
                 let destination = spec
                     .arguments()
@@ -280,4 +289,5 @@ async fn invalid_existing_and_failed_clones_are_stable_and_do_not_run_host_git()
     assert!(matches!(error, OpError::CommandFailed { .. }));
     assert_eq!(reporter.take(), ["ohai:Tapping acme/failing"]);
     assert_eq!(runner.calls().len(), 1);
+    assert!(fs::symlink_metadata(fixture.env.library.join("Taps/acme/homebrew-failing")).is_err());
 }
