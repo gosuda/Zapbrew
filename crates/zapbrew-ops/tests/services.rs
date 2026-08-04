@@ -137,7 +137,8 @@ fn renders_exact_systemd_unit_with_sorted_environment_and_safe_argv_quoting() {
         "error_log_path": "$HOMEBREW_PREFIX/var/log/demo.err",
         "environment_variables": {
             "ZETA": "last",
-            "ALPHA": "$HOMEBREW_PREFIX/bin"
+            "ALPHA": "$HOMEBREW_PREFIX/bin",
+            "PERCENT": "100%",
         }
     });
 
@@ -146,7 +147,7 @@ fn renders_exact_systemd_unit_with_sorted_environment_and_safe_argv_quoting() {
 
     assert_eq!(
         normalized(&rendered, &fixture),
-        "[Unit]\nDescription=Homebrew generated unit for demo\n\n[Install]\nWantedBy=default.target\n\n[Service]\nType=oneshot\nExecStart=\"$ROOT/prefix/opt/demo/bin/server\" \"two words\" \"quote\\\"slash\\\\\" \"100%% ready\"\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=20\nNice=-5\nWorkingDirectory=$ROOT/home/work\nRootDirectory=$ROOT/prefix/root\nStandardInput=file:$ROOT/prefix/Cellar/input\nStandardOutput=append:$ROOT/prefix/var/log/demo.log\nStandardError=append:$ROOT/prefix/var/log/demo.err\nEnvironment=\"ALPHA=$ROOT/prefix/bin\"\nEnvironment=\"ZETA=last\"\n"
+        "[Unit]\nDescription=Homebrew generated unit for demo\n\n[Install]\nWantedBy=default.target\n\n[Service]\nType=oneshot\nExecStart=\"$ROOT/prefix/opt/demo/bin/server\" \"two words\" \"quote\\\"slash\\\\\" \"100%% ready\"\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=20\nNice=-5\nWorkingDirectory=$ROOT/home/work\nRootDirectory=$ROOT/prefix/root\nStandardInput=file:$ROOT/prefix/Cellar/input\nStandardOutput=append:$ROOT/prefix/var/log/demo.log\nStandardError=append:$ROOT/prefix/var/log/demo.err\nEnvironment=\"ALPHA=$ROOT/prefix/bin\"\nEnvironment=\"PERCENT=100%%\"\nEnvironment=\"ZETA=last\"\n"
     );
 }
 

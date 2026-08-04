@@ -810,9 +810,11 @@ fn systemd_quote(value: &str) -> String {
     output.push('"');
     output
 }
-
 fn systemd_escape(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
+    value
+        .replace('%', "%%")
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
 }
 
 fn refusal(message: String) -> OpError {
