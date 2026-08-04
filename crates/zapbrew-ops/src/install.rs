@@ -62,6 +62,10 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
     if args.dry_run {
         state = scan_selected(&ctx.env, &affected)?;
     } else {
+        // brew's perform_preinstall_checks: refresh `<prefix>/lib/ld.so` so a
+        // fresh Linux prefix can run relocated bottles whose interpreter
+        // points there. Never mutates under `--dry-run`.
+        zapbrew_prefix::symlink_ld_so(&ctx.env)?;
         _locks = acquire_formula_locks(&ctx.env, &affected)?;
         state = scan_selected(&ctx.env, &affected)?;
     }

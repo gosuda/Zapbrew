@@ -47,6 +47,9 @@ pub enum PrefixError {
         "A `{command}` process has already locked {path}. Please wait for it to finish or terminate it to continue."
     )]
     LockBusy { command: String, path: Utf8PathBuf },
+
+    #[error("Unable to locate the system's dynamic linker")]
+    NoSystemLdSo,
 }
 
 impl PrefixError {

@@ -9,8 +9,9 @@ use std::str::FromStr;
 use camino::Utf8PathBuf;
 use tempfile::TempDir;
 use zapbrew_prefix::{
-    Env, EnvDetectInput, Keg, LockGuard, Prefix, PrefixError, Rack, SystemCommandRunner, is_pinned,
-    linked_path, opt_path, pin, pin_relative_target, resolve_linked, resolve_opt, unpin,
+    CommandOutput, CommandRunner, CommandSpec, Env, EnvDetectInput, Keg, LockGuard, Prefix,
+    PrefixError, Rack, SystemCommandRunner, is_pinned, linked_path, opt_path, pin,
+    pin_relative_target, resolve_linked, resolve_opt, unpin,
 };
 use zapbrew_types::{FormulaName, PkgVersion};
 
@@ -112,6 +113,103 @@ fn detect_prefix_env(prefix: &camino::Utf8Path) -> Env {
         Ok(env) => env,
         Err(err) => panic!("detect env: {err}"),
     }
+}
+
+#[test]
+fn symlink_ld_so_creates_link_to_system_loader_on_linux() {
+    let (_temp, root) = utf8_temp();
+    let prefix = root.join("prefix");
+    let env = detect_prefix_env(&prefix);
+    let link = prefix.join("lib/ld.so");
+
+    match zapbrew_prefix::symlink_ld_so(&env) {
+        Ok(()) => {}
+        Err(PrefixError::NoSystemLdSo) => {
+            // Host without a discoverable linker (unusual): the contract is a
+            // typed refusal, not a half-created link.
+            assert!(!link.exists());
+            return;
+        }
+        Err(err) => panic!("symlink_ld_so: {err}"),
+    }
+
+    let meta = match link.symlink_metadata() {
+        Ok(meta) => meta,
+        Err(err) => panic!("link metadata: {err}"),
+    };
+    assert!(meta.file_type().is_symlink(), "ld.so must be a symlink");
+    let target = match fs::read_link(link.as_std_path()) {
+        Ok(target) => target,
+        Err(err) => panic!("read link: {err}"),
+    };
+    assert!(
+        target.is_absolute() && target.exists(),
+        "ld.so must point at an existing loader, got {target:?}"
+    );
+
+    // Idempotent: a second run keeps the same link.
+    match zapbrew_prefix::symlink_ld_so(&env) {
+        Ok(()) => {}
+        Err(err) => panic!("second symlink_ld_so: {err}"),
+    }
+    let after = match fs::read_link(link.as_std_path()) {
+        Ok(after) => after,
+        Err(err) => panic!("read link after: {err}"),
+    };
+    assert_eq!(after, target, "existing correct link must be preserved");
+}
+
+#[test]
+fn symlink_ld_so_is_noop_on_macos() {
+    use std::os::unix::process::ExitStatusExt;
+    use std::sync::Mutex;
+
+    struct SwVersRunner {
+        records: Mutex<usize>,
+    }
+    impl CommandRunner for SwVersRunner {
+        fn run(&self, _spec: &CommandSpec) -> Result<CommandOutput, io::Error> {
+            *self.records.lock().expect("records") += 1;
+            Ok(CommandOutput::new(
+                std::process::ExitStatus::from_raw(0),
+                b"15.0\n".to_vec(),
+                Vec::new(),
+            ))
+        }
+    }
+    let runner = SwVersRunner {
+        records: Mutex::new(0),
+    };
+
+    let (_temp, root) = utf8_temp();
+    let prefix = root.join("prefix");
+    let input = EnvDetectInput {
+        os: "macos".to_owned(),
+        arch: "arm64".to_owned(),
+        home: prefix.to_path_buf(),
+        xdg_cache_home: None,
+        vars: HashMap::from([
+            ("HOMEBREW_PREFIX".to_owned(), prefix.to_string()),
+            (
+                "HOMEBREW_CELLAR".to_owned(),
+                prefix.join("Cellar").to_string(),
+            ),
+            ("HOMEBREW_TEMP".to_owned(), prefix.join("tmp").to_string()),
+        ]),
+        available_parallelism: 2,
+    };
+    let env = match Env::detect_from(&input, &runner) {
+        Ok(env) => env,
+        Err(err) => panic!("detect env: {err}"),
+    };
+    match zapbrew_prefix::symlink_ld_so(&env) {
+        Ok(()) => {}
+        Err(err) => panic!("macOS symlink_ld_so: {err}"),
+    }
+    assert!(
+        !prefix.join("lib/ld.so").exists(),
+        "macOS must not create a Linux loader link"
+    );
 }
 
 #[test]

@@ -35,6 +35,10 @@ struct UpgradePlan<'a> {
 }
 
 pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
+    // brew's perform_preinstall_checks: refresh `<prefix>/lib/ld.so` for
+    // relocated Linux bottles on a fresh prefix.
+    zapbrew_prefix::symlink_ld_so(&ctx.env)?;
+
     let named = !args.names.is_empty();
     let (names, formulae) = if named {
         resolve_named(ctx, &args.names).await?
