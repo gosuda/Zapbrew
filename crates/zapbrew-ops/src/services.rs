@@ -458,10 +458,15 @@ fn parse_keep_alive(
                 if let Some(flag) = object.get(json_key).and_then(Value::as_bool) {
                     let mut dictionary = plist::Dictionary::new();
                     dictionary.insert(plist_key.to_owned(), PlistValue::Boolean(flag));
-                    return Ok((
-                        flag.then_some(mode),
-                        Some(PlistValue::Dictionary(dictionary)),
-                    ));
+                    let restart = if flag {
+                        mode
+                    } else {
+                        match mode {
+                            RestartMode::Failure => RestartMode::Success,
+                            RestartMode::Success => RestartMode::Failure,
+                        }
+                    };
+                    return Ok((Some(restart), Some(PlistValue::Dictionary(dictionary))));
                 }
             }
             Err(refusal(format!(

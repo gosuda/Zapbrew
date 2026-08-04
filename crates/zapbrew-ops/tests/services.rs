@@ -152,6 +152,20 @@ fn renders_exact_systemd_unit_with_sorted_environment_and_safe_argv_quoting() {
 }
 
 #[test]
+fn successful_exit_false_restarts_failed_systemd_services() {
+    let fixture = Fixture::new();
+    let service = json!({
+        "run": "$HOMEBREW_PREFIX/bin/demo",
+        "keep_alive": {"successful_exit": false}
+    });
+
+    let rendered = services_test_support::render_systemd_unit(&fixture.env, "demo", &service)
+        .expect("systemd unit");
+
+    assert!(rendered.contains("\nRestart=on-failure\n"));
+}
+
+#[test]
 fn renders_exact_interval_and_cron_timers() {
     let fixture = Fixture::new();
     let interval = json!({
