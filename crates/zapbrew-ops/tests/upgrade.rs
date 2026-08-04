@@ -30,8 +30,11 @@ impl CommandRunner for PanicRunner {
 }
 
 #[derive(Default)]
-struct RecordingReporter(Mutex<Vec<String>>);
+struct RecordingReporter(Mutex<Vec<String>>, bool, bool);
 impl RecordingReporter {
+    fn with(quiet: bool, verbose: bool) -> Self {
+        Self(Mutex::new(Vec::new()), quiet, verbose)
+    }
     fn push(&self, channel: &str, message: &str) {
         self.0
             .lock()
@@ -60,6 +63,12 @@ impl Reporter for RecordingReporter {
     }
     fn eprint(&self, message: &str) {
         self.push("eprint", message);
+    }
+    fn is_quiet(&self) -> bool {
+        self.1
+    }
+    fn is_verbose(&self) -> bool {
+        self.2
     }
 }
 
@@ -91,10 +100,18 @@ fn env(temp: &TempDir, no_cleanup: bool) -> Env {
 }
 
 fn context(env: Env, formulae: Vec<Value>) -> (Ctx, Arc<RecordingReporter>) {
+    context_flags(env, formulae, RecordingReporter::default())
+}
+
+fn context_flags(
+    env: Env,
+    formulae: Vec<Value>,
+    recording: RecordingReporter,
+) -> (Ctx, Arc<RecordingReporter>) {
     let payload = serde_json::to_vec(&formulae).expect("catalog payload");
     let catalog = Arc::new(Catalog::from_payload(&payload, &env.bottle_tag).expect("catalog"));
     let casks = Arc::new(CaskCatalog::from_payload(b"[]", &env.bottle_tag).expect("casks"));
-    let recording = Arc::new(RecordingReporter::default());
+    let recording = Arc::new(recording);
     let reporter: Arc<dyn Reporter> = recording.clone();
     (
         Ctx {
@@ -485,4 +502,41 @@ async fn cleanup_failure_warns_but_keeps_new_keg_active() {
     assert!(reporter.take().iter().any(|message| {
         message.starts_with("opoo:Cleanup incomplete after upgrading cleanupupgrade:")
     }));
+}
+
+#[tokio::test]
+async fn caveats_shown_by_default_and_dropped_when_quiet() {
+    let server = MockServer::start().await;
+    let tarball = bottle("foo", "1.1");
+    mount(&server, "/foo.tar.gz", &tarball, 2).await;
+    let url = format!("{}/foo.tar.gz", server.uri());
+    let mut foo = formula("foo", "1.1", 0, 0, &url, &digest(&tarball));
+    foo["caveats"] = json!("Config lives in $HOMEBREW_PREFIX/etc.");
+
+    let default_temp = TempDir::new().expect("temp");
+    let default_env = env(&default_temp, false);
+    installed(&default_env, "foo", "1.0", 0, true);
+    let (default_ctx, default) =
+        context_flags(default_env, vec![foo.clone()], RecordingReporter::default());
+    upgrade::run(&default_ctx, named("foo"))
+        .await
+        .expect("upgrade");
+    let default_messages = default.take();
+    assert!(default_messages.iter().any(|line| line == "ohai:Caveats"));
+
+    let quiet_temp = TempDir::new().expect("temp");
+    let quiet_env = env(&quiet_temp, false);
+    installed(&quiet_env, "foo", "1.0", 0, true);
+    let (quiet_ctx, quiet) =
+        context_flags(quiet_env, vec![foo], RecordingReporter::with(true, false));
+    upgrade::run(&quiet_ctx, named("foo"))
+        .await
+        .expect("upgrade");
+    let quiet_messages = quiet.take();
+    assert!(!quiet_messages.iter().any(|line| line == "ohai:Caveats"));
+    assert!(
+        !quiet_messages
+            .iter()
+            .any(|line| line.starts_with("print:Config lives in"))
+    );
 }

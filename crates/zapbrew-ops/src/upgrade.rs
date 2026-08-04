@@ -172,6 +172,7 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
             ));
         }
         if plan.installed_on_request
+            && !ctx.reporter.is_quiet()
             && let Some(caveats) = plan.formula.caveats.as_deref()
             && !caveats.is_empty()
         {

@@ -24,8 +24,11 @@ impl CommandRunner for PanicRunner {
 }
 
 #[derive(Default)]
-struct RecordingReporter(Mutex<Vec<String>>);
+struct RecordingReporter(Mutex<Vec<String>>, bool, bool);
 impl RecordingReporter {
+    fn with(quiet: bool, verbose: bool) -> Self {
+        Self(Mutex::new(Vec::new()), quiet, verbose)
+    }
     fn push(&self, channel: &str, message: &str) {
         self.0
             .lock()
@@ -56,6 +59,12 @@ impl Reporter for RecordingReporter {
     fn eprint(&self, message: &str) {
         self.push("eprint", message);
     }
+    fn is_quiet(&self) -> bool {
+        self.1
+    }
+    fn is_verbose(&self) -> bool {
+        self.2
+    }
 }
 
 fn env(temp: &TempDir) -> Env {
@@ -85,8 +94,16 @@ fn ctx(env: Env, formulae: Vec<Value>) -> Ctx {
 }
 
 fn ctx_with_reporter(env: Env, formulae: Vec<Value>) -> (Ctx, Arc<RecordingReporter>) {
+    ctx_with_flags(env, formulae, RecordingReporter::default())
+}
+
+fn ctx_with_flags(
+    env: Env,
+    formulae: Vec<Value>,
+    recording: RecordingReporter,
+) -> (Ctx, Arc<RecordingReporter>) {
     let bytes = serde_json::to_vec(&formulae).expect("json");
-    let recording = Arc::new(RecordingReporter::default());
+    let recording = Arc::new(recording);
     (
         Ctx {
             catalog: Arc::new(Catalog::from_payload(&bytes, &env.bottle_tag).expect("catalog")),
@@ -295,4 +312,40 @@ async fn reinstall_caveats_and_summary_match_install_output() {
         format!("print:{0}|{0}|{0}", context.env.prefix)
     );
     assert!(reinstall_output[2].ends_with("KB"));
+}
+
+#[tokio::test]
+async fn quiet_reinstall_drops_caveats() {
+    let server = MockServer::start().await;
+    let bottle = tarball("root", &[("bin/root", b"old")]);
+    let digest = sha(&bottle);
+    Mock::given(method("GET"))
+        .and(path("/root"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(bottle.clone()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let temp = TempDir::new().expect("temp");
+    let mut root = formula(&format!("{}/root", server.uri()), &digest);
+    root["caveats"] = json!("Config lives in $HOMEBREW_PREFIX/etc.");
+    let (context, reporter) =
+        ctx_with_flags(env(&temp), vec![root], RecordingReporter::with(true, false));
+
+    initial_install(&context).await;
+    reporter.take();
+    reinstall::run(
+        &context,
+        reinstall::Args {
+            names: vec!["root".to_owned()],
+        },
+    )
+    .await
+    .expect("reinstall");
+    let messages = reporter.take();
+    assert!(!messages.iter().any(|line| line == "ohai:Caveats"));
+    assert!(
+        !messages
+            .iter()
+            .any(|line| line.starts_with("print:Config lives in"))
+    );
 }

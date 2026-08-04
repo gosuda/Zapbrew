@@ -29,6 +29,8 @@ impl CommandRunner for PanicRunner {
 #[derive(Default)]
 struct RecordingReporter {
     messages: Mutex<Vec<String>>,
+    quiet: bool,
+    verbose: bool,
 }
 
 impl RecordingReporter {
@@ -63,6 +65,12 @@ impl Reporter for RecordingReporter {
     fn eprint(&self, message: &str) {
         self.record("eprint", message);
     }
+    fn is_quiet(&self) -> bool {
+        self.quiet
+    }
+    fn is_verbose(&self) -> bool {
+        self.verbose
+    }
 }
 
 fn scratch_env(temp: &TempDir) -> Env {
@@ -89,10 +97,18 @@ fn scratch_env(temp: &TempDir) -> Env {
 }
 
 fn context(env: Env, formulae: Vec<Value>) -> (Ctx, Arc<RecordingReporter>) {
+    context_flags(env, formulae, RecordingReporter::default())
+}
+
+fn context_flags(
+    env: Env,
+    formulae: Vec<Value>,
+    recording: RecordingReporter,
+) -> (Ctx, Arc<RecordingReporter>) {
     let payload = serde_json::to_vec(&formulae).expect("catalog json");
     let catalog = Arc::new(Catalog::from_payload(&payload, &env.bottle_tag).expect("catalog"));
     let casks = Arc::new(CaskCatalog::from_payload(b"[]", &env.bottle_tag).expect("casks"));
-    let recording = Arc::new(RecordingReporter::default());
+    let recording = Arc::new(recording);
     let reporter: Arc<dyn Reporter> = recording.clone();
     (
         Ctx {
@@ -219,19 +235,69 @@ async fn installs_real_bottle_with_tab_links_skeleton_caveats_and_summary() {
 
     let messages = reporter.take();
     assert_eq!(
-        &messages[..4],
+        &messages[..3],
         vec![
             "ohai:Fetching root".to_owned(),
-            format!("oh1:Downloading {}/root", server.uri()),
             "ohai:Pouring root--1.0.x86_64_linux.bottle.tar.gz".to_owned(),
             "ohai:Caveats".to_owned(),
         ]
     );
     assert_eq!(
-        messages[4],
+        messages[3],
         format!("print:Config lives in {}/etc.", ctx.env.prefix)
     );
-    assert!(messages[5].starts_with(&format!("print:🍺  {keg}: ")));
+    assert!(messages[4].starts_with(&format!("print:🍺  {keg}: ")));
+}
+
+#[tokio::test]
+async fn verbose_emits_download_url_and_quiet_drops_caveats() {
+    let server = MockServer::start().await;
+    let tarball = bottle("root", "1.0", &[("bin/root", b"root")]);
+    let sha = digest(&tarball);
+    mount_blob(&server, "/root", &tarball, 2).await;
+    let verbose_temp = TempDir::new().expect("temp");
+    let quiet_temp = TempDir::new().expect("temp");
+    let mut root = formula("root", "1.0", &format!("{}/root", server.uri()), &sha);
+    root["caveats"] = json!("Config lives in $HOMEBREW_PREFIX/etc.");
+
+    let (verbose_ctx, verbose) = context_flags(
+        scratch_env(&verbose_temp),
+        vec![root.clone()],
+        RecordingReporter {
+            verbose: true,
+            ..RecordingReporter::default()
+        },
+    );
+    install::run(&verbose_ctx, args("root"))
+        .await
+        .expect("install");
+    let verbose_messages = verbose.take();
+    assert!(verbose_messages.contains(&format!("oh1:Downloading {}/root", server.uri())));
+    assert!(verbose_messages.iter().any(|line| line == "ohai:Caveats"));
+
+    let (quiet_ctx, quiet) = context_flags(
+        scratch_env(&quiet_temp),
+        vec![root],
+        RecordingReporter {
+            quiet: true,
+            ..RecordingReporter::default()
+        },
+    );
+    install::run(&quiet_ctx, args("root"))
+        .await
+        .expect("install");
+    let quiet_messages = quiet.take();
+    assert!(
+        !quiet_messages
+            .iter()
+            .any(|line| line.starts_with("oh1:Downloading"))
+    );
+    assert!(!quiet_messages.iter().any(|line| line == "ohai:Caveats"));
+    assert!(
+        !quiet_messages
+            .iter()
+            .any(|line| line.starts_with("print:Config lives in"))
+    );
 }
 
 #[tokio::test]

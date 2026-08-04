@@ -96,6 +96,7 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
             },
         )?;
         if installed_on_request
+            && !ctx.reporter.is_quiet()
             && let Some(caveats) = formula.caveats.as_deref()
             && !caveats.is_empty()
         {

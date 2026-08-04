@@ -52,8 +52,10 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
     for request in &requests {
         ctx.reporter
             .ohai(&format!("Fetching {}", request.name.as_str()));
-        ctx.reporter
-            .oh1(&format!("Downloading {}", request.bottle.url));
+        if ctx.reporter.is_verbose() {
+            ctx.reporter
+                .oh1(&format!("Downloading {}", request.bottle.url));
+        }
     }
     let cached = download_all(&ctx.env, &ctx.http, requests.clone()).await?;
     for (request, cached) in requests.into_iter().zip(cached) {

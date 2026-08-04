@@ -105,7 +105,9 @@ fn render_formula(ctx: &Ctx, formula: &Formula, installed: Option<&InstalledForm
     }
     render_dependencies(ctx, &formula.dependencies);
 
-    if let Some(caveats) = formula.caveats.as_deref().filter(|text| !text.is_empty()) {
+    if !ctx.reporter.is_quiet()
+        && let Some(caveats) = formula.caveats.as_deref().filter(|text| !text.is_empty())
+    {
         ctx.reporter.ohai("Caveats");
         ctx.reporter.print(&substitute_prefixes(ctx, caveats));
     }

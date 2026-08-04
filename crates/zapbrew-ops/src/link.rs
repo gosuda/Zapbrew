@@ -181,6 +181,13 @@ fn link_one(
         keg.path(),
         report.linked.len() + 2
     ));
+    if ctx.reporter.is_verbose() {
+        let mut created = report.linked.clone();
+        created.sort();
+        for path in &created {
+            ctx.reporter.print(path.as_str());
+        }
+    }
     if formula.keg_only && !versioned {
         print_path_hint(ctx, &keg);
     }

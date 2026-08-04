@@ -21,8 +21,11 @@ impl CommandRunner for PanicRunner {
 }
 
 #[derive(Default)]
-struct RecordingReporter(Mutex<Vec<String>>);
+struct RecordingReporter(Mutex<Vec<String>>, bool, bool);
 impl RecordingReporter {
+    fn with(quiet: bool, verbose: bool) -> Self {
+        Self(Mutex::new(Vec::new()), quiet, verbose)
+    }
     fn push(&self, channel: &str, message: &str) {
         self.0
             .lock()
@@ -52,6 +55,12 @@ impl Reporter for RecordingReporter {
     fn eprint(&self, message: &str) {
         self.push("eprint", message);
     }
+    fn is_quiet(&self) -> bool {
+        self.1
+    }
+    fn is_verbose(&self) -> bool {
+        self.2
+    }
 }
 
 fn env(temp: &TempDir) -> Env {
@@ -77,8 +86,16 @@ fn env(temp: &TempDir) -> Env {
 }
 
 fn ctx(env: Env, formulae: Vec<Value>) -> (Ctx, Arc<RecordingReporter>) {
+    ctx_flags(env, formulae, RecordingReporter::default())
+}
+
+fn ctx_flags(
+    env: Env,
+    formulae: Vec<Value>,
+    recording: RecordingReporter,
+) -> (Ctx, Arc<RecordingReporter>) {
     let bytes = serde_json::to_vec(&formulae).expect("json");
-    let reporter = Arc::new(RecordingReporter::default());
+    let reporter = Arc::new(recording);
     (
         Ctx {
             catalog: Arc::new(Catalog::from_payload(&bytes, &env.bottle_tag).expect("catalog")),
@@ -138,9 +155,8 @@ async fn fresh_then_reused_print_exact_path_and_checksum() {
     .expect("fresh fetch");
     let fresh = reporter.take();
     assert_eq!(fresh[0], "ohai:Fetching root");
-    assert_eq!(fresh[1], format!("oh1:Downloading {}/root", server.uri()));
-    assert!(fresh[2].starts_with("print:Downloaded to: "));
-    assert_eq!(fresh[3], format!("print:SHA-256: {digest}"));
+    assert!(fresh[1].starts_with("print:Downloaded to: "));
+    assert_eq!(fresh[2], format!("print:SHA-256: {digest}"));
 
     fetch::run(
         &ctx,
@@ -152,9 +168,44 @@ async fn fresh_then_reused_print_exact_path_and_checksum() {
     .await
     .expect("reused fetch");
     let reused = reporter.take();
-    assert!(reused[2].starts_with("print:Already downloaded: "));
-    assert_eq!(reused[3], format!("print:SHA-256: {digest}"));
+    assert!(reused[1].starts_with("print:Already downloaded: "));
+    assert_eq!(reused[2], format!("print:SHA-256: {digest}"));
     assert!(!ctx.env.cellar.exists());
+}
+
+#[tokio::test]
+async fn verbose_emits_download_urls() {
+    let server = MockServer::start().await;
+    let body = b"fetch-body";
+    let digest = sha(body);
+    Mock::given(method("GET"))
+        .and(path("/root"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(body.as_slice()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let temp = TempDir::new().expect("temp");
+    let (ctx, reporter) = ctx_flags(
+        env(&temp),
+        vec![formula("root", &format!("{}/root", server.uri()), &digest)],
+        RecordingReporter::with(false, true),
+    );
+
+    fetch::run(
+        &ctx,
+        Args {
+            names: vec!["root".to_owned()],
+            deps: false,
+        },
+    )
+    .await
+    .expect("verbose fetch");
+    let messages = reporter.take();
+    assert_eq!(messages[0], "ohai:Fetching root");
+    assert_eq!(
+        messages[1],
+        format!("oh1:Downloading {}/root", server.uri())
+    );
 }
 
 #[tokio::test]
@@ -193,12 +244,10 @@ async fn deps_fetches_postorder_with_deterministic_messages() {
 
     let messages = reporter.take();
     assert_eq!(
-        &messages[..4],
+        &messages[..2],
         vec![
             "ohai:Fetching dep".to_owned(),
-            format!("oh1:Downloading {}/dep", server.uri()),
             "ohai:Fetching root".to_owned(),
-            format!("oh1:Downloading {}/root", server.uri()),
         ]
     );
     assert_eq!(

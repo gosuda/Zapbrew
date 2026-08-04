@@ -18,6 +18,19 @@ pub trait Reporter: Send + Sync {
     fn hint_program(&self) -> &str {
         "zapbrew"
     }
+
+    /// Whether headline-suppressing quiet mode is active. Operations consult
+    /// this to drop caveat headings and bodies. Defaults to `false` so
+    /// non-terminal reporters keep emitting every message.
+    fn is_quiet(&self) -> bool {
+        false
+    }
+
+    /// Whether verbose mode is active. Operations consult this to emit download
+    /// URLs and per-symlink link detail. Defaults to `false`.
+    fn is_verbose(&self) -> bool {
+        false
+    }
 }
 
 /// Shared dependencies for every operation entry point.

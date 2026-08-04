@@ -21,8 +21,11 @@ impl CommandRunner for PanicRunner {
 }
 
 #[derive(Default)]
-struct RecordingReporter(Mutex<Vec<String>>);
+struct RecordingReporter(Mutex<Vec<String>>, bool, bool);
 impl RecordingReporter {
+    fn with(quiet: bool, verbose: bool) -> Self {
+        Self(Mutex::new(Vec::new()), quiet, verbose)
+    }
     fn push(&self, channel: &str, message: &str) {
         self.0
             .lock()
@@ -51,6 +54,12 @@ impl Reporter for RecordingReporter {
     }
     fn eprint(&self, message: &str) {
         self.push("eprint", message);
+    }
+    fn is_quiet(&self) -> bool {
+        self.1
+    }
+    fn is_verbose(&self) -> bool {
+        self.2
     }
 }
 
@@ -127,12 +136,20 @@ fn formulae() -> Vec<Value> {
 }
 
 fn context(environment: Env, formulae: &[Value]) -> (Ctx, Arc<RecordingReporter>) {
+    context_flags(environment, formulae, RecordingReporter::default())
+}
+
+fn context_flags(
+    environment: Env,
+    formulae: &[Value],
+    recording: RecordingReporter,
+) -> (Ctx, Arc<RecordingReporter>) {
     let payload = serde_json::to_vec(formulae).expect("formula payload");
     let catalog =
         Arc::new(Catalog::from_payload(&payload, &environment.bottle_tag).expect("catalog"));
     let casks =
         Arc::new(CaskCatalog::from_payload(b"[]", &environment.bottle_tag).expect("cask catalog"));
-    let recording = Arc::new(RecordingReporter::default());
+    let recording = Arc::new(recording);
     let reporter: Arc<dyn Reporter> = recording.clone();
     (
         Ctx {
@@ -662,4 +679,27 @@ async fn text_without_names_refuses_and_missing_name_is_typed() {
         zapbrew_ops::OpError::MissingFormula { ref name } if name == "missing"
     ));
     assert!(reporter.take().is_empty());
+}
+
+#[tokio::test]
+async fn quiet_info_drops_caveats() {
+    let temp = TempDir::new().expect("temp");
+    let (ctx, reporter) = context_flags(
+        env(&temp),
+        &formulae(),
+        RecordingReporter::with(true, false),
+    );
+
+    info::run(
+        &ctx,
+        Args {
+            names: vec!["sample".to_owned()],
+            json_v2: false,
+        },
+    )
+    .await
+    .expect("quiet info");
+    let messages = reporter.take();
+    assert!(!messages.iter().any(|line| line == "ohai:Caveats"));
+    assert!(!messages.iter().any(|line| line.starts_with("print:Use ")));
 }

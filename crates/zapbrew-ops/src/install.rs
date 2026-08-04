@@ -87,8 +87,10 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
     for (_, _, request) in &bottles {
         ctx.reporter
             .ohai(&format!("Fetching {}", request.name.as_str()));
-        ctx.reporter
-            .oh1(&format!("Downloading {}", request.bottle.url));
+        if ctx.reporter.is_verbose() {
+            ctx.reporter
+                .oh1(&format!("Downloading {}", request.bottle.url));
+        }
     }
     let downloaded = download_all(
         &ctx.env,
@@ -152,6 +154,7 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
             ));
         }
         if candidate.requested
+            && !ctx.reporter.is_quiet()
             && let Some(caveats) = candidate.formula.caveats.as_deref()
             && !caveats.is_empty()
         {
