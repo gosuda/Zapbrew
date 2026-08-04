@@ -241,8 +241,7 @@ async fn named_taps_are_sorted_missing_taps_are_all_reported_and_json_refuses_ea
         ]
     );
 
-    let calls_before_json = runner.calls();
-    let error = tap_info::run(
+    tap_info::run(
         &ctx,
         Args {
             names: vec!["bad".to_owned()],
@@ -251,11 +250,7 @@ async fn named_taps_are_sorted_missing_taps_are_all_reported_and_json_refuses_ea
         },
     )
     .await
-    .expect_err("JSON refusal");
-    assert_eq!(
-        error.to_string(),
-        "tap-info JSON output is unavailable without Ruby."
-    );
-    assert_eq!(runner.calls(), calls_before_json);
-    assert!(reporter.take().is_empty());
+    .expect("json tap-info");
+    let output = reporter.take();
+    assert!(output.iter().any(|line| line.starts_with("print:[")));
 }

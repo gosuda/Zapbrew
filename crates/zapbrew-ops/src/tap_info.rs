@@ -1,3 +1,5 @@
+use serde_json::json;
+
 use camino::Utf8Path;
 use zapbrew_prefix::CommandSpec;
 
@@ -14,13 +16,10 @@ pub struct Args {
 }
 
 pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
-    if args.json {
-        return Err(OpError::Refusal {
-            message: "tap-info JSON output is unavailable without Ruby.".to_owned(),
-        });
-    }
-
     if args.names.is_empty() && !args.installed {
+        if args.json {
+            return print_json_all(ctx);
+        }
         return print_summary(ctx);
     }
 
@@ -33,6 +32,10 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
             .collect::<Result<Vec<_>, _>>()?
     };
     taps.sort();
+
+    if args.json {
+        return print_json(ctx, &taps);
+    }
 
     let mut missing = 0_usize;
     for (index, tap) in taps.iter().enumerate() {
@@ -55,6 +58,160 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
             message: "One or more requested taps are not installed.".to_owned(),
         })
     }
+}
+
+fn tap_json(ctx: &Ctx, tap: &TapName) -> Result<serde_json::Value, OpError> {
+    let path = tap.path(&ctx.env);
+    let _stats = measure(&path)?;
+    let origin = git_value(
+        ctx,
+        &git(&path, &["config", "--get", "remote.origin.url"]),
+        "(none)",
+    );
+    let head = git_value(ctx, &git(&path, &["rev-parse", "HEAD"]), "(none)");
+    let last_commit = git_value(ctx, &git(&path, &["log", "-1", "--format=%cr"]), "never");
+    let branch = git_value(
+        ctx,
+        &git(&path, &["symbolic-ref", "--short", "HEAD"]),
+        "(none)",
+    );
+    let (_formula_dir, formula_files, formula_names) = formula_files(&path)?;
+    let (cask_files, cask_tokens) = cask_files(&path)?;
+    let command_files = command_files(&path)?;
+    let custom_remote =
+        origin != "(none)" && Some(origin.as_str()) != default_remote(tap).as_deref();
+    Ok(json!({
+        "name": tap.name(),
+        "user": tap.user(),
+        "repo": tap.repository(),
+        "repository": tap.repository(),
+        "path": path.as_str(),
+        "installed": true,
+        "official": tap.user() == "Homebrew",
+        "remote": origin,
+        "custom_remote": custom_remote,
+        "HEAD": head,
+        "last_commit": last_commit,
+        "branch": branch,
+        "formula_files": formula_files,
+        "cask_files": cask_files,
+        "command_files": command_files,
+        "formula_names": formula_names,
+        "cask_tokens": cask_tokens,
+    }))
+}
+type FormulaFiles = (Option<String>, Vec<String>, Vec<String>);
+
+fn formula_files(root: &Utf8Path) -> Result<FormulaFiles, OpError> {
+    let subdir = if is_dir(&root.join("Formula")) {
+        Some("Formula")
+    } else if is_dir(&root.join("HomebrewFormula")) {
+        Some("HomebrewFormula")
+    } else if is_dir(root) {
+        Some("")
+    } else {
+        None
+    };
+    let Some(prefix) = subdir else {
+        return Ok((None, Vec::new(), Vec::new()));
+    };
+    let dir = if prefix.is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(prefix)
+    };
+    let mut files = Vec::new();
+    let mut names = Vec::new();
+    for entry in sorted_rb_files(&dir)? {
+        if prefix.is_empty() {
+            files.push(entry.clone());
+        } else {
+            files.push(format!("{prefix}/{entry}"));
+        }
+        names.push(rb_basename(&entry));
+    }
+    Ok((prefix.to_owned().into(), files, names))
+}
+
+fn cask_files(root: &Utf8Path) -> Result<(Vec<String>, Vec<String>), OpError> {
+    let dir = root.join("Casks");
+    if !is_dir(&dir) {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    let mut files = Vec::new();
+    let mut tokens = Vec::new();
+    for entry in sorted_rb_files(&dir)? {
+        files.push(format!("Casks/{entry}"));
+        tokens.push(rb_basename(&entry));
+    }
+    Ok((files, tokens))
+}
+
+fn command_files(root: &Utf8Path) -> Result<Vec<String>, OpError> {
+    let dir = root.join("cmd");
+    if !is_dir(&dir) {
+        return Ok(Vec::new());
+    }
+    let mut files = Vec::new();
+    for entry in sorted_rb_files(&dir)? {
+        if entry.starts_with("brew-") {
+            files.push(format!("cmd/{entry}"));
+        }
+    }
+    Ok(files)
+}
+
+fn sorted_rb_files(dir: &Utf8Path) -> Result<Vec<String>, OpError> {
+    let mut entries = Vec::new();
+    if let Ok(read_dir) = std::fs::read_dir(dir.as_std_path()) {
+        for entry in read_dir.flatten() {
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            if !metadata.is_file() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.ends_with(".rb") {
+                entries.push(name);
+            }
+        }
+    }
+    entries.sort();
+    Ok(entries)
+}
+
+fn is_dir(path: &Utf8Path) -> bool {
+    std::fs::metadata(path.as_std_path()).is_ok_and(|m| m.is_dir())
+}
+
+fn rb_basename(name: &str) -> String {
+    name.strip_suffix(".rb").unwrap_or(name).to_owned()
+}
+
+fn default_remote(tap: &TapName) -> Option<String> {
+    Some(format!(
+        "https://github.com/{}/homebrew-{}",
+        tap.user(),
+        tap.repository()
+    ))
+}
+
+fn print_json(ctx: &Ctx, taps: &[TapName]) -> Result<(), OpError> {
+    let hashes: Vec<serde_json::Value> = taps
+        .iter()
+        .map(|t| tap_json(ctx, t))
+        .collect::<Result<_, _>>()?;
+    let payload = serde_json::to_string_pretty(&hashes).map_err(|e| OpError::InvalidState {
+        reason: format!("serialize tap-info JSON: {e}"),
+    })?;
+    ctx.reporter.print(&payload);
+    Ok(())
+}
+
+fn print_json_all(ctx: &Ctx) -> Result<(), OpError> {
+    let taps = installed(&ctx.env)?;
+    print_json(ctx, &taps)
 }
 
 fn print_summary(ctx: &Ctx) -> Result<(), OpError> {

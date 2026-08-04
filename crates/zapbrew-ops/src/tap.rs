@@ -72,6 +72,14 @@ impl TapName {
         &self.name
     }
 
+    pub(crate) fn user(&self) -> &str {
+        &self.user
+    }
+
+    pub(crate) fn repository(&self) -> &str {
+        &self.repository
+    }
+
     pub(crate) fn user_path(&self, env: &Env) -> Utf8PathBuf {
         taps_root(env).join(&self.user)
     }
