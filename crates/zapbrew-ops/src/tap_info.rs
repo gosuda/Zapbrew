@@ -73,7 +73,6 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
 
 fn tap_json(ctx: &Ctx, tap: &TapName) -> Result<serde_json::Value, OpError> {
     let path = tap.path(&ctx.env);
-    let _stats = measure(&path)?;
     let origin = git_value(
         ctx,
         &git(&path, &["config", "--get", "remote.origin.url"]),
@@ -89,8 +88,7 @@ fn tap_json(ctx: &Ctx, tap: &TapName) -> Result<serde_json::Value, OpError> {
     let (_formula_dir, formula_files, formula_names) = formula_files(&path)?;
     let (cask_files, cask_tokens) = cask_files(&path)?;
     let command_files = command_files(&path)?;
-    let custom_remote =
-        origin != "(none)" && Some(origin.as_str()) != default_remote(tap).as_deref();
+    let custom_remote = origin != "(none)" && origin != default_remote(tap);
     Ok(json!({
         "name": tap.name(),
         "user": tap.user(),
@@ -164,11 +162,21 @@ fn command_files(root: &Utf8Path) -> Result<Vec<String>, OpError> {
         return Ok(Vec::new());
     }
     let mut files = Vec::new();
-    for (relative, name) in sorted_rb_files(&dir, false)? {
+    let read_dir = std::fs::read_dir(dir.as_std_path())
+        .map_err(|source| OpError::io("read directory", dir.clone(), source))?;
+    for entry in read_dir.flatten() {
+        let Ok(metadata) = std::fs::symlink_metadata(entry.path()) else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
         if name.starts_with("brew-") {
-            files.push(format!("cmd/{relative}"));
+            files.push(format!("cmd/{name}"));
         }
     }
+    files.sort();
     Ok(files)
 }
 
@@ -188,7 +196,7 @@ fn collect_rb_files(
     let read_dir = std::fs::read_dir(dir.as_std_path())
         .map_err(|source| OpError::io("read directory", dir.to_path_buf(), source))?;
     for entry in read_dir.flatten() {
-        let Ok(metadata) = entry.metadata() else {
+        let Ok(metadata) = std::fs::symlink_metadata(entry.path()) else {
             continue;
         };
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -215,21 +223,20 @@ fn file_name(path: &str) -> &str {
 }
 
 fn is_dir(path: &Utf8Path) -> bool {
-    std::fs::metadata(path.as_std_path()).is_ok_and(|m| m.is_dir())
+    std::fs::symlink_metadata(path.as_std_path()).is_ok_and(|m| m.is_dir())
 }
 
 fn rb_basename(name: &str) -> String {
     name.strip_suffix(".rb").unwrap_or(name).to_owned()
 }
 
-fn default_remote(tap: &TapName) -> Option<String> {
-    Some(format!(
+fn default_remote(tap: &TapName) -> String {
+    format!(
         "https://github.com/{}/homebrew-{}",
         tap.user(),
         tap.repository()
-    ))
+    )
 }
-
 fn print_json(ctx: &Ctx, taps: &[TapName]) -> Result<(), OpError> {
     let hashes: Vec<serde_json::Value> = taps
         .iter()

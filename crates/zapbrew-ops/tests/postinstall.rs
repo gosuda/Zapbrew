@@ -203,3 +203,156 @@ async fn postinstall_warns_when_no_post_install_defined() {
             .any(|line| line.contains("no post-install method"))
     );
 }
+
+#[tokio::test]
+async fn postinstall_invalid_name_is_invalid_state() {
+    let temp = TempDir::new().expect("temp");
+    let env = scratch_env(&temp);
+    let catalog = Arc::new(catalog(&env));
+    let casks = Arc::new(CaskCatalog::from_payload(b"[]", &env.bottle_tag).expect("casks"));
+    let ctx = Ctx {
+        env,
+        http: reqwest::Client::new(),
+        catalog,
+        casks,
+        commands: Arc::new(PanicRunner),
+        reporter: Arc::new(RecordingReporter::default()),
+    };
+    let err = postinstall::run(
+        &ctx,
+        Args {
+            names: vec!["!!!".to_owned()],
+        },
+    )
+    .await
+    .expect_err("invalid name");
+    assert!(matches!(err, zapbrew_ops::OpError::InvalidState { .. }));
+}
+
+#[tokio::test]
+async fn postinstall_no_such_keg_is_refusal() {
+    let temp = TempDir::new().expect("temp");
+    let env = scratch_env(&temp);
+    let catalog = Arc::new(catalog(&env));
+    let casks = Arc::new(CaskCatalog::from_payload(b"[]", &env.bottle_tag).expect("casks"));
+    let ctx = Ctx {
+        env,
+        http: reqwest::Client::new(),
+        catalog,
+        casks,
+        commands: Arc::new(PanicRunner),
+        reporter: Arc::new(RecordingReporter::default()),
+    };
+    let err = postinstall::run(
+        &ctx,
+        Args {
+            names: vec!["demo".to_owned()],
+        },
+    )
+    .await
+    .expect_err("no keg");
+    assert!(matches!(err, zapbrew_ops::OpError::Refusal { .. }));
+    assert!(err.to_string().contains("No such keg"));
+}
+
+#[tokio::test]
+async fn postinstall_missing_formula_is_missing_formula() {
+    let temp = TempDir::new().expect("temp");
+    let env = scratch_env(&temp);
+    let _keg = make_keg(&env, "demo", "1.0");
+    let catalog = Arc::new(Catalog::from_payload(b"[]", &env.bottle_tag).expect("catalog"));
+    let casks = Arc::new(CaskCatalog::from_payload(b"[]", &env.bottle_tag).expect("casks"));
+    let ctx = Ctx {
+        env,
+        http: reqwest::Client::new(),
+        catalog,
+        casks,
+        commands: Arc::new(PanicRunner),
+        reporter: Arc::new(RecordingReporter::default()),
+    };
+    let err = postinstall::run(
+        &ctx,
+        Args {
+            names: vec!["demo".to_owned()],
+        },
+    )
+    .await
+    .expect_err("missing formula");
+    assert!(matches!(err, zapbrew_ops::OpError::MissingFormula { .. }));
+}
+
+#[tokio::test]
+async fn postinstall_prefers_linked_over_optlinked_and_latest() {
+    let temp = TempDir::new().expect("temp");
+    let env = scratch_env(&temp);
+    let keg1 = make_keg(&env, "demo", "1.0");
+    let keg2 = make_keg(&env, "demo", "2.0");
+    // linked -> 1.0, opt -> 2.0
+    std::fs::create_dir_all(&env.linked).expect("linked");
+    std::fs::create_dir_all(env.prefix.join("opt")).expect("opt");
+    std::os::unix::fs::symlink(
+        keg1.path().as_std_path(),
+        env.linked.join("demo").as_std_path(),
+    )
+    .expect("link");
+    std::os::unix::fs::symlink(
+        keg2.path().as_std_path(),
+        env.prefix.join("opt/demo").as_std_path(),
+    )
+    .expect("opt link");
+    let catalog = Arc::new(catalog(&env));
+    let casks = Arc::new(CaskCatalog::from_payload(b"[]", &env.bottle_tag).expect("casks"));
+    let recording = Arc::new(RecordingReporter::default());
+    let ctx = Ctx {
+        env: env.clone(),
+        http: reqwest::Client::new(),
+        catalog,
+        casks,
+        commands: Arc::new(PanicRunner),
+        reporter: recording.clone(),
+    };
+    postinstall::run(
+        &ctx,
+        Args {
+            names: vec!["demo".to_owned()],
+        },
+    )
+    .await
+    .expect("postinstall");
+    assert!(keg1.path().join("share/postinstall-done").exists());
+    assert!(!keg2.path().join("share/postinstall-done").exists());
+}
+
+#[tokio::test]
+async fn postinstall_prefers_optlinked_when_no_linked() {
+    let temp = TempDir::new().expect("temp");
+    let env = scratch_env(&temp);
+    let keg1 = make_keg(&env, "demo", "1.0");
+    let keg2 = make_keg(&env, "demo", "2.0");
+    std::fs::create_dir_all(env.prefix.join("opt")).expect("opt");
+    std::os::unix::fs::symlink(
+        keg2.path().as_std_path(),
+        env.prefix.join("opt/demo").as_std_path(),
+    )
+    .expect("opt link");
+    let catalog = Arc::new(catalog(&env));
+    let casks = Arc::new(CaskCatalog::from_payload(b"[]", &env.bottle_tag).expect("casks"));
+    let ctx = Ctx {
+        env: env.clone(),
+        http: reqwest::Client::new(),
+        catalog,
+        casks,
+        commands: Arc::new(PanicRunner),
+        reporter: Arc::new(RecordingReporter::default()),
+    };
+    postinstall::run(
+        &ctx,
+        Args {
+            names: vec!["demo".to_owned()],
+        },
+    )
+    .await
+    .expect("postinstall");
+    assert!(keg2.path().join("share/postinstall-done").exists());
+    assert!(!keg1.path().join("share/postinstall-done").exists());
+}

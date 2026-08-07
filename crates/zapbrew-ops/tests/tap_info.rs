@@ -1,5 +1,5 @@
 #![cfg(unix)]
-
+#![allow(clippy::unwrap_used)]
 mod support;
 
 use std::collections::VecDeque;
@@ -205,7 +205,7 @@ async fn git_failures_use_stable_fields_and_never_fail_tap_info() {
 }
 
 #[tokio::test]
-async fn named_taps_are_sorted_missing_taps_are_all_reported_and_json_refuses_early() {
+async fn named_taps_are_sorted_missing_taps_are_all_reported() {
     let fixture = Fixture::new();
     let alpha = fixture.env.library.join("Taps/acme/homebrew-alpha");
     fs::create_dir_all(&alpha).expect("alpha tap");
@@ -240,17 +240,157 @@ async fn named_taps_are_sorted_missing_taps_are_all_reported_and_json_refuses_ea
             "print:zeta/missing: Not installed".to_owned(),
         ]
     );
+}
+
+#[tokio::test]
+async fn json_output_contains_expected_fields_and_file_lists() {
+    let fixture = Fixture::new();
+    let tap = fixture.env.library.join("Taps/acme/homebrew-alpha");
+    fs::create_dir_all(tap.join("Formula/sub")).expect("nested formula");
+    fs::create_dir_all(tap.join("Casks")).expect("casks");
+    fs::create_dir_all(tap.join("cmd/sub")).expect("nested cmd");
+    fs::write(tap.join("Formula/a.rb"), b"a").expect("formula a");
+    fs::write(tap.join("Formula/sub/nested.rb"), b"b").expect("nested formula");
+    fs::write(tap.join("Casks/c.rb"), b"c").expect("cask");
+    fs::write(tap.join("cmd/brew-a"), b"d").expect("command");
+    fs::write(tap.join("cmd/sub/brew-x"), b"e").expect("nested command");
+    let runner = Arc::new(ScriptedRunner::new([
+        Response::Output("ssh://git@example.test/acme/alpha\n"),
+        Response::Output("abc123\n"),
+        Response::Output("2 days ago\n"),
+        Response::Output("main\n"),
+    ]));
+    let (mut ctx, reporter) = fixture.context(Vec::new());
+    ctx.commands = runner.clone();
 
     tap_info::run(
         &ctx,
         Args {
-            names: vec!["bad".to_owned()],
-            installed: true,
+            names: vec!["acme/alpha".to_owned()],
+            installed: false,
             json: true,
         },
     )
     .await
     .expect("json tap-info");
     let output = reporter.take();
-    assert!(output.iter().any(|line| line.starts_with("print:[")));
+    let json_line = output
+        .iter()
+        .find(|l| l.starts_with("print:["))
+        .expect("json output");
+    let payload = json_line.strip_prefix("print:").unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(payload).expect("valid json");
+    let arr = parsed.as_array().expect("json array");
+    assert_eq!(arr.len(), 1);
+    let obj = &arr[0];
+    assert_eq!(obj["name"], "acme/alpha");
+    assert_eq!(obj["user"], "acme");
+    assert_eq!(obj["repo"], "alpha");
+    assert_eq!(obj["installed"], true);
+    assert_eq!(obj["official"], false);
+    assert_eq!(obj["remote"], "ssh://git@example.test/acme/alpha");
+    assert_eq!(obj["custom_remote"], true);
+    let formula_files = obj["formula_files"].as_array().unwrap();
+    let files: Vec<&str> = formula_files.iter().map(|v| v.as_str().unwrap()).collect();
+    assert!(files.contains(&"Formula/a.rb"));
+    assert!(files.contains(&"Formula/sub/nested.rb"));
+    let cask_files = obj["cask_files"].as_array().unwrap();
+    assert!(cask_files.iter().any(|v| v == "Casks/c.rb"));
+    let command_files = obj["command_files"].as_array().unwrap();
+    assert!(command_files.iter().any(|v| v == "cmd/brew-a"));
+    assert!(!command_files.iter().any(|v| v == "cmd/sub/brew-x"));
+}
+
+#[tokio::test]
+async fn json_missing_tap_is_refusal_before_output() {
+    let fixture = Fixture::new();
+    let (ctx, reporter) = fixture.context(Vec::new());
+    let err = tap_info::run(
+        &ctx,
+        Args {
+            names: vec!["acme/missing".to_owned()],
+            installed: false,
+            json: true,
+        },
+    )
+    .await
+    .expect_err("json missing should refuse");
+    assert!(matches!(err, OpError::Refusal { .. }));
+    assert!(reporter.take().is_empty());
+}
+
+#[tokio::test]
+async fn json_all_reports_all_installed_taps() {
+    let fixture = Fixture::new();
+    let a = fixture.env.library.join("Taps/acme/homebrew-a");
+    let b = fixture.env.library.join("Taps/Homebrew/homebrew-core");
+    fs::create_dir_all(&a).expect("tap a");
+    fs::create_dir_all(&b).expect("tap b");
+    let runner = Arc::new(ScriptedRunner::new([
+        Response::Output("https://github.com/acme/homebrew-a\n"),
+        Response::Output("aaa\n"),
+        Response::Output("now\n"),
+        Response::Output("main\n"),
+        Response::Output("https://github.com/Homebrew/homebrew-core\n"),
+        Response::Output("bbb\n"),
+        Response::Output("now\n"),
+        Response::Output("main\n"),
+    ]));
+    let (mut ctx, reporter) = fixture.context(Vec::new());
+    ctx.commands = runner.clone();
+    tap_info::run(
+        &ctx,
+        Args {
+            names: Vec::new(),
+            installed: false,
+            json: true,
+        },
+    )
+    .await
+    .expect("json all");
+    let output = reporter.take();
+    let json_line = output
+        .iter()
+        .find(|l| l.starts_with("print:["))
+        .expect("json output");
+    let parsed: serde_json::Value =
+        serde_json::from_str(json_line.strip_prefix("print:").unwrap()).expect("json");
+    assert_eq!(parsed.as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn json_symlink_dir_is_not_followed() {
+    let fixture = Fixture::new();
+    let tap = fixture.env.library.join("Taps/acme/homebrew-alpha");
+    fs::create_dir_all(tap.join("Formula")).expect("formula");
+    fs::write(tap.join("Formula/a.rb"), b"a").expect("a");
+    let outside = fixture.env.library.join("outside");
+    fs::create_dir_all(&outside).expect("outside");
+    fs::write(outside.join("evil.rb"), b"evil").expect("evil");
+    std::os::unix::fs::symlink(&outside, tap.join("Formula/link")).expect("symlink");
+    let runner = Arc::new(ScriptedRunner::new([
+        Response::Output("https://github.com/acme/homebrew-alpha\n"),
+        Response::Output("abc\n"),
+        Response::Output("now\n"),
+        Response::Output("main\n"),
+    ]));
+    let (mut ctx, reporter) = fixture.context(Vec::new());
+    ctx.commands = runner.clone();
+    tap_info::run(
+        &ctx,
+        Args {
+            names: vec!["acme/alpha".to_owned()],
+            installed: false,
+            json: true,
+        },
+    )
+    .await
+    .expect("json with symlink");
+    let output = reporter.take();
+    let json_line = output.iter().find(|l| l.starts_with("print:[")).unwrap();
+    let parsed: serde_json::Value =
+        serde_json::from_str(json_line.strip_prefix("print:").unwrap()).unwrap();
+    let files = parsed[0]["formula_files"].as_array().unwrap();
+    assert!(files.iter().any(|v| v == "Formula/a.rb"));
+    assert!(!files.iter().any(|v| v.as_str().unwrap().contains("evil")));
 }
