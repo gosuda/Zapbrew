@@ -356,3 +356,120 @@ async fn postinstall_prefers_optlinked_when_no_linked() {
     assert!(keg2.path().join("share/postinstall-done").exists());
     assert!(!keg1.path().join("share/postinstall-done").exists());
 }
+
+#[tokio::test]
+async fn postinstall_cleans_up_journal_after_successful_overwrite() {
+    let temp = TempDir::new().expect("temp");
+    let env = scratch_env(&temp);
+    let keg = make_keg(&env, "demo", "1.0");
+    let existing = keg.path().join("share/existing");
+    std::fs::create_dir_all(existing.parent().expect("share parent")).expect("share dir");
+    std::fs::write(&existing, b"original").expect("original");
+    let payload = br#"[{
+        "name": "demo",
+        "full_name": "demo",
+        "versions": {"stable": "1.0", "bottle": false},
+        "post_install_defined": true,
+        "post_install_steps": [{
+            "type": "write",
+            "path": {"base": "keg", "path": "share/existing"},
+            "content": "new",
+            "overwrite": true
+        }]
+    }]"#;
+    let catalog = Arc::new(Catalog::from_payload(payload, &env.bottle_tag).expect("catalog"));
+    let casks = Arc::new(CaskCatalog::from_payload(b"[]", &env.bottle_tag).expect("casks"));
+    let ctx = Ctx {
+        env: env.clone(),
+        http: reqwest::Client::new(),
+        catalog,
+        casks,
+        commands: Arc::new(PanicRunner),
+        reporter: Arc::new(RecordingReporter::default()),
+    };
+    postinstall::run(
+        &ctx,
+        Args {
+            names: vec!["demo".to_owned()],
+        },
+    )
+    .await
+    .expect("postinstall");
+    assert_eq!(std::fs::read_to_string(&existing).expect("read"), "new");
+    let rack = env.cellar.join("demo");
+    let entries = std::fs::read_dir(rack.as_std_path()).expect("read rack");
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        assert!(
+            !name.starts_with(".zapbrew-step-journal"),
+            "journal should be cleaned up, found {name}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn postinstall_rollback_restores_original_on_failure() {
+    let temp = TempDir::new().expect("temp");
+    let env = scratch_env(&temp);
+    let keg = make_keg(&env, "demo", "1.0");
+    let existing = keg.path().join("share/existing");
+    std::fs::create_dir_all(existing.parent().expect("share parent")).expect("share");
+    std::fs::write(&existing, b"original").expect("original");
+    let payload = br#"[{
+        "name": "demo",
+        "full_name": "demo",
+        "versions": {"stable": "1.0", "bottle": false},
+        "post_install_defined": true,
+        "post_install_steps": [
+            {
+                "type": "write",
+                "path": {"base": "keg", "path": "share/existing"},
+                "content": "new",
+                "overwrite": true
+            },
+            {
+                "type": "mkdir",
+                "path": {"base": "keg", "path": "share/missing_parent/child"}
+            }
+        ]
+    }]"#;
+    let catalog = Arc::new(Catalog::from_payload(payload, &env.bottle_tag).expect("catalog"));
+    let casks = Arc::new(CaskCatalog::from_payload(b"[]", &env.bottle_tag).expect("casks"));
+    let ctx = Ctx {
+        env: env.clone(),
+        http: reqwest::Client::new(),
+        catalog,
+        casks,
+        commands: Arc::new(PanicRunner),
+        reporter: Arc::new(RecordingReporter::default()),
+    };
+    let err = postinstall::run(
+        &ctx,
+        Args {
+            names: vec!["demo".to_owned()],
+        },
+    )
+    .await
+    .expect_err("should fail");
+    // original file must be restored
+    assert_eq!(
+        std::fs::read_to_string(&existing).expect("read"),
+        "original"
+    );
+    // journal must be cleaned up (rollback removes it)
+    let rack = env.cellar.join("demo");
+    let entries = std::fs::read_dir(rack.as_std_path()).expect("read rack");
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        assert!(
+            !name.starts_with(".zapbrew-step-journal"),
+            "journal should be removed after rollback, found {name}"
+        );
+    }
+    // error should be either the mkdir failure or rollback incomplete
+    let msg = err.to_string();
+    assert!(
+        msg.contains("create install-step directory") || msg.contains("rollback"),
+        "unexpected error: {msg}"
+    );
+}

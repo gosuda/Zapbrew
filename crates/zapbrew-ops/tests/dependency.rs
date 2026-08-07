@@ -638,3 +638,59 @@ fn query_test_edges_are_root_only_and_excluded_edges_are_pruned() {
             .collect()
     );
 }
+
+#[test]
+fn install_dependency_candidates_build_deps_always_excluded_even_with_include_test() {
+    // install.rs::dependency_candidates uses EdgeFilter::query(false, include_test, false, false)
+    // Build deps must remain excluded even when include_test=true.
+    let target = tag("linux", None);
+    let catalog = catalog(
+        r#"[
+          {"name":"root","full_name":"root","versions":{"stable":"1"},
+           "build_dependencies":["buildonly"],"test_dependencies":["testonly"]},
+          {"name":"buildonly","full_name":"buildonly","versions":{"stable":"1"}},
+          {"name":"testonly","full_name":"testonly","versions":{"stable":"1"}}
+        ]"#,
+        target,
+    );
+    let expanded = ok(expand(
+        &catalog,
+        ["root"],
+        &DependencyOptions {
+            target,
+            mode: DependencyMode::Pour,
+            filter: EdgeFilter::query(false, true, false, false),
+        },
+    ));
+    let names: Vec<&str> = expanded.iter().map(|d| d.name.as_str()).collect();
+    assert_eq!(names, ["testonly"]);
+    assert!(!names.contains(&"buildonly"));
+}
+
+#[test]
+fn install_make_tab_uses_default_filter_excluding_build_and_test() {
+    // install.rs::make_tab uses EdgeFilter::default() (include_build=false, include_test=false)
+    // to populate Tab runtime_dependencies. Build and test deps must not appear.
+    let target = tag("linux", None);
+    let catalog = catalog(
+        r#"[
+          {"name":"root","full_name":"root","versions":{"stable":"1"},
+           "dependencies":["runtime"],"build_dependencies":["buildonly"],"test_dependencies":["testonly"]},
+          {"name":"runtime","full_name":"runtime","versions":{"stable":"1"}},
+          {"name":"buildonly","full_name":"buildonly","versions":{"stable":"1"}},
+          {"name":"testonly","full_name":"testonly","versions":{"stable":"1"}}
+        ]"#,
+        target,
+    );
+    let expanded = ok(expand(
+        &catalog,
+        ["root"],
+        &DependencyOptions {
+            target,
+            mode: DependencyMode::Pour,
+            filter: EdgeFilter::default(),
+        },
+    ));
+    let names: Vec<&str> = expanded.iter().map(|d| d.name.as_str()).collect();
+    assert_eq!(names, ["runtime"]);
+}
