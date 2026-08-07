@@ -687,3 +687,98 @@ async fn missing_host_bottle_is_refused_with_host_tag() {
         "root: no bottle available for x86_64_linux. brew can build from source; zapbrew cannot."
     );
 }
+
+#[tokio::test]
+async fn include_test_pours_test_dependencies_but_tab_excludes_them() {
+    // dependency_candidates uses EdgeFilter::query(false, include_test, false, false)
+    // make_tab uses EdgeFilter::default() and must never include build/test in runtime_dependencies
+    let server = MockServer::start().await;
+    let testdep_tar = bottle("testdep", "1.0", &[("bin/testdep", b"testdep")]);
+    let builddep_tar = bottle("builddep", "1.0", &[("bin/builddep", b"builddep")]);
+    let root_tar = bottle("root", "1.0", &[("bin/root", b"root")]);
+    let testdep_sha = digest(&testdep_tar);
+    let builddep_sha = digest(&builddep_tar);
+    let root_sha = digest(&root_tar);
+    mount_blob(&server, "/testdep", &testdep_tar, 1).await;
+    mount_blob(&server, "/root", &root_tar, 2).await;
+    let testdep = formula(
+        "testdep",
+        "1.0",
+        &format!("{}/testdep", server.uri()),
+        &testdep_sha,
+    );
+    let builddep = formula(
+        "builddep",
+        "1.0",
+        &format!("{}/builddep", server.uri()),
+        &builddep_sha,
+    );
+    let mut root = formula("root", "1.0", &format!("{}/root", server.uri()), &root_sha);
+    root["test_dependencies"] = json!(["testdep"]);
+    root["build_dependencies"] = json!(["builddep"]);
+
+    // include_test = false: testdep must NOT be poured, builddep never poured
+    let temp_false = TempDir::new().expect("temp");
+    let env_false = scratch_env(&temp_false);
+    let (ctx_false, _) = context(
+        env_false.clone(),
+        vec![root.clone(), testdep.clone(), builddep.clone()],
+    );
+    install::run(
+        &ctx_false,
+        Args {
+            include_test: false,
+            ..args("root")
+        },
+    )
+    .await
+    .expect("install without test");
+    assert!(
+        !ctx_false.env.cellar.join("testdep/1.0").exists(),
+        "testdep should not be poured without include_test"
+    );
+    assert!(
+        !ctx_false.env.cellar.join("builddep/1.0").exists(),
+        "builddep should never be poured"
+    );
+    let root_tab_false =
+        Tab::load(ctx_false.env.cellar.join("root/1.0/INSTALL_RECEIPT.json")).expect("tab");
+    assert!(
+        root_tab_false
+            .runtime_dependencies
+            .as_ref()
+            .is_none_or(|deps| deps.is_empty()),
+        "runtime_dependencies must exclude build/test deps"
+    );
+
+    // include_test = true: testdep must be poured, builddep still not, but tab still excludes both
+    let temp_true = TempDir::new().expect("temp");
+    let env_true = scratch_env(&temp_true);
+    let (ctx_true, _) = context(env_true.clone(), vec![root, testdep, builddep]);
+    install::run(
+        &ctx_true,
+        Args {
+            include_test: true,
+            ..args("root")
+        },
+    )
+    .await
+    .expect("install with test");
+    assert!(
+        ctx_true.env.cellar.join("testdep/1.0").exists(),
+        "testdep should be poured with include_test"
+    );
+    assert!(
+        !ctx_true.env.cellar.join("builddep/1.0").exists(),
+        "builddep should never be poured even with include_test"
+    );
+    let root_tab_true =
+        Tab::load(ctx_true.env.cellar.join("root/1.0/INSTALL_RECEIPT.json")).expect("tab");
+    assert!(
+        root_tab_true
+            .runtime_dependencies
+            .as_ref()
+            .is_none_or(|deps| deps.is_empty()),
+        "runtime_dependencies must exclude build/test even when poured"
+    );
+}
