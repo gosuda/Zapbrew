@@ -75,11 +75,21 @@ pub struct Plan {
 /// Convert one parsed command into its operation and catalog classification.
 ///
 /// `width` is the resolved output width (zero forces one item per line). The
-/// only fallible step is a non-UTF-8 `--appdir`, returned as a typed refusal.
+/// fallible steps are a non-UTF-8 `--appdir` and `--dry-run` combined with
+/// `--cask`, both returned as typed refusals.
 pub fn plan(command: Commands, globals: &GlobalArgs, width: usize) -> Result<Plan, OpError> {
     let plan = match command {
         Commands::Install(args) => {
             if args.cask {
+                // The cask path has no dry-run: pouring a cask downloads
+                // artifacts and writes the Caskroom and app directory. Accepting
+                // the flag and installing anyway would make a safety flag lie.
+                if args.dry_run {
+                    return Err(OpError::Refusal {
+                        message: "zapbrew cannot preview a cask install: --dry-run is not supported with --cask. Use brew."
+                            .to_owned(),
+                    });
+                }
                 Plan {
                     needs_formula: false,
                     needs_cask: true,
@@ -975,5 +985,32 @@ mod tests {
         let error = plan(cli.command.expect("command"), &cli.globals, WIDTH)
             .expect_err("dispatch must refuse an unintercepted completion");
         assert!(matches!(error, zapbrew_ops::OpError::InvalidState { .. }));
+    }
+
+    #[test]
+    fn cask_install_dry_run_is_refused_before_mutation() {
+        let cli = Cli::parse_from(["zapbrew", "install", "--cask", "--dry-run", "firefox"]);
+        let error = plan(cli.command.expect("command"), &cli.globals, WIDTH)
+            .expect_err("--dry-run with --cask must refuse instead of installing");
+        match error {
+            zapbrew_ops::OpError::Refusal { message } => {
+                assert!(
+                    message.contains("--dry-run is not supported with --cask"),
+                    "unexpected refusal: {message}"
+                );
+            }
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn formula_install_dry_run_still_plans() {
+        let cli = Cli::parse_from(["zapbrew", "install", "--dry-run", "wget"]);
+        let plan = plan(cli.command.expect("command"), &cli.globals, WIDTH)
+            .expect("formula dry-run must still plan");
+        match plan.kind {
+            OpKind::Install(args) => assert!(args.dry_run, "dry_run must reach install args"),
+            other => panic!("expected a formula install, got {other:?}"),
+        }
     }
 }
