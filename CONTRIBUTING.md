@@ -54,7 +54,7 @@ A test earns its place if removing it would let a real defect ship.
 
 Conventional commits with crate scopes, matching the existing history:
 
-```
+```text
 feat(cli,ops): add postinstall subcommand
 fix(ops): postinstall journal lifecycle, tap_info symlink and measure
 test(ops): cover postinstall rollback/cleanup and install EdgeFilter

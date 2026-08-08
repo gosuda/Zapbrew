@@ -1,7 +1,12 @@
 # Command reference
 
-Every block below is the verbatim output of `zapbrew <command> --help` from `zapbrew 0.1.0 (Homebrew 5-compatible)`.
+Every fenced block below is the verbatim output of `zapbrew <command> --help` from `zapbrew 0.1.0 (Homebrew 5-compatible)`.
 If a flag is not listed here, this build does not accept it.
+
+Some accepted flags are refused at runtime. Those are called out in a quoted note
+directly beneath the help block they belong to. See also the
+[accepted but not honored](configuration.md#accepted-but-not-honored) environment
+variables.
 
 30 commands. See [configuration.md](configuration.md) for environment variables.
 
@@ -24,6 +29,11 @@ Options:
   -h, --help                Print help
   -V, --version             Print version
 ```
+
+> **`--cache` does not accept a formula name.** The help text shows
+> `--cache [<formula>]`, but passing a name is refused with
+> `--cache with a formula name is not supported.` Bare `--cache` prints the
+> download cache path and works as documented.
 
 ## Commands
 
@@ -88,6 +98,18 @@ Options:
       --appdir <DIR>       Target application directory for cask apps
   -h, --help               Print help
 ```
+
+> **Modes this build refuses.** Each returns an error and installs nothing:
+>
+> - `--build-from-source` — `zapbrew cannot build from source: formulae are Ruby definitions. Use bottles (default) or brew.`
+> - `--HEAD` — `zapbrew cannot install HEAD formulae: formulae are Ruby definitions. Use bottled stable releases or brew.`
+> - `--interactive` — `zapbrew cannot install interactively: formulae are Ruby definitions. Use bottles (default) or brew.`
+> - `--dry-run` together with `--cask` — `zapbrew cannot preview a cask install: --dry-run is not supported with --cask. Use brew.`
+>
+> The cask path has no dry-run, because pouring a cask downloads artifacts and
+> writes both the Caskroom and the application directory. Rather than accept a
+> safety flag and install anyway, the combination is refused before anything is
+> downloaded or written. `--dry-run` works as documented for formulae.
 
 ### `zapbrew reinstall`
 
@@ -628,6 +650,136 @@ Options:
   -h, --help     Print help
 ```
 
+#### `zapbrew services list`
+
+```text
+List services and their status
+
+Usage: zapbrew services list [OPTIONS]
+
+Options:
+      --debug    Enable debug output
+  -q, --quiet    Suppress non-essential output
+  -v, --verbose  Enable verbose output
+  -h, --help     Print help
+```
+
+#### `zapbrew services start`
+
+```text
+Start services
+
+Usage: zapbrew services start [OPTIONS] [NAMES]...
+
+Arguments:
+  [NAMES]...  Service names to start
+
+Options:
+      --debug    Enable debug output
+  -q, --quiet    Suppress non-essential output
+  -v, --verbose  Enable verbose output
+  -h, --help     Print help
+```
+
+#### `zapbrew services stop`
+
+```text
+Stop services
+
+Usage: zapbrew services stop [OPTIONS] [NAMES]...
+
+Arguments:
+  [NAMES]...  Service names to stop
+
+Options:
+      --debug    Enable debug output
+  -q, --quiet    Suppress non-essential output
+  -v, --verbose  Enable verbose output
+  -h, --help     Print help
+```
+
+#### `zapbrew services restart`
+
+```text
+Restart services
+
+Usage: zapbrew services restart [OPTIONS] [NAMES]...
+
+Arguments:
+  [NAMES]...  Service names to restart
+
+Options:
+      --debug    Enable debug output
+  -q, --quiet    Suppress non-essential output
+  -v, --verbose  Enable verbose output
+  -h, --help     Print help
+```
+
+#### `zapbrew services run`
+
+```text
+Run a service without registering it to launch at login or boot
+
+Usage: zapbrew services run [OPTIONS] [NAMES]...
+
+Arguments:
+  [NAMES]...  Service names to run
+
+Options:
+      --debug    Enable debug output
+  -q, --quiet    Suppress non-essential output
+  -v, --verbose  Enable verbose output
+  -h, --help     Print help
+```
+
+#### `zapbrew services info`
+
+```text
+Print one-line status for services
+
+Usage: zapbrew services info [OPTIONS] [NAMES]...
+
+Arguments:
+  [NAMES]...  Service names to inspect
+
+Options:
+      --debug    Enable debug output
+  -q, --quiet    Suppress non-essential output
+  -v, --verbose  Enable verbose output
+  -h, --help     Print help
+```
+
+#### `zapbrew services kill`
+
+```text
+Stop a service but keep it registered
+
+Usage: zapbrew services kill [OPTIONS] [NAMES]...
+
+Arguments:
+  [NAMES]...  Service names to kill
+
+Options:
+      --debug    Enable debug output
+  -q, --quiet    Suppress non-essential output
+  -v, --verbose  Enable verbose output
+  -h, --help     Print help
+```
+
+#### `zapbrew services cleanup`
+
+```text
+Remove unused service files
+
+Usage: zapbrew services cleanup [OPTIONS]
+
+Options:
+      --debug    Enable debug output
+  -q, --quiet    Suppress non-essential output
+  -v, --verbose  Enable verbose output
+  -h, --help     Print help
+```
+
 ### `zapbrew update`
 
 Fetch the latest catalog and taps.
@@ -657,6 +809,34 @@ Commands:
   install  Install the `<prefix>/bin/brew` shim
   remove   Remove the `<prefix>/bin/brew` shim
   help     Print this message or the help of the given subcommand(s)
+
+Options:
+      --debug    Enable debug output
+  -q, --quiet    Suppress non-essential output
+  -v, --verbose  Enable verbose output
+  -h, --help     Print help
+```
+
+#### `zapbrew shim install`
+
+```text
+Install the `<prefix>/bin/brew` shim
+
+Usage: zapbrew shim install [OPTIONS]
+
+Options:
+      --debug    Enable debug output
+  -q, --quiet    Suppress non-essential output
+  -v, --verbose  Enable verbose output
+  -h, --help     Print help
+```
+
+#### `zapbrew shim remove`
+
+```text
+Remove the `<prefix>/bin/brew` shim
+
+Usage: zapbrew shim remove [OPTIONS]
 
 Options:
       --debug    Enable debug output

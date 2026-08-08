@@ -1,7 +1,10 @@
 # Configuration
 
-Zapbrew honors Homebrew's environment variables for compatibility. It defines no
-`ZAPBREW_*` variables, so an existing Homebrew environment needs no changes.
+Zapbrew reads Homebrew's environment variables for compatibility. It defines no
+`ZAPBREW_*` variables, so an existing Homebrew environment needs no changes. Not
+every variable Zapbrew parses is acted on — see
+[Accepted but not honored](#accepted-but-not-honored) for the ones that currently
+have no effect.
 
 The variables listed here are the ones Zapbrew acts on. They come from
 `TRACKED_VARS` in
@@ -29,7 +32,11 @@ path variables that match their default.
 variables of their own.
 
 Because the Cellar defaults to `$HOMEBREW_PREFIX/Cellar`, setting the prefix is
-usually enough to relocate an installation. One caveat: `brew shellenv` exports
+often enough to relocate an installation, but prefix-only relocation is not
+guaranteed: a link operation that fails partway leaves the prefix in a mixed
+state. Zapbrew rolls back the filesystem steps it can undo and reports any
+leftovers it could not — see [how it works](how-it-works.md) for the transaction
+model. One caveat that applies regardless: `brew shellenv` exports
 `HOMEBREW_CELLAR` explicitly, so in a shell that has sourced it, an inherited
 `HOMEBREW_CELLAR` overrides the new prefix. Unset it, or set it alongside the
 prefix — see the sandbox recipe in the
@@ -40,36 +47,47 @@ prefix — see the sandbox recipe in the
 | Variable | Default | Effect |
 |---|---|---|
 | `HOMEBREW_API_DOMAIN` | `https://formulae.brew.sh/api` | Base URL for the signed formula and cask catalogs |
-| `HOMEBREW_BOTTLE_DOMAIN` | `https://ghcr.io/v2/homebrew/core` | Bottle registry |
 | `HOMEBREW_API_AUTO_UPDATE_SECS` | `450` | Minimum seconds between automatic catalog refreshes |
 | `HOMEBREW_NO_AUTO_UPDATE` | unset | Disables the automatic refresh |
 | `HOMEBREW_DOWNLOAD_CONCURRENCY` | `auto` | `auto` means `available_parallelism * 2`. An integer is clamped to at least 1; an unparseable value becomes 1 |
 | `HOMEBREW_GITHUB_PACKAGES_TOKEN` | unset | Bearer token for the bottle registry |
 | `HOMEBREW_DOCKER_REGISTRY_TOKEN` | unset | Bearer token for a Docker-style registry |
-| `http_proxy`, `https_proxy`, `all_proxy`, `ftp_proxy`, `no_proxy` | unset | Standard proxy variables; the uppercase spellings are read as well |
+| `http_proxy`, `https_proxy`, `all_proxy`, `ftp_proxy`, `no_proxy` | unset | Read into `Env` (lowercase and uppercase spellings both accepted) and passed through to reqwest's system-proxy detection. `no_proxy` takes a comma-separated exclusion list; proxy URLs may carry credentials. Zapbrew's own config layer does not interpret these — `Env::proxy` is parsed and unused, and resolution is reqwest's standard environment handling |
+
+`HOMEBREW_BOTTLE_DOMAIN` is parsed but not honored — see
+[Accepted but not honored](#accepted-but-not-honored).
 
 ## Install and cleanup behavior
 
 | Variable | Default | Effect |
 |---|---|---|
 | `HOMEBREW_NO_INSTALL_CLEANUP` | unset | Skip the cleanup that follows an install |
-| `HOMEBREW_NO_INSTALL_UPGRADE` | unset | `install` on an already-installed formula does not upgrade it |
 | `HOMEBREW_NO_AUTOREMOVE` | unset | Do not autoremove unused dependencies |
 | `HOMEBREW_CLEANUP_MAX_AGE_DAYS` | `120` | Age threshold for stale cache entries |
 | `HOMEBREW_NO_CLEANUP_FORMULAE` | empty | Formulae `cleanup` must never touch |
 
-## Policy
+`HOMEBREW_NO_INSTALL_UPGRADE` is parsed but not honored — see
+[Accepted but not honored](#accepted-but-not-honored).
 
-| Variable | Default | Effect |
+## Accepted but not honored
+
+The following variables are parsed into `Env` for Homebrew compatibility but no
+production code path reads them. Setting them currently has no effect.
+
+| Variable | Parsed as | Current consequence |
 |---|---|---|
-| `HOMEBREW_FORBIDDEN_FORMULAE` | empty | Formulae refused at install time |
-| `HOMEBREW_FORBIDDEN_TAPS` | empty | Taps refused |
-| `HOMEBREW_FORBIDDEN_LICENSES` | empty | Licenses refused |
-| `HOMEBREW_ALLOWED_TAPS` | empty | When set, only these taps are permitted |
-| `HOMEBREW_FORBIDDEN_OWNER` | `you` | Name used in the refusal message |
+| `HOMEBREW_BOTTLE_DOMAIN` | `Env::bottle_domain` | Downloads use the catalog's `BottleFile::url` directly, so an internal mirror is ignored; installs contact the URL the catalog names (typically `ghcr.io`) regardless of this setting |
+| `HOMEBREW_NO_INSTALL_UPGRADE` | `Env::no_install_upgrade` | `install` skips only an already-current linked version; an installed formula that is behind its catalog version is still upgraded |
+| `HOMEBREW_NO_EMOJI` | `Env::no_emoji` | The install badge (`HOMEBREW_INSTALL_BADGE`) is always printed after a successful pour; this variable does not suppress it |
+| `HOMEBREW_NO_ENV_HINTS` | `Env::no_env_hints` | `link` still prints path hints for keg-only formulae |
+| `HOMEBREW_FORBIDDEN_FORMULAE` | `Env::forbidden_formulae` | `install` checks only catalog `disabled`/`deprecated` flags; this list is not consulted |
+| `HOMEBREW_FORBIDDEN_TAPS` | `Env::forbidden_taps` | `tap` never consults tap policy; this list is not enforced |
+| `HOMEBREW_FORBIDDEN_LICENSES` | `Env::forbidden_licenses` | No license check runs at install time; this list is not consulted |
+| `HOMEBREW_ALLOWED_TAPS` | `Env::allowed_taps` | `tap` never consults tap policy; this allow-list is not enforced |
+| `HOMEBREW_FORBIDDEN_OWNER` | `Env::forbidden_owner` | No refusal message references this value; it is unused |
 
-List-valued variables split on commas and whitespace, and empty entries are
-dropped.
+These are **not** an enforcement or compliance control. Do not rely on them to
+restrict what Zapbrew will install or tap.
 
 ## Output
 
@@ -77,12 +95,14 @@ dropped.
 |---|---|---|
 | `HOMEBREW_NO_COLOR`, `NO_COLOR` | unset | Either one disables color |
 | `HOMEBREW_COLOR` | unset | Force color on, unless a no-color variable is set |
-| `HOMEBREW_NO_EMOJI` | unset | Suppress the install badge |
 | `HOMEBREW_INSTALL_BADGE` | `🍺` | Badge printed after a successful pour |
-| `HOMEBREW_NO_ENV_HINTS` | unset | Suppress environment hints |
 | `HOMEBREW_DEBUG` | unset | Same as `--debug` |
-| `HOMEBREW_VERBOSE` | unset | Same as `--verbose` |
+| `HOMEBREW_VERBOSE` | unset | Merges into the verbose flag for most commands. Not fully equivalent to `--verbose`: `outdated` reads only the `--verbose` flag, so `HOMEBREW_VERBOSE` does not produce its version columns |
 
-`HOMEBREW_API_AUTO_UPDATE_SECS` and `HOMEBREW_CLEANUP_MAX_AGE_DAYS` must parse
-as unsigned integers; a malformed value is a startup error rather than a
+`HOMEBREW_NO_EMOJI` and `HOMEBREW_NO_ENV_HINTS` are parsed but not honored — see
+[Accepted but not honored](#accepted-but-not-honored).
+
+List-valued variables split on commas and whitespace, and empty entries are
+dropped. `HOMEBREW_API_AUTO_UPDATE_SECS` and `HOMEBREW_CLEANUP_MAX_AGE_DAYS` must
+parse as unsigned integers; a malformed value is a startup error rather than a
 silent fallback.

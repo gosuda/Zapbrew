@@ -36,8 +36,10 @@ $ zapbrew install jq
   `formulae.brew.sh` and verified as JWS signatures. Zapbrew never evaluates a
   Ruby formula.
 - **Compatible on disk.** Cellar, Caskroom, `opt`, `var/homebrew`, tabs, and
-  install receipts follow Homebrew's layout, so Zapbrew can operate on a prefix
-  that `brew` also manages.
+  install receipts follow Homebrew's layout, and `opt` symlinks point at the
+  same keg paths. This is a byte-compatible layout, not a claim that a prefix
+  can be safely shared with `brew` — see
+  [Using it on an existing Homebrew prefix](#using-it-on-an-existing-homebrew-prefix).
 - **Compatible in the environment.** Zapbrew reads a documented subset of
   Homebrew's `HOMEBREW_*` variables and defines none of its own. See
   [configuration](docs/configuration.md) for the supported list.
@@ -112,18 +114,40 @@ To remove the sandbox, delete `/tmp/zb-demo`.
 
 ## Using it on an existing Homebrew prefix
 
-Zapbrew reads and writes Homebrew's own layout, so it can manage a prefix that
-`brew` created. Install, uninstall, link, and pin operate on the real Cellar and
-prefix. Take a backup before you first use it on a prefix you care about.
+Zapbrew writes Homebrew's layout, so it can read an existing prefix and install
+into it. That is a layout guarantee, not a concurrency guarantee: running both
+managers against one prefix is outside what this documentation covers. When
+relocation or linking fails mid-install, the transaction rolls back and reports
+whatever it could not undo (see [how it works](docs/how-it-works.md)), but
+reconciling a partial keg against `brew`'s own bookkeeping is left to you. Take
+a backup before you first use it on a prefix you care about.
 
 `zapbrew shim` manages an opt-in `brew` shim if you want existing scripts to
 call Zapbrew. It is off by default.
 
-Shell completions are generated at runtime:
+Shell completions are generated at runtime. Each block writes to a
+user-writable location and needs no root.
+
+bash:
 
 ```bash
-zapbrew completions bash > /etc/bash_completion.d/zapbrew
-zapbrew completions zsh  > "${fpath[1]}/_zapbrew"
+mkdir -p ~/.local/share/bash-completion/completions
+zapbrew completions bash > ~/.local/share/bash-completion/completions/zapbrew
+```
+
+zsh — the directory must be on `fpath` before `compinit` runs:
+
+```zsh
+mkdir -p ~/.local/share/zsh/site-functions
+zapbrew completions zsh > ~/.local/share/zsh/site-functions/_zapbrew
+# then in ~/.zshrc, before compinit:
+#   fpath+=("$HOME/.local/share/zsh/site-functions")
+```
+
+fish:
+
+```fish
+mkdir -p ~/.config/fish/completions
 zapbrew completions fish > ~/.config/fish/completions/zapbrew.fish
 ```
 
@@ -163,6 +187,12 @@ Path queries short-circuit before any subcommand runs: `--prefix`, `--cellar`,
 - `zapbrew info` does not append `, HEAD` for a formula that has a HEAD spec.
 - `zapbrew --version` reports `Homebrew 5-compatible`. It tracks Homebrew's CLI
   surface, not its version number.
+- `install --cask --dry-run` is refused rather than performed. `brew` previews a
+  cask; Zapbrew has no cask dry-run, so it refuses the combination before
+  anything is downloaded instead of installing for real.
+- `--cache <formula>` is refused. `brew --cache <formula>` prints that formula's
+  download path; Zapbrew supports only bare `--cache`.
+- `--HEAD` and `--interactive` are refused, like `--build-from-source`.
 
 ## Repository layout
 

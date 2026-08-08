@@ -75,16 +75,23 @@ part of it. In order:
 | Rename staging into its final keg path | `promoted` |
 | Link the keg into the prefix | `new_link_attempted` |
 | Copy the prefix skeleton | `skeleton` |
-| Run post-install steps | `steps` |
+| Run post-install steps | filesystem steps record a `steps` inverse; `run` and maintenance steps are executed as processes and record no inverse |
 
 Only after all of that does the journal set `committed`. Before that point, a
-failure triggers `rollback`, which walks the journal in reverse: undo post-install
-steps, remove copied skeleton entries, unlink the new keg, remove the promoted
-keg, restore the backup, relink the old keg, remove staging, and remove created
-directories.
+failure triggers `rollback`, which walks the journal in reverse: undo the
+journaled filesystem post-install steps, remove copied skeleton entries, unlink
+the new keg, remove the promoted keg, restore the backup, relink the old keg,
+remove staging, and remove created directories.
 
 Rollback is honest about failure. Anything it could not undo is collected as
 leftovers and reported in the error, rather than being silently ignored.
+
+**Executed post-install steps are outside this guarantee.** A `run` or
+maintenance step is handed to `run_command` as a process, and no inverse is
+recorded for it. If a later step fails, rollback cannot undo what that command
+did to the system, and it does not appear in the leftovers either — the journal
+has no entry for it. Treat a formula whose post-install plan executes commands as
+not fully reversible.
 
 After commit, the backup and step scratch directories are removed. If that
 cleanup fails, the paths are reported too.
