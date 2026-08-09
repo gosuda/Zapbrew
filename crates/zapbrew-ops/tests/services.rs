@@ -21,6 +21,7 @@ struct Outcome {
     success: bool,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
+    error: Option<String>,
 }
 
 impl Outcome {
@@ -29,6 +30,7 @@ impl Outcome {
             success: true,
             stdout: Vec::new(),
             stderr: Vec::new(),
+            error: None,
         }
     }
 
@@ -37,6 +39,7 @@ impl Outcome {
             success: true,
             stdout: value.as_bytes().to_vec(),
             stderr: Vec::new(),
+            error: None,
         }
     }
 
@@ -45,6 +48,17 @@ impl Outcome {
             success: false,
             stdout: Vec::new(),
             stderr: b"inactive\n".to_vec(),
+            error: None,
+        }
+    }
+
+    /// The runner returns an `io::Error` instead of running the command.
+    fn error(message: &str) -> Self {
+        Self {
+            success: false,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            error: Some(message.to_owned()),
         }
     }
 }
@@ -76,6 +90,9 @@ impl CommandRunner for ScriptRunner {
             .expect("outcome lock")
             .pop_front()
             .ok_or_else(|| io::Error::other("unexpected command"))?;
+        if let Some(msg) = &outcome.error {
+            return Err(io::Error::other(msg.clone()));
+        }
         let raw = if outcome.success { 0 } else { 1 << 8 };
         Ok(CommandOutput::new(
             ExitStatus::from_raw(raw),
@@ -1077,6 +1094,360 @@ async fn macos_restart_preserves_transient_registration_mode() {
             "ohai:Successfully stopped `demo` (label: homebrew.mxcl.demo)",
             "ohai:Successfully ran `demo` (label: homebrew.mxcl.demo)",
         ]
+    );
+}
+
+#[tokio::test]
+async fn macos_run_load_failure_no_retained_job_removes_transient_only() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
+    let (mut ctx, _reporter) = fixture.context(vec![service_formula("demo", service)]);
+    ctx.env.bottle_tag = "arm64_sonoma".parse().expect("macOS tag");
+    let launchagents = fixture
+        .env
+        .home
+        .join("Library/LaunchAgents/homebrew.mxcl.demo.plist");
+    fs::create_dir_all(launchagents.parent().expect("LaunchAgents")).expect("LaunchAgents");
+    fs::write(&launchagents, "persistent").expect("persistent plist");
+    let transient = fixture
+        .env
+        .prefix
+        .join("var/zapbrew/services/homebrew.mxcl.demo.plist");
+
+    // list (not active) -> load fails -> probe: job not registered.
+    // Rollback removes the transient artifact only; no unload is issued
+    // because the probe confirms the job was never loaded.
+    let runner = Arc::new(ScriptRunner::new([
+        Outcome::failure(),
+        Outcome::failure(),
+        Outcome::failure(),
+    ]));
+    ctx.commands = runner.clone();
+
+    let error = services::run(&ctx, run_args(ServiceAction::Run, &["demo"]))
+        .await
+        .expect_err("load failure");
+
+    // The persistent registration survives as the recovery path.
+    assert_eq!(
+        fs::read_to_string(&launchagents).expect("persistent plist"),
+        "persistent",
+    );
+    // The transient artifact was rolled back.
+    assert!(!transient.exists(), "transient artifact removed");
+    // The original load error is surfaced, not swallowed or wrapped.
+    let message = error.to_string();
+    assert!(
+        message.contains("launchctl"),
+        "should report load failure: {message}"
+    );
+    assert!(
+        !message.contains("rollback incomplete"),
+        "rollback succeeded, no RollbackIncomplete: {message}",
+    );
+    // The probe ran but no unload followed because the job was not found.
+    let transient_str = transient.to_string();
+    assert_eq!(
+        runner.calls(),
+        [
+            vec!["launchctl", "list", "homebrew.mxcl.demo"],
+            vec!["launchctl", "load", transient_str.as_str()],
+            vec!["launchctl", "list", "homebrew.mxcl.demo"],
+        ]
+    );
+}
+
+#[tokio::test]
+async fn macos_run_load_failure_with_retained_job_unloads_before_removing_transient() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
+    let (mut ctx, _reporter) = fixture.context(vec![service_formula("demo", service)]);
+    ctx.env.bottle_tag = "sequoia".parse().expect("macOS tag");
+    let launchagents = fixture
+        .env
+        .home
+        .join("Library/LaunchAgents/homebrew.mxcl.demo.plist");
+    fs::create_dir_all(launchagents.parent().expect("LaunchAgents")).expect("LaunchAgents");
+    fs::write(&launchagents, "persistent").expect("persistent plist");
+    let transient = fixture
+        .env
+        .prefix
+        .join("var/zapbrew/services/homebrew.mxcl.demo.plist");
+
+    // list (not active) -> load fails -> probe: job IS registered (launchd
+    // partially loaded despite the nonzero exit) -> unload succeeds.
+    // Rollback unloads the retained job then removes the transient artifact.
+    let runner = Arc::new(ScriptRunner::new([
+        Outcome::failure(),
+        Outcome::failure(),
+        Outcome::success(),
+        Outcome::success(),
+    ]));
+    ctx.commands = runner.clone();
+
+    let error = services::run(&ctx, run_args(ServiceAction::Run, &["demo"]))
+        .await
+        .expect_err("load failure with retained job");
+
+    assert_eq!(
+        fs::read_to_string(&launchagents).expect("persistent plist"),
+        "persistent",
+    );
+    assert!(!transient.exists(), "transient artifact removed");
+    let message = error.to_string();
+    assert!(
+        message.contains("launchctl"),
+        "should report load failure: {message}"
+    );
+    assert!(
+        !message.contains("rollback incomplete"),
+        "rollback succeeded, no RollbackIncomplete: {message}",
+    );
+    let transient_str = transient.to_string();
+    assert_eq!(
+        runner.calls(),
+        [
+            vec!["launchctl", "list", "homebrew.mxcl.demo"],
+            vec!["launchctl", "load", transient_str.as_str()],
+            vec!["launchctl", "list", "homebrew.mxcl.demo"],
+            vec!["launchctl", "unload", transient_str.as_str()],
+        ]
+    );
+}
+
+#[tokio::test]
+async fn macos_run_load_failure_probe_error_reports_unknown_state() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
+    let (mut ctx, _reporter) = fixture.context(vec![service_formula("demo", service)]);
+    ctx.env.bottle_tag = "sequoia".parse().expect("macOS tag");
+    let launchagents = fixture
+        .env
+        .home
+        .join("Library/LaunchAgents/homebrew.mxcl.demo.plist");
+    fs::create_dir_all(launchagents.parent().expect("LaunchAgents")).expect("LaunchAgents");
+    fs::write(&launchagents, "persistent").expect("persistent plist");
+    let transient = fixture
+        .env
+        .prefix
+        .join("var/zapbrew/services/homebrew.mxcl.demo.plist");
+
+    // list (not active) -> load fails -> probe itself errors (runner io::Error).
+    // Rollback cannot determine job state: no unload is attempted, the
+    // transient file is still removed, but RollbackIncomplete wraps the
+    // original load error with an "unknown job state" leftover.
+    let runner = Arc::new(ScriptRunner::new([
+        Outcome::failure(),
+        Outcome::failure(),
+        Outcome::error("probe failed"),
+    ]));
+    ctx.commands = runner.clone();
+
+    let error = services::run(&ctx, run_args(ServiceAction::Run, &["demo"]))
+        .await
+        .expect_err("load failure with probe error");
+
+    assert_eq!(
+        fs::read_to_string(&launchagents).expect("persistent plist"),
+        "persistent",
+    );
+    assert!(!transient.exists(), "transient artifact removed");
+    let message = error.to_string();
+    assert!(
+        message.contains("rollback incomplete"),
+        "probe error should produce RollbackIncomplete: {message}",
+    );
+    assert!(
+        message.contains("unknown job state"),
+        "leftovers should name the unknown state: {message}",
+    );
+    assert!(
+        message.contains("launchctl"),
+        "original load error must not be swallowed: {message}",
+    );
+    let transient_str = transient.to_string();
+    assert_eq!(
+        runner.calls(),
+        [
+            vec!["launchctl", "list", "homebrew.mxcl.demo"],
+            vec!["launchctl", "load", transient_str.as_str()],
+            vec!["launchctl", "list", "homebrew.mxcl.demo"],
+        ]
+    );
+}
+
+#[tokio::test]
+async fn macos_run_start_failure_unloads_transient_and_leaves_persistent() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
+    let (mut ctx, _reporter) = fixture.context(vec![service_formula("demo", service)]);
+    ctx.env.bottle_tag = "sequoia".parse().expect("macOS tag");
+    let launchagents = fixture
+        .env
+        .home
+        .join("Library/LaunchAgents/homebrew.mxcl.demo.plist");
+    fs::create_dir_all(launchagents.parent().expect("LaunchAgents")).expect("LaunchAgents");
+    fs::write(&launchagents, "persistent").expect("persistent plist");
+    let transient = fixture
+        .env
+        .prefix
+        .join("var/zapbrew/services/homebrew.mxcl.demo.plist");
+
+    // list (not active) -> load succeeds -> start fails -> unload succeeds.
+    let runner = Arc::new(ScriptRunner::new([
+        Outcome::failure(),
+        Outcome::success(),
+        Outcome::failure(),
+        Outcome::success(),
+    ]));
+    ctx.commands = runner.clone();
+
+    let error = services::run(&ctx, run_args(ServiceAction::Run, &["demo"]))
+        .await
+        .expect_err("start failure");
+
+    assert_eq!(
+        fs::read_to_string(&launchagents).expect("persistent plist"),
+        "persistent",
+    );
+    assert!(!transient.exists(), "transient artifact removed");
+    let message = error.to_string();
+    assert!(
+        message.contains("launchctl"),
+        "should report start failure: {message}"
+    );
+    assert!(
+        !message.contains("rollback incomplete"),
+        "rollback succeeded, no RollbackIncomplete: {message}",
+    );
+    let transient_str = transient.to_string();
+    assert_eq!(
+        runner.calls(),
+        [
+            vec!["launchctl", "list", "homebrew.mxcl.demo"],
+            vec!["launchctl", "load", transient_str.as_str()],
+            vec!["launchctl", "start", "homebrew.mxcl.demo"],
+            vec!["launchctl", "unload", transient_str.as_str()],
+        ]
+    );
+}
+
+#[tokio::test]
+async fn macos_run_persistent_removal_failure_rolls_back_transient() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
+    let (mut ctx, _reporter) = fixture.context(vec![service_formula("demo", service)]);
+    ctx.env.bottle_tag = "sequoia".parse().expect("macOS tag");
+    let launchagents = fixture
+        .env
+        .home
+        .join("Library/LaunchAgents/homebrew.mxcl.demo.plist");
+    // Make the persistent path a directory so fs::remove_file fails (the
+    // recovery path is still present, just not a regular file).
+    fs::create_dir_all(&launchagents).expect("persistent dir");
+    let transient = fixture
+        .env
+        .prefix
+        .join("var/zapbrew/services/homebrew.mxcl.demo.plist");
+
+    // list (not active) -> load succeeds -> start succeeds -> remove persistent
+    // fails (directory) -> unload succeeds (rollback).
+    let runner = Arc::new(ScriptRunner::new([
+        Outcome::failure(),
+        Outcome::success(),
+        Outcome::success(),
+        Outcome::success(),
+    ]));
+    ctx.commands = runner.clone();
+
+    let error = services::run(&ctx, run_args(ServiceAction::Run, &["demo"]))
+        .await
+        .expect_err("persistent removal failure");
+
+    // The persistent path survives as the recovery path.
+    assert!(launchagents.is_dir(), "persistent path still present");
+    // The transient activation was rolled back.
+    assert!(!transient.exists(), "transient artifact removed");
+    let message = error.to_string();
+    assert!(
+        message.contains("remove persistent service file"),
+        "should report the failed removal: {message}",
+    );
+    assert!(
+        !message.contains("rollback incomplete"),
+        "rollback succeeded, no RollbackIncomplete: {message}",
+    );
+    let transient_str = transient.to_string();
+    assert_eq!(
+        runner.calls(),
+        [
+            vec!["launchctl", "list", "homebrew.mxcl.demo"],
+            vec!["launchctl", "load", transient_str.as_str()],
+            vec!["launchctl", "start", "homebrew.mxcl.demo"],
+            vec!["launchctl", "unload", transient_str.as_str()],
+        ]
+    );
+}
+
+#[tokio::test]
+async fn macos_run_start_failure_rollback_leftovers_reported_when_unload_fails() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
+    let (mut ctx, _reporter) = fixture.context(vec![service_formula("demo", service)]);
+    ctx.env.bottle_tag = "sequoia".parse().expect("macOS tag");
+    let launchagents = fixture
+        .env
+        .home
+        .join("Library/LaunchAgents/homebrew.mxcl.demo.plist");
+    fs::create_dir_all(launchagents.parent().expect("LaunchAgents")).expect("LaunchAgents");
+    fs::write(&launchagents, "persistent").expect("persistent plist");
+    let transient = fixture
+        .env
+        .prefix
+        .join("var/zapbrew/services/homebrew.mxcl.demo.plist");
+
+    // list (not active) -> load succeeds -> start fails -> unload fails: the
+    // loaded job survives as an explicit leftover even though the transient
+    // file is removed.
+    let runner = Arc::new(ScriptRunner::new([
+        Outcome::failure(),
+        Outcome::success(),
+        Outcome::failure(),
+        Outcome::failure(),
+    ]));
+    ctx.commands = runner.clone();
+
+    let error = services::run(&ctx, run_args(ServiceAction::Run, &["demo"]))
+        .await
+        .expect_err("start failure with leftover");
+
+    // The persistent registration survives.
+    assert_eq!(
+        fs::read_to_string(&launchagents).expect("persistent plist"),
+        "persistent",
+    );
+    // The transient file was removed, but the loaded job could not be unloaded.
+    assert!(!transient.exists(), "transient artifact removed");
+    // Rollback left a loaded job behind → RollbackIncomplete wrapping the
+    // original start error, which must not be swallowed.
+    let message = error.to_string();
+    assert!(
+        message.contains("rollback incomplete"),
+        "should be RollbackIncomplete: {message}",
+    );
+    assert!(
+        message.contains("loaded job"),
+        "leftovers should name the loaded job: {message}",
+    );
+    assert!(
+        message.contains("launchctl"),
+        "original start error must not be swallowed: {message}",
     );
 }
 

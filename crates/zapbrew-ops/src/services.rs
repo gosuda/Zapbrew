@@ -333,36 +333,139 @@ fn run_service(ctx: &Ctx, target: &Target) -> Result<(), OpError> {
             ran(ctx, target, &service_label(&target.name));
         }
         BottleTag::MacOs { .. } => {
-            let path = transient_dir(&ctx.env).join(plist_file_name(&target.name));
+            let transient = transient_dir(&ctx.env).join(plist_file_name(&target.name));
             write_file(
-                &path,
+                &transient,
                 render_launchd_plist(&ctx.env, &target.name, &target.config)?,
             )?;
             let persistent = launch_agents_dir(&ctx.env).join(plist_file_name(&target.name));
+
+            // Keep the persistent plist until transient activation succeeds.
+            // Load the transient plist first so a load failure never destroys
+            // the last recoverable LaunchAgents file.
+            if let Err(err) = run_checked(
+                ctx.commands.as_ref(),
+                &launchctl(LaunchctlAction::Load, &transient),
+            ) {
+                return Err(rollback_transient(
+                    ctx,
+                    &transient,
+                    &plist_label(&target.name),
+                    TransientActivation::LoadAttempted,
+                    err,
+                ));
+            }
+
+            // Start the job by label. On failure unload the transient job and
+            // remove its artifact, leaving the persistent plist untouched.
+            if let Err(err) = run_checked(
+                ctx.commands.as_ref(),
+                &launchctl_start(&plist_label(&target.name)),
+            ) {
+                return Err(rollback_transient(
+                    ctx,
+                    &transient,
+                    &plist_label(&target.name),
+                    TransientActivation::Loaded,
+                    err,
+                ));
+            }
+
+            // Both transient steps succeeded: now retire the persistent plist.
+            // If removal fails, roll back the transient activation so the
+            // persistent file remains the recovery path.
             match fs::remove_file(&persistent) {
                 Ok(()) => {}
                 Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
                 Err(source) => {
-                    return Err(OpError::io(
-                        "remove persistent service file",
-                        persistent,
-                        source,
+                    let original =
+                        OpError::io("remove persistent service file", persistent, source);
+                    return Err(rollback_transient(
+                        ctx,
+                        &transient,
+                        &plist_label(&target.name),
+                        TransientActivation::Loaded,
+                        original,
                     ));
                 }
             }
-            run_checked(
-                ctx.commands.as_ref(),
-                &launchctl(LaunchctlAction::Load, &path),
-            )?;
-            run_checked(
-                ctx.commands.as_ref(),
-                &launchctl_start(&plist_label(&target.name)),
-            )?;
             ran(ctx, target, &plist_label(&target.name));
         }
         BottleTag::All => return Err(unsupported_platform()),
     }
     Ok(())
+}
+
+/// Activation state of the transient launchd job at the point of failure.
+enum TransientActivation {
+    /// `launchctl load` was attempted but may not have registered the job.
+    /// Probe the label with `launchctl list` before deciding to unload.
+    LoadAttempted,
+    /// The job is known to be loaded (`launchctl load` succeeded); unload
+    /// directly without probing.
+    Loaded,
+}
+
+/// Roll back a failed transient launchd activation so the persistent
+/// LaunchAgents plist remains the recovery path. The transient artifact is
+/// always removed. Whether the job is unloaded depends on `activation`:
+///
+/// - [`TransientActivation::LoadAttempted`]: probe the label with
+///   `launchctl list`. Unload only when the probe confirms the job exists.
+///   If the probe itself errors, the job state is unknown — report it as a
+///   leftover without attempting a blind unload.
+/// - [`TransientActivation::Loaded`]: unload directly (the job was
+///   confirmed loaded by a prior successful `launchctl load`).
+///
+/// Returns `original` unchanged when rollback leaves nothing behind, or
+/// [`OpError::RollbackIncomplete`] when a loaded job or artifact survives —
+/// the original error is never swallowed.
+fn rollback_transient(
+    ctx: &Ctx,
+    transient: &Utf8Path,
+    label: &str,
+    activation: TransientActivation,
+    original: OpError,
+) -> OpError {
+    let mut leftovers: Vec<String> = Vec::new();
+
+    let need_unload = match activation {
+        TransientActivation::Loaded => true,
+        TransientActivation::LoadAttempted => match probe(ctx, &launchctl_list(label)) {
+            Ok(true) => true,
+            Ok(false) => false,
+            Err(probe_err) => {
+                leftovers.push(format!("unknown job state for {label} ({probe_err})"));
+                false
+            }
+        },
+    };
+
+    if need_unload
+        && let Err(unload_err) = run_checked(
+            ctx.commands.as_ref(),
+            &launchctl(LaunchctlAction::Unload, transient),
+        )
+    {
+        leftovers.push(format!("loaded job at {transient} ({unload_err})"));
+    }
+
+    match fs::remove_file(transient) {
+        Ok(()) => {}
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+        Err(source) => {
+            leftovers.push(format!("{transient} ({source})"));
+        }
+    }
+
+    if leftovers.is_empty() {
+        original
+    } else {
+        OpError::RollbackIncomplete {
+            original: Box::new(original),
+            leftovers: leftovers.join(", "),
+        }
+    }
 }
 
 fn info(ctx: &Ctx, target: &Target) -> Result<(), OpError> {
