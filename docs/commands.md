@@ -34,7 +34,7 @@ Options:
 > `--cache [<formula>]`, but passing a name is refused with
 > `--cache with a formula name is not supported.` Bare `--cache` prints the
 > download cache path and works as documented.
-
+>
 > **`--debug` changes nothing.** The flag and `HOMEBREW_DEBUG` are merged into
 > `Env::debug`, which no operation and no reporter reads. This build has no
 > diagnostic mode; `--verbose` is the flag that affects output. See
