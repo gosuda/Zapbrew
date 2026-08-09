@@ -291,11 +291,8 @@ pub fn plan(command: Commands, globals: &GlobalArgs, width: usize) -> Result<Pla
             }),
         },
         Commands::Desc(args) => Plan {
-            needs_formula: true,
-            needs_cask: args.search.is_some()
-                || args.search_name.is_some()
-                || args.search_description.is_some()
-                || args.cask,
+            needs_formula: !args.cask,
+            needs_cask: !args.formula,
             kind: OpKind::Desc(desc::Args {
                 names: args.names,
                 search: args.search,
@@ -927,6 +924,44 @@ mod tests {
     }
 
     #[test]
+    fn desc_bare_loads_both_catalogs() {
+        // ops desc tries formula then cask, so a bare name that is a cask
+        // must find a populated cask catalog — load both by default.
+        assert_eq!(classify(&["zapbrew", "desc", "firefox"]), (true, true));
+    }
+
+    #[test]
+    fn desc_formula_discriminator_loads_only_formula() {
+        assert_eq!(
+            classify(&["zapbrew", "desc", "wget", "--formula"]),
+            (true, false)
+        );
+    }
+
+    #[test]
+    fn desc_cask_discriminator_loads_only_cask() {
+        assert_eq!(
+            classify(&["zapbrew", "desc", "firefox", "--cask"]),
+            (false, true)
+        );
+    }
+
+    #[test]
+    fn desc_search_mode_respects_discriminator() {
+        // Search mode without a discriminator scans both catalogs; --cask
+        // scopes it to casks only, proving the discriminator (not the search
+        // flag) drives classification.
+        assert_eq!(
+            classify(&["zapbrew", "desc", "--search", "browser"]),
+            (true, true)
+        );
+        assert_eq!(
+            classify(&["zapbrew", "desc", "--search", "browser", "--cask"]),
+            (false, true)
+        );
+    }
+
+    #[test]
     fn list_names_drive_formula_classification() {
         assert_eq!(classify(&["zapbrew", "list"]), (false, false));
         assert_eq!(classify(&["zapbrew", "list", "wget"]), (true, false));
@@ -967,7 +1002,6 @@ mod tests {
             &["zapbrew", "link", "wget"][..],
             &["zapbrew", "fetch", "wget"][..],
             &["zapbrew", "cleanup"][..],
-            &["zapbrew", "desc", "wget"][..],
             &["zapbrew", "doctor"][..],
             &["zapbrew", "postinstall", "wget"][..],
             &["zapbrew", "services", "list"][..],
