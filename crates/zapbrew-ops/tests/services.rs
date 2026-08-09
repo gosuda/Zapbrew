@@ -903,6 +903,12 @@ async fn macos_run_loads_plist_and_starts_label() {
     let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
     let (mut ctx, reporter) = fixture.context(vec![service_formula("demo", service.clone())]);
     ctx.env.bottle_tag = "arm64_sonoma".parse().expect("macOS tag");
+    let launchagents = fixture
+        .env
+        .home
+        .join("Library/LaunchAgents/homebrew.mxcl.demo.plist");
+    fs::create_dir_all(launchagents.parent().expect("LaunchAgents")).expect("LaunchAgents");
+    fs::write(&launchagents, "persistent").expect("persistent plist");
     let runner = Arc::new(ScriptRunner::new([
         Outcome::failure(),
         Outcome::success(),
@@ -914,10 +920,17 @@ async fn macos_run_loads_plist_and_starts_label() {
         .await
         .expect("mac run");
 
+    // The transient plist must live outside ~/Library/LaunchAgents so launchd
+    // never auto-loads it at login.
+    assert!(
+        !launchagents.exists(),
+        "run plist must not be in LaunchAgents"
+    );
+
     let plist_path = fixture
         .env
-        .home
-        .join("Library/LaunchAgents/homebrew.mxcl.demo.plist");
+        .prefix
+        .join("var/zapbrew/services/homebrew.mxcl.demo.plist");
     assert_eq!(
         fs::read_to_string(&plist_path).expect("plist file"),
         services_test_support::render_launchd_plist(&ctx.env, "demo", &service)
@@ -935,6 +948,135 @@ async fn macos_run_loads_plist_and_starts_label() {
     assert_eq!(
         reporter.take(),
         ["ohai:Successfully ran `demo` (label: homebrew.mxcl.demo)"]
+    );
+}
+
+#[tokio::test]
+async fn macos_run_transient_plist_is_discoverable_by_stop_and_info() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
+    let (mut ctx, reporter) = fixture.context(vec![service_formula("demo", service)]);
+    ctx.env.bottle_tag = "sequoia".parse().expect("macOS tag");
+
+    // run: not-active → load transient → start label
+    // stop: active → unload transient
+    // info: not-active → report transient path
+    let runner = Arc::new(ScriptRunner::new([
+        Outcome::failure(), // run:  not active
+        Outcome::success(), // run:  load transient plist
+        Outcome::success(), // run:  start label
+        Outcome::success(), // stop: active
+        Outcome::success(), // stop: unload transient plist
+        Outcome::failure(), // info: not active
+    ]));
+    ctx.commands = runner.clone();
+
+    let transient = fixture
+        .env
+        .prefix
+        .join("var/zapbrew/services/homebrew.mxcl.demo.plist");
+    let launchagents = fixture
+        .env
+        .home
+        .join("Library/LaunchAgents/homebrew.mxcl.demo.plist");
+
+    // --- run ---
+    services::run(&ctx, run_args(ServiceAction::Run, &["demo"]))
+        .await
+        .expect("mac run");
+    assert!(transient.exists(), "transient plist written");
+    assert!(!launchagents.exists(), "nothing in LaunchAgents");
+
+    // --- stop ---
+    services::run(&ctx, run_args(ServiceAction::Stop, &["demo"]))
+        .await
+        .expect("mac stop");
+
+    // --- info ---
+    services::run(&ctx, run_args(ServiceAction::Info, &["demo"]))
+        .await
+        .expect("mac info");
+
+    let transient_str = transient.to_string();
+    assert_eq!(
+        runner.calls(),
+        [
+            vec!["launchctl", "list", "homebrew.mxcl.demo"],
+            vec!["launchctl", "load", transient_str.as_str()],
+            vec!["launchctl", "start", "homebrew.mxcl.demo"],
+            vec!["launchctl", "list", "homebrew.mxcl.demo"],
+            vec!["launchctl", "unload", transient_str.as_str()],
+            vec!["launchctl", "list", "homebrew.mxcl.demo"],
+        ]
+    );
+    assert_eq!(
+        reporter.take(),
+        [
+            "ohai:Successfully ran `demo` (label: homebrew.mxcl.demo)".to_owned(),
+            "ohai:Successfully stopped `demo` (label: homebrew.mxcl.demo)".to_owned(),
+            format!("print:demo stopped {transient}"),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn macos_restart_preserves_transient_registration_mode() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
+    let (mut ctx, reporter) = fixture.context(vec![service_formula("demo", service)]);
+    ctx.env.bottle_tag = "sequoia".parse().expect("macOS tag");
+    let runner = Arc::new(ScriptRunner::new([
+        Outcome::failure(),
+        Outcome::success(),
+        Outcome::success(),
+        Outcome::success(),
+        Outcome::success(),
+        Outcome::failure(),
+        Outcome::success(),
+        Outcome::success(),
+    ]));
+    ctx.commands = runner.clone();
+
+    services::run(&ctx, run_args(ServiceAction::Run, &["demo"]))
+        .await
+        .expect("mac run");
+    services::run(&ctx, run_args(ServiceAction::Restart, &["demo"]))
+        .await
+        .expect("mac restart");
+
+    let transient = fixture
+        .env
+        .prefix
+        .join("var/zapbrew/services/homebrew.mxcl.demo.plist");
+    let persistent = fixture
+        .env
+        .home
+        .join("Library/LaunchAgents/homebrew.mxcl.demo.plist");
+    let path = transient.to_string();
+    assert!(transient.is_file());
+    assert!(!persistent.exists());
+    assert_eq!(
+        runner.calls(),
+        [
+            vec!["launchctl", "list", "homebrew.mxcl.demo"],
+            vec!["launchctl", "load", path.as_str()],
+            vec!["launchctl", "start", "homebrew.mxcl.demo"],
+            vec!["launchctl", "list", "homebrew.mxcl.demo"],
+            vec!["launchctl", "unload", path.as_str()],
+            vec!["launchctl", "list", "homebrew.mxcl.demo"],
+            vec!["launchctl", "load", path.as_str()],
+            vec!["launchctl", "start", "homebrew.mxcl.demo"],
+        ]
+    );
+    assert_eq!(
+        reporter.take(),
+        [
+            "ohai:Successfully ran `demo` (label: homebrew.mxcl.demo)",
+            "ohai:Successfully stopped `demo` (label: homebrew.mxcl.demo)",
+            "ohai:Successfully ran `demo` (label: homebrew.mxcl.demo)",
+        ]
     );
 }
 
