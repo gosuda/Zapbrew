@@ -166,11 +166,13 @@ async fn refuses_without_force_when_a_keg_receipt_names_the_tap() {
 }
 
 #[tokio::test]
-async fn refuses_without_force_when_a_receipt_tap_is_invalid() {
+async fn skips_malformed_receipt_and_still_refuses_a_later_valid_dependent() {
     let fixture = Fixture::new();
     let tap_path = fixture.env.library.join("Taps/acme/homebrew-tools");
     fs::create_dir_all(&tap_path).expect("tap");
-    fixture.keg_with_tap("tool", "1.0", 0, "Acme/homebrew-tools/");
+    fs::write(tap_path.join("tool.rb"), "tool").expect("tap file");
+    fixture.keg_with_tap("aaa-broken", "1.0", 0, "acme");
+    fixture.keg_with_tap("zzz-dependent", "1.0", 0, "Acme/homebrew-tools");
     let (ctx, reporter) = fixture.context(Vec::new());
 
     let error = untap::run(
@@ -181,11 +183,49 @@ async fn refuses_without_force_when_a_receipt_tap_is_invalid() {
         },
     )
     .await
-    .expect_err("invalid receipt tap");
+    .expect_err("valid dependent after malformed receipt");
 
-    assert!(matches!(error, OpError::InvalidState { .. }));
+    assert!(matches!(error, OpError::Refusal { .. }));
+    assert_eq!(
+        error.to_string(),
+        "Refusing to untap acme/tools: installed formula zzz-dependent depends on it."
+    );
     assert!(tap_path.is_dir(), "tap tree must be intact after refusal");
-    assert!(reporter.take().is_empty(), "no untap output on refusal");
+    assert_eq!(
+        reporter.take(),
+        ["opoo:Skipping aaa-broken: receipt names an unparseable tap `acme`"]
+    );
+}
+
+#[tokio::test]
+async fn untaps_when_only_a_malformed_unrelated_receipt_exists() {
+    let fixture = Fixture::new();
+    let tap_path = fixture.env.library.join("Taps/acme/homebrew-tools");
+    fs::create_dir_all(&tap_path).expect("tap");
+    fs::write(tap_path.join("tool.rb"), "tool").expect("tap file");
+    fixture.keg_with_tap("aaa-broken", "1.0", 0, "acme");
+    let (ctx, reporter) = fixture.context(Vec::new());
+
+    untap::run(
+        &ctx,
+        Args {
+            names: vec!["acme/tools".to_owned()],
+            force: false,
+        },
+    )
+    .await
+    .expect("unrelated malformed receipt must not block untap");
+
+    assert!(!tap_path.exists());
+    assert!(!fixture.env.library.join("Taps/acme").exists());
+    assert_eq!(
+        reporter.take(),
+        [
+            "opoo:Skipping aaa-broken: receipt names an unparseable tap `acme`",
+            "ohai:Untapping acme/tools",
+            "print:Untapped (1 files, 4B).",
+        ]
+    );
 }
 
 #[tokio::test]
