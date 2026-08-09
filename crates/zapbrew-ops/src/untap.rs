@@ -2,6 +2,7 @@ use std::fs;
 
 use crate::state;
 use crate::tap::{TapName, is_empty_real_directory, is_installed, measure, remove_tree};
+use crate::transaction::acquire_exclusive_tap_locks;
 use crate::{Ctx, OpError};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -16,6 +17,13 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
         .iter()
         .map(|name| TapName::parse(name))
         .collect::<Result<Vec<_>, _>>()?;
+
+    // Acquire exclusive tap locks for all requested taps (sorted/deduped)
+    // before scanning receipts or removing any tap directory. Held until
+    // function exit so a concurrent install cannot commit a receipt from a
+    // tap being removed. --force bypasses only the dependent refusal below,
+    // not this lock.
+    let _tap_locks = acquire_exclusive_tap_locks(&ctx.env, &taps)?;
 
     if !args.force {
         refuse_if_dependents(ctx, &taps)?;

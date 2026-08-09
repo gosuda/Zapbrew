@@ -451,6 +451,56 @@ fn lock_guard_second_acquire_is_busy_then_succeeds_after_drop() {
 }
 
 #[test]
+fn exclusive_blocks_shared_and_vice_versa() {
+    let (_temp, root) = utf8_temp();
+    let locks = root.join("var/homebrew/locks");
+    let lock_name = "tap.test.lock";
+
+    // Exclusive blocks shared.
+    let exclusive = LockGuard::acquire(&locks, lock_name).expect("exclusive acquire");
+    match LockGuard::acquire_shared(&locks, lock_name) {
+        Err(PrefixError::LockBusy { .. }) => {}
+        Ok(_) => panic!("shared acquire should be LockBusy while exclusive is held"),
+        Err(err) => panic!("unexpected error: {err}"),
+    }
+    drop(exclusive);
+
+    // Shared blocks exclusive.
+    let shared = LockGuard::acquire_shared(&locks, lock_name).expect("shared acquire");
+    match LockGuard::acquire(&locks, lock_name) {
+        Err(PrefixError::LockBusy { .. }) => {}
+        Ok(_) => panic!("exclusive acquire should be LockBusy while shared is held"),
+        Err(err) => panic!("unexpected error: {err}"),
+    }
+    drop(shared);
+}
+
+#[test]
+fn two_shared_locks_do_not_serialize_each_other() {
+    let (_temp, root) = utf8_temp();
+    let locks = root.join("var/homebrew/locks");
+    let lock_name = "tap.test.lock";
+
+    let first = LockGuard::acquire_shared(&locks, lock_name).expect("first shared");
+    let second = LockGuard::acquire_shared(&locks, lock_name).expect("second shared");
+    // Both held simultaneously — neither blocked the other.
+    drop(first);
+    drop(second);
+}
+
+#[test]
+fn shared_lock_on_different_file_does_not_contend_with_exclusive() {
+    let (_temp, root) = utf8_temp();
+    let locks = root.join("var/homebrew/locks");
+
+    let exclusive = LockGuard::acquire(&locks, "alpha.tap.lock").expect("exclusive alpha");
+    let shared =
+        LockGuard::acquire_shared(&locks, "beta.tap.lock").expect("shared beta — no contention");
+    drop(exclusive);
+    drop(shared);
+}
+
+#[test]
 fn prefix_derives_standard_subdirs_from_env() {
     let (_temp, root) = utf8_temp();
     let prefix_root = root.join("hb");

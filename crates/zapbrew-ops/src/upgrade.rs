@@ -13,8 +13,10 @@ use crate::install::{
 use crate::install_steps::InstallSteps;
 use crate::outdated::is_outdated;
 use crate::state::{InstalledFormula, scan_selected};
+use crate::tap::formula_taps;
 use crate::transaction::{
-    InstallInput, acquire_formula_locks, cleanup_replaced_kegs, install as install_transaction,
+    InstallInput, acquire_formula_locks, acquire_shared_tap_locks, cleanup_replaced_kegs,
+    install as install_transaction,
 };
 use crate::{Ctx, OpError};
 
@@ -40,6 +42,15 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
         resolve_named(ctx, &args.names).await?
     } else {
         enumerate_installed(ctx)?
+    };
+    let _tap_locks = if args.dry_run {
+        None
+    } else {
+        // Acquire shared tap locks before formula locks to prevent lock-order
+        // inversion with untap's exclusive tap locks. Held through receipt
+        // commit (end of function).
+        let taps = formula_taps(formulae.iter().copied())?;
+        Some(acquire_shared_tap_locks(&ctx.env, &taps)?)
     };
     let _locks = if args.dry_run {
         None

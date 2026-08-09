@@ -10,8 +10,10 @@ use zapbrew_types::{Arch, BottleTag, FormulaName};
 use crate::dependency::{DependencyMode, DependencyOptions, EdgeFilter, expand};
 use crate::install_steps::InstallSteps;
 use crate::state::{InstalledFormula, InstalledKeg, InstalledState, scan_selected};
+use crate::tap::formula_taps;
 use crate::transaction::{
-    InstallInput, Replacement, acquire_formula_locks, install as install_transaction,
+    InstallInput, Replacement, acquire_formula_locks, acquire_shared_tap_locks,
+    install as install_transaction,
 };
 use crate::{Ctx, OpError};
 
@@ -57,7 +59,9 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
     }
 
     let affected = affected_names(ctx, &candidates);
+    let taps = formula_taps(candidates.iter().map(|c| c.formula))?;
     let state;
+    let _tap_locks;
     let _locks;
     if args.dry_run {
         state = scan_selected(&ctx.env, &affected)?;
@@ -67,6 +71,10 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
         // points there. Never mutates under `--dry-run`.
         zapbrew_prefix::symlink_ld_so(&ctx.env)?;
         zapbrew_prefix::setup_preferred_gcc_libs(&ctx.env)?;
+        // Acquire shared tap locks before formula locks to prevent lock-order
+        // inversion with untap's exclusive tap locks. Held through receipt
+        // commit (end of function).
+        _tap_locks = acquire_shared_tap_locks(&ctx.env, &taps)?;
         _locks = acquire_formula_locks(&ctx.env, &affected)?;
         state = scan_selected(&ctx.env, &affected)?;
     }

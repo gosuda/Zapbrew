@@ -575,3 +575,116 @@ async fn dry_run_does_not_mutate_prefix_with_ld_gcc_setup() {
     let after = fingerprint(&ctx.env.prefix);
     assert_eq!(before, after, "dry-run must not mutate the prefix");
 }
+
+// ---------------------------------------------------------------------------
+// Per-tap lock contention tests
+// ---------------------------------------------------------------------------
+
+use zapbrew_ops::tap_lock_test_support;
+use zapbrew_prefix::{LockGuard, PrefixError};
+
+fn formula_with_tap(
+    name: &str,
+    version: &str,
+    revision: u32,
+    scheme: u32,
+    url: &str,
+    sha: &str,
+    tap: &str,
+) -> Value {
+    let mut f = formula(name, version, revision, scheme, url, sha);
+    f["tap"] = json!(tap);
+    f
+}
+
+fn tap_lock(env: &Env, raw_tap: &str) -> LockGuard {
+    let path = tap_lock_test_support::lock_path(&env.locks, raw_tap).expect("tap lock path");
+    let dir = path.parent().expect("lock dir");
+    let name = path.file_name().expect("lock file name");
+    LockGuard::acquire(dir, name).expect("exclusive tap lock for test")
+}
+
+#[tokio::test]
+async fn upgrade_blocked_by_exclusive_tap_lock() {
+    let server = MockServer::start().await;
+    let tarball = bottle("foo", "1.1");
+    mount(&server, "/foo.tar.gz", &tarball, 0).await;
+    let temp = TempDir::new().expect("temp");
+    let env = env(&temp, false);
+    let locks = env.locks.clone();
+    installed(&env, "foo", "1.0", 0, false);
+    let url = format!("{}/foo.tar.gz", server.uri());
+    let (ctx, _) = context(
+        env.clone(),
+        vec![formula_with_tap(
+            "foo",
+            "1.1",
+            0,
+            0,
+            &url,
+            &digest(&tarball),
+            "acme/tools",
+        )],
+    );
+
+    let _lock = tap_lock(&env, "acme/tools");
+
+    let error = upgrade::run(&ctx, named("foo"))
+        .await
+        .expect_err("upgrade must be blocked by exclusive tap lock");
+    assert!(
+        matches!(
+            error,
+            zapbrew_ops::OpError::Prefix(PrefixError::LockBusy { .. })
+        ),
+        "expected LockBusy from tap lock, got: {error}"
+    );
+
+    // Formula lock must not have been created — tap locks come first.
+    assert!(
+        !locks.join("foo.formula.lock").exists(),
+        "formula lock must not be created when tap lock blocks"
+    );
+}
+
+#[tokio::test]
+async fn upgrade_dry_run_succeeds_under_exclusive_tap_lock_and_creates_no_locks() {
+    let server = MockServer::start().await;
+    let tarball = bottle("foo", "1.1");
+    mount(&server, "/foo.tar.gz", &tarball, 0).await;
+    let temp = TempDir::new().expect("temp");
+    let env = env(&temp, false);
+    let locks = env.locks.clone();
+    installed(&env, "foo", "1.0", 0, true);
+    let url = format!("{}/foo.tar.gz", server.uri());
+    let (ctx, _) = context(
+        env.clone(),
+        vec![formula_with_tap(
+            "foo",
+            "1.1",
+            0,
+            0,
+            &url,
+            &digest(&tarball),
+            "acme/tools",
+        )],
+    );
+
+    // Hold an exclusive tap lock — dry-run must NOT be blocked.
+    let _lock = tap_lock(&env, "acme/tools");
+
+    upgrade::run(
+        &ctx,
+        Args {
+            dry_run: true,
+            ..named("foo")
+        },
+    )
+    .await
+    .expect("dry run must succeed under exclusive tap lock");
+
+    assert!(
+        !locks.join("foo.formula.lock").exists(),
+        "dry-run must not create a formula lock"
+    );
+}
