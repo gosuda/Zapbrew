@@ -79,7 +79,7 @@ mirror preference, not a boundary.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `HOMEBREW_NO_INSTALL_CLEANUP` | unset | Skip the cleanup that follows an install |
+| `HOMEBREW_NO_INSTALL_CLEANUP` | unset | Skip removal of replaced kegs after `upgrade` |
 | `HOMEBREW_NO_AUTOREMOVE` | unset | Do not autoremove unused dependencies |
 | `HOMEBREW_CLEANUP_MAX_AGE_DAYS` | `120` | Age threshold for stale cache entries |
 | `HOMEBREW_NO_CLEANUP_FORMULAE` | empty | Formulae `cleanup` must never touch |
