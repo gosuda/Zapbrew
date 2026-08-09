@@ -438,7 +438,7 @@ pub struct SearchArgs {
 
 #[derive(Debug, Args)]
 pub struct ShellenvArgs {
-    /// Shell to emit integration for; defaults to the current shell.
+    /// Shell template: bash/sh, zsh, fish, csh/tcsh, or pwsh; other names use POSIX. Defaults to the current shell.
     pub shell: Option<String>,
 }
 

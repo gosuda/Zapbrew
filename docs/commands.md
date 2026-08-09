@@ -548,7 +548,7 @@ Print shell integration for the environment
 Usage: zapbrew shellenv [OPTIONS] [SHELL]
 
 Arguments:
-  [SHELL]  Shell to emit integration for; defaults to the current shell
+  [SHELL]  Shell template: bash/sh, zsh, fish, csh/tcsh, or pwsh; other names use POSIX. Defaults to the current shell
 
 Options:
       --debug    Enable debug output
