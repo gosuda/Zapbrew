@@ -82,7 +82,13 @@ mirror preference, not a boundary.
 | `HOMEBREW_NO_INSTALL_CLEANUP` | unset | Skip removal of replaced kegs after `upgrade` |
 | `HOMEBREW_NO_AUTOREMOVE` | unset | Skip automatic autoremove after `uninstall` |
 | `HOMEBREW_CLEANUP_MAX_AGE_DAYS` | `120` | Age threshold for stale cache entries |
-| `HOMEBREW_NO_CLEANUP_FORMULAE` | empty | Formulae `cleanup` must never touch |
+| `HOMEBREW_NO_CLEANUP_FORMULAE` | empty | Protect matching installed kegs; cache scope is narrower |
+
+`HOMEBREW_NO_CLEANUP_FORMULAE` always excludes matching installed kegs from
+`cleanup`. When you explicitly name a formula, it also excludes that formula's
+cached bottles from `--scrub`. A bare cleanup does not use the list for cache
+pruning. The list does not protect age-expired or incomplete downloads, prefix
+cleanup, stale lock files, or formulae removed by `autoremove`.
 
 `HOMEBREW_NO_INSTALL_UPGRADE` is parsed but not honored — see
 [Accepted but not honored](#accepted-but-not-honored).
