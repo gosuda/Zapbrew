@@ -56,6 +56,7 @@ $ zapbrew install jq
 - Linux or macOS. Development and live verification for this repository run on
   x86_64 Linux. macOS support is compile-checked for `aarch64-apple-darwin` and
   covered by host-independent unit fixtures; it is not live-verified here.
+- Git, when you use `tap` or update installed taps.
 
 ## Quick start
 
