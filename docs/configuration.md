@@ -23,8 +23,8 @@ path variables that match their default.
 | `HOMEBREW_PREFIX` | `/home/linuxbrew/.linuxbrew` on Linux, `/opt/homebrew` on arm64 macOS, `/usr/local` on x86_64 macOS |
 | `HOMEBREW_CELLAR` | `$HOMEBREW_PREFIX/Cellar` |
 | `HOMEBREW_CACHE` | `~/Library/Caches/Homebrew` on macOS; `${XDG_CACHE_HOME:-~/.cache}/Homebrew` on Linux |
-| `HOMEBREW_LOGS` | `~/Library/Logs/Homebrew` on macOS; `${XDG_CACHE_HOME:-~/.cache}/Homebrew/Logs` on Linux |
-| `HOMEBREW_TEMP` | `/private/tmp` on macOS; `/var/tmp` on Linux when it is a readable and writable directory, otherwise `/tmp` |
+| `HOMEBREW_LOGS` | `~/Library/Logs/Homebrew` on macOS; `${XDG_CACHE_HOME:-~/.cache}/Homebrew/Logs` on Linux — parsed, not honored |
+| `HOMEBREW_TEMP` | `/private/tmp` on macOS; `/var/tmp` on Linux when it is a readable and writable directory, otherwise `/tmp` — parsed, not honored |
 | `HOMEBREW_REPOSITORY` | `$HOMEBREW_PREFIX` on arm64 macOS, `$HOMEBREW_PREFIX/Homebrew` elsewhere |
 
 `Caskroom`, `Library`, `var/homebrew/locks`, `var/homebrew/pinned`, and
@@ -46,7 +46,7 @@ prefix — see the sandbox recipe in the
 
 | Variable | Default | Effect |
 |---|---|---|
-| `HOMEBREW_API_DOMAIN` | `https://formulae.brew.sh/api` | Base URL for the signed formula and cask catalogs |
+| `HOMEBREW_API_DOMAIN` | `https://formulae.brew.sh/api` | Base URL for the signed formula and cask catalogs. Falls back to the default domain — see below |
 | `HOMEBREW_API_AUTO_UPDATE_SECS` | `450` | Minimum seconds between automatic catalog refreshes |
 | `HOMEBREW_NO_AUTO_UPDATE` | unset | Disables the automatic refresh |
 | `HOMEBREW_DOWNLOAD_CONCURRENCY` | `auto` | `auto` means `available_parallelism * 2`. An integer is clamped to at least 1; an unparseable value becomes 1 |
@@ -56,6 +56,24 @@ prefix — see the sandbox recipe in the
 
 `HOMEBREW_BOTTLE_DOMAIN` is parsed but not honored — see
 [Accepted but not honored](#accepted-but-not-honored).
+
+### The custom API domain has a public fallback
+
+When `HOMEBREW_API_DOMAIN` names a host other than the default and a catalog
+request to it fails, Zapbrew retries that request once against
+`https://formulae.brew.sh/api` (`zapbrew-api/src/transport.rs:296`). The retry is
+unconditional: it sends no `If-Modified-Since`, so it is a full download.
+
+This matches `brew`, whose own description of the variable says that if metadata
+at that URL is temporarily unavailable, the default API domain is used as a
+fallback mirror. Zapbrew uses the same guard `brew` does — the retry is skipped
+when the configured domain already resolves to the default.
+
+It has a consequence worth stating plainly: **an internal mirror does not confine
+catalog traffic.** If you set this variable to keep catalog requests inside your
+network, a mirror outage will send a request to the public service instead of
+failing. Block the egress at the network layer if that matters; the variable is a
+mirror preference, not a boundary.
 
 ## Install and cleanup behavior
 
@@ -85,9 +103,13 @@ production code path reads them. Setting them currently has no effect.
 | `HOMEBREW_FORBIDDEN_LICENSES` | `Env::forbidden_licenses` | No license check runs at install time; this list is not consulted |
 | `HOMEBREW_ALLOWED_TAPS` | `Env::allowed_taps` | `tap` never consults tap policy; this allow-list is not enforced |
 | `HOMEBREW_FORBIDDEN_OWNER` | `Env::forbidden_owner` | No refusal message references this value; it is unused |
+| `HOMEBREW_DEBUG` | `Env::debug` | Merged from the variable and `--debug` in `main.rs:49`, then never read. No operation or reporter changes its output; there is no diagnostic mode |
+| `HOMEBREW_LOGS` | `Env::logs` | Zapbrew writes no log files. The path is created as part of environment detection and nothing else reads it |
+| `HOMEBREW_TEMP` | `Env::temp` | Not used for staging. Formula staging happens inside the Cellar rack, cask staging inside the Caskroom, and downloads inside the cache, so temporary I/O follows `HOMEBREW_CELLAR` and `HOMEBREW_CACHE` instead |
 
-These are **not** an enforcement or compliance control. Do not rely on them to
-restrict what Zapbrew will install or tap.
+The policy rows are **not** an enforcement or compliance control. Do not rely on
+them to restrict what Zapbrew will install or tap. The remaining rows are inert
+preferences: setting one is accepted and changes nothing.
 
 ## Output
 
@@ -96,10 +118,10 @@ restrict what Zapbrew will install or tap.
 | `HOMEBREW_NO_COLOR`, `NO_COLOR` | unset | Either one disables color |
 | `HOMEBREW_COLOR` | unset | Force color on, unless a no-color variable is set |
 | `HOMEBREW_INSTALL_BADGE` | `🍺` | Badge printed after a successful pour |
-| `HOMEBREW_DEBUG` | unset | Same as `--debug` |
 | `HOMEBREW_VERBOSE` | unset | Merges into the verbose flag for most commands. Not fully equivalent to `--verbose`: `outdated` reads only the `--verbose` flag, so `HOMEBREW_VERBOSE` does not produce its version columns |
 
-`HOMEBREW_NO_EMOJI` and `HOMEBREW_NO_ENV_HINTS` are parsed but not honored — see
+`HOMEBREW_NO_EMOJI`, `HOMEBREW_NO_ENV_HINTS`, and `HOMEBREW_DEBUG` (with its
+`--debug` flag) are parsed but not honored — see
 [Accepted but not honored](#accepted-but-not-honored).
 
 List-valued variables split on commas and whitespace, and empty entries are

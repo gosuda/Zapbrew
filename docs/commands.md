@@ -35,6 +35,11 @@ Options:
 > `--cache with a formula name is not supported.` Bare `--cache` prints the
 > download cache path and works as documented.
 
+> **`--debug` changes nothing.** The flag and `HOMEBREW_DEBUG` are merged into
+> `Env::debug`, which no operation and no reporter reads. This build has no
+> diagnostic mode; `--verbose` is the flag that affects output. See
+> [accepted but not honored](configuration.md#accepted-but-not-honored).
+
 ## Commands
 
 | Command | Purpose |
@@ -99,17 +104,24 @@ Options:
   -h, --help               Print help
 ```
 
-> **Modes this build refuses.** Each returns an error and installs nothing:
+> **Modes this build refuses.** Each returns an error and installs nothing.
+>
+> In formula mode, three flags are parser-compatible but rejected at runtime:
 >
 > - `--build-from-source` — `zapbrew cannot build from source: formulae are Ruby definitions. Use bottles (default) or brew.`
 > - `--HEAD` — `zapbrew cannot install HEAD formulae: formulae are Ruby definitions. Use bottled stable releases or brew.`
 > - `--interactive` — `zapbrew cannot install interactively: formulae are Ruby definitions. Use bottles (default) or brew.`
-> - `--dry-run` together with `--cask` — `zapbrew cannot preview a cask install: --dry-run is not supported with --cask. Use brew.`
 >
-> The cask path has no dry-run, because pouring a cask downloads artifacts and
-> writes both the Caskroom and the application directory. Rather than accept a
-> safety flag and install anyway, the combination is refused before anything is
-> downloaded or written. `--dry-run` works as documented for formulae.
+> In cask mode, only `--force` and `--appdir` are carried through. Every other
+> install flag is refused rather than silently dropped — `--only-dependencies`,
+> `--dry-run`, `--build-from-source`, `--HEAD`, `--interactive` and
+> `--include-test` — with a message naming the flag, for example
+> `zapbrew cannot honor --dry-run with --cask: the cask install path does not support it. Use brew.`
+>
+> The refusal matters most for `--dry-run` and `--only-dependencies`: accepting
+> either and installing anyway would mutate the Caskroom and the application
+> directory that the flag asked it to leave alone. Both work as documented in
+> formula mode.
 
 ### `zapbrew reinstall`
 

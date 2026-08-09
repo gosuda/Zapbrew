@@ -88,22 +88,25 @@ ripgrep-all
 
 ## Try it without touching your system
 
-Point the prefix, Cellar, cache, logs, and staging directory at one scratch
-location. This keeps the installation, downloads, logs, and temporary files
-inside it:
+Point the prefix, Cellar, and cache at one scratch location. Everything Zapbrew
+writes — the installation, downloads, and staging — lands inside it:
 
 ```bash
 export HOMEBREW_PREFIX=/tmp/zb-demo
 export HOMEBREW_CELLAR=$HOMEBREW_PREFIX/Cellar
 export HOMEBREW_CACHE=$HOMEBREW_PREFIX/cache
-export HOMEBREW_LOGS=$HOMEBREW_PREFIX/logs
-export HOMEBREW_TEMP=$HOMEBREW_PREFIX/tmp
-mkdir -p "$HOMEBREW_CELLAR" "$HOMEBREW_CACHE" "$HOMEBREW_LOGS" "$HOMEBREW_TEMP"
+mkdir -p "$HOMEBREW_CELLAR" "$HOMEBREW_CACHE"
 
 ./target/release/zapbrew install jq
 "$HOMEBREW_PREFIX"/bin/jq --version   # jq-1.8.2
 ./target/release/zapbrew list --versions
 ```
+
+`HOMEBREW_LOGS` and `HOMEBREW_TEMP` are deliberately absent. Zapbrew writes no
+log files, and it stages inside the Cellar rack and the cache rather than a
+temporary directory, so those two variables are parsed and never read. Setting
+them would suggest an isolation guarantee they do not provide — see
+[Accepted but not honored](docs/configuration.md#accepted-but-not-honored).
 
 Setting `HOMEBREW_PREFIX` alone is normally enough, because the Cellar defaults
 to `$HOMEBREW_PREFIX/Cellar`. Set `HOMEBREW_CELLAR` as well when your shell has
@@ -187,12 +190,15 @@ Path queries short-circuit before any subcommand runs: `--prefix`, `--cellar`,
 - `zapbrew info` does not append `, HEAD` for a formula that has a HEAD spec.
 - `zapbrew --version` reports `Homebrew 5-compatible`. It tracks Homebrew's CLI
   surface, not its version number.
-- `install --cask --dry-run` is refused rather than performed. `brew` previews a
-  cask; Zapbrew has no cask dry-run, so it refuses the combination before
-  anything is downloaded instead of installing for real.
+- `install --cask` accepts only `--force` and `--appdir`. Every other install
+  flag — `--only-dependencies`, `--dry-run`, `--build-from-source`, `--HEAD`,
+  `--interactive`, `--include-test` — is refused with `--cask` rather than
+  silently dropped, because the cask path cannot honor it. `brew` accepts
+  several of them.
 - `--cache <formula>` is refused. `brew --cache <formula>` prints that formula's
   download path; Zapbrew supports only bare `--cache`.
-- `--HEAD` and `--interactive` are refused, like `--build-from-source`.
+- `--HEAD` and `--interactive` are refused for formulae too, like
+  `--build-from-source`.
 
 ## Repository layout
 
