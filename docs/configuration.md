@@ -104,7 +104,7 @@ production code path reads them. Setting them currently has no effect.
 | `HOMEBREW_ALLOWED_TAPS` | `Env::allowed_taps` | `tap` never consults tap policy; this allow-list is not enforced |
 | `HOMEBREW_FORBIDDEN_OWNER` | `Env::forbidden_owner` | No refusal message references this value; it is unused |
 | `HOMEBREW_DEBUG` | `Env::debug` | Merged from the variable and `--debug` in `main.rs:49`, then never read. No operation or reporter changes its output; there is no diagnostic mode |
-| `HOMEBREW_LOGS` | `Env::logs` | Zapbrew writes no log files. The path is created as part of environment detection and nothing else reads it |
+| `HOMEBREW_LOGS` | `Env::logs` | Zapbrew writes no log files. The value is resolved during environment detection and never read again; the directory is not even created |
 | `HOMEBREW_TEMP` | `Env::temp` | Not used for staging. Formula staging happens inside the Cellar rack, cask staging inside the Caskroom, and downloads inside the cache, so temporary I/O follows `HOMEBREW_CELLAR` and `HOMEBREW_CACHE` instead |
 
 The policy rows are **not** an enforcement or compliance control. Do not rely on
