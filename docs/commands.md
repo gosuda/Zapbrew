@@ -98,7 +98,7 @@ Options:
       --HEAD               Install the HEAD version
   -i, --interactive        Run the installation interactively
       --include-test       Include test dependencies during expansion
-      --cask               Treat the named arguments as casks
+      --cask               Treat the named arguments as casks (macOS only)
       --formula            Treat the named arguments as formulae
       --appdir <DIR>       Target application directory for cask apps
   -h, --help               Print help
@@ -159,7 +159,7 @@ Options:
   -f, --force                Delete all installed versions, not just the active one
       --ignore-dependencies  Do not check for dependents before uninstalling
   -q, --quiet                Suppress non-essential output
-      --cask                 Treat the named arguments as casks
+      --cask                 Treat the named arguments as casks (macOS only)
   -v, --verbose              Enable verbose output
       --formula              Treat the named arguments as formulae
       --zap                  Also remove all files a cask created (cask only)
@@ -216,14 +216,14 @@ List installed formulae or casks
 Usage: zapbrew list [OPTIONS] [NAMES]...
 
 Arguments:
-  [NAMES]...  Formula or cask names to list; empty lists all installed
+  [NAMES]...  Formula or cask names to list; empty lists all formulae unless --cask is set
 
 Options:
       --debug     Enable debug output
       --versions  Show version numbers
   -1              Print one entry per line
   -q, --quiet     Suppress non-essential output
-      --cask      Treat the named arguments as casks
+      --cask      List casks instead of formulae (macOS only)
   -v, --verbose   Enable verbose output
       --formula   Treat the named arguments as formulae
   -h, --help      Print help
