@@ -37,20 +37,24 @@ install does not pull build-only dependencies.
 
 ## Installing
 
-`install::run` performs the whole plan before it touches disk:
+`install::run` resolves the request in stages. A normal install prepares prefix
+paths and creates tap and formula lock files before it checks conflicts:
 
 1. Refuse Ruby-only modes such as `--build-from-source`.
 2. Resolve each requested name to a catalog formula, following aliases.
 3. Expand dependencies and deduplicate the candidate list.
 4. Refuse disabled formulae and report deprecated ones.
 5. Collect affected names, including anything in `conflicts_with`.
-6. Prepare the prefix, take per-formula locks, and scan what is installed.
+6. For a normal install, run prefix setup, take per-tap and per-formula locks,
+   and scan what is installed. Prefix setup includes Linux runtime symlinks
+   where applicable, and the lock files remain after the locks are released.
 7. Drop candidates that are already satisfied unless `--force`.
 8. Check conflicts.
 
-`--dry-run` stops here. It prints what would be installed and makes no changes
-to the Cellar or prefix. It does not skip the catalog, so a refresh may still
-write to the API cache.
+`--dry-run` takes a non-mutating path at step 6: it scans installed state
+without prefix setup or locks. It then prints what would be installed and makes
+no changes to the Cellar or prefix. It does not skip the catalog, so a refresh
+may still write to the API cache.
 
 Downloads then run concurrently, bounded by
 `HOMEBREW_DOWNLOAD_CONCURRENCY`, and every artifact is checked against the
