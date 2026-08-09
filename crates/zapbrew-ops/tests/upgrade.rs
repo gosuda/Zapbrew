@@ -1,3 +1,7 @@
+mod support;
+
+use support::fingerprint;
+
 use std::collections::HashMap;
 use std::io;
 use std::str::FromStr;
@@ -539,4 +543,35 @@ async fn caveats_shown_by_default_and_dropped_when_quiet() {
             .iter()
             .any(|line| line.starts_with("print:Config lives in"))
     );
+}
+
+#[tokio::test]
+async fn dry_run_does_not_mutate_prefix_with_ld_gcc_setup() {
+    // On Linux, symlink_ld_so creates `<prefix>/lib/ld.so` and
+    // setup_preferred_gcc_libs may write `etc/ld.so.conf.d/…`. Both must be
+    // deferred past the dry-run return so the prefix is untouched.
+    let server = MockServer::start().await;
+    let tarball = bottle("schemedry", "1.0");
+    mount(&server, "/scheme.tar.gz", &tarball, 0).await;
+    let temp = TempDir::new().expect("temp");
+    let env = env(&temp, false);
+    installed(&env, "schemedry", "9.0", 0, true);
+    let url = format!("{}/scheme.tar.gz", server.uri());
+    let (ctx, _reporter) = context(
+        env,
+        vec![formula("schemedry", "1.0", 0, 1, &url, &digest(&tarball))],
+    );
+
+    let before = fingerprint(&ctx.env.prefix);
+    upgrade::run(
+        &ctx,
+        Args {
+            dry_run: true,
+            ..named("schemedry")
+        },
+    )
+    .await
+    .expect("dry run");
+    let after = fingerprint(&ctx.env.prefix);
+    assert_eq!(before, after, "dry-run must not mutate the prefix");
 }

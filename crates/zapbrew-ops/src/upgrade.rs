@@ -35,11 +35,6 @@ struct UpgradePlan<'a> {
 }
 
 pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
-    // brew's perform_preinstall_checks: refresh `<prefix>/lib/ld.so` for
-    // relocated Linux bottles on a fresh prefix.
-    zapbrew_prefix::symlink_ld_so(&ctx.env)?;
-    zapbrew_prefix::setup_preferred_gcc_libs(&ctx.env)?;
-
     let named = !args.names.is_empty();
     let (names, formulae) = if named {
         resolve_named(ctx, &args.names).await?
@@ -122,6 +117,12 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
         }
         return Ok(());
     }
+
+    // brew's perform_preinstall_checks: refresh `<prefix>/lib/ld.so` for
+    // relocated Linux bottles on a fresh prefix. Deferred until after the
+    // dry-run and empty-selection returns so neither mutates the prefix.
+    zapbrew_prefix::symlink_ld_so(&ctx.env)?;
+    zapbrew_prefix::setup_preferred_gcc_libs(&ctx.env)?;
 
     print_upgrade_summary(ctx, "Upgrading", &selected);
     let plans = build_plans(ctx, &selected)?;
