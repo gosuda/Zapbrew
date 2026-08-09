@@ -231,6 +231,15 @@ impl Fixture {
         keg
     }
 
+    pub fn keg_with_tap(&self, name: &str, version: &str, scheme: u32, tap: &str) -> Keg {
+        let keg = self.keg(name, version, scheme);
+        let receipt = keg.receipt_path();
+        let mut tab = Tab::load(&receipt).expect("tab");
+        tab.source.tap = Some(tap.to_owned());
+        tab.write(receipt).expect("tab");
+        keg
+    }
+
     pub fn keg_file(&self, keg: &Keg, rel: &str, contents: &str) {
         write(&keg.path().join(rel), contents);
     }

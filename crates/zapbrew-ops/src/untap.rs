@@ -1,5 +1,6 @@
 use std::fs;
 
+use crate::state;
 use crate::tap::{TapName, is_empty_real_directory, is_installed, measure, remove_tree};
 use crate::{Ctx, OpError};
 
@@ -15,7 +16,10 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
         .iter()
         .map(|name| TapName::parse(name))
         .collect::<Result<Vec<_>, _>>()?;
-    let _ = args.force;
+
+    if !args.force {
+        refuse_if_dependents(ctx, &taps)?;
+    }
 
     for tap in taps {
         if !is_installed(&ctx.env, &tap)? {
@@ -36,6 +40,39 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
             })?;
         }
         ctx.reporter.print(&format!("Untapped ({}).", stats.abv()));
+    }
+    Ok(())
+}
+
+/// Refuse when any installed keg receipt names one of `taps` as its source tap.
+///
+/// Both the requested tap names and the raw receipt `source.tap` values are
+/// normalized through [`TapName::parse`], so a receipt such as `Acme/homebrew-tools`
+/// matches a requested `acme/tools`. Called before any tap is removed, so the
+/// force distinction is atomic across all requested taps.
+fn refuse_if_dependents(ctx: &Ctx, taps: &[TapName]) -> Result<(), OpError> {
+    let state = state::scan(&ctx.env)?;
+    for formula in state.iter() {
+        for keg in formula.kegs() {
+            let Some(raw_tap) = &keg.tab().source.tap else {
+                continue;
+            };
+            let receipt_tap = TapName::parse(raw_tap).map_err(|_| OpError::InvalidState {
+                reason: format!(
+                    "installed formula {} has invalid source tap `{raw_tap}`",
+                    formula.name().name()
+                ),
+            })?;
+            if taps.iter().any(|tap| tap == &receipt_tap) {
+                return Err(OpError::Refusal {
+                    message: format!(
+                        "Refusing to untap {}: installed formula {} depends on it.",
+                        receipt_tap.name(),
+                        formula.name().name()
+                    ),
+                });
+            }
+        }
     }
     Ok(())
 }

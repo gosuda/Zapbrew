@@ -6,6 +6,7 @@ use std::fs;
 use std::os::unix::fs::symlink;
 
 use support::Fixture;
+use zapbrew_ops::OpError;
 use zapbrew_ops::untap::{self, Args};
 
 #[tokio::test]
@@ -133,4 +134,83 @@ async fn parses_every_name_before_removing_any_tap() {
     assert_eq!(error.to_string(), "Invalid tap name: 'invalid'");
     assert!(tap_path.is_dir());
     assert!(reporter.take().is_empty());
+}
+
+#[tokio::test]
+async fn refuses_without_force_when_a_keg_receipt_names_the_tap() {
+    let fixture = Fixture::new();
+    let tap_path = fixture.env.library.join("Taps/acme/homebrew-tools");
+    fs::create_dir_all(&tap_path).expect("tap");
+    fs::write(tap_path.join("tool.rb"), "tool").expect("tap file");
+    // Deliberately non-normalized: mixed-case user, homebrew- prefix present.
+    // `Acme/homebrew-tools` must match requested `acme/tools`.
+    fixture.keg_with_tap("tool", "1.0", 0, "Acme/homebrew-tools");
+    let (ctx, reporter) = fixture.context(Vec::new());
+
+    let error = untap::run(
+        &ctx,
+        Args {
+            names: vec!["acme/tools".to_owned()],
+            force: false,
+        },
+    )
+    .await
+    .expect_err("dependent-formula refusal");
+
+    assert!(
+        error.to_string().contains("acme/tools"),
+        "error should name the tap: {error}"
+    );
+    assert!(tap_path.is_dir(), "tap tree must be intact after refusal");
+    assert!(reporter.take().is_empty(), "no untap output on refusal");
+}
+
+#[tokio::test]
+async fn refuses_without_force_when_a_receipt_tap_is_invalid() {
+    let fixture = Fixture::new();
+    let tap_path = fixture.env.library.join("Taps/acme/homebrew-tools");
+    fs::create_dir_all(&tap_path).expect("tap");
+    fixture.keg_with_tap("tool", "1.0", 0, "Acme/homebrew-tools/");
+    let (ctx, reporter) = fixture.context(Vec::new());
+
+    let error = untap::run(
+        &ctx,
+        Args {
+            names: vec!["acme/tools".to_owned()],
+            force: false,
+        },
+    )
+    .await
+    .expect_err("invalid receipt tap");
+
+    assert!(matches!(error, OpError::InvalidState { .. }));
+    assert!(tap_path.is_dir(), "tap tree must be intact after refusal");
+    assert!(reporter.take().is_empty(), "no untap output on refusal");
+}
+
+#[tokio::test]
+async fn removes_with_force_even_when_a_keg_receipt_names_the_tap() {
+    let fixture = Fixture::new();
+    let tap_path = fixture.env.library.join("Taps/acme/homebrew-tools");
+    fs::create_dir_all(&tap_path).expect("tap");
+    fs::write(tap_path.join("tool.rb"), "tool").expect("tap file");
+    fixture.keg_with_tap("tool", "1.0", 0, "Acme/homebrew-tools");
+    let (ctx, reporter) = fixture.context(Vec::new());
+
+    untap::run(
+        &ctx,
+        Args {
+            names: vec!["acme/tools".to_owned()],
+            force: true,
+        },
+    )
+    .await
+    .expect("force untap");
+
+    assert!(!tap_path.exists());
+    assert!(!fixture.env.library.join("Taps/acme").exists());
+    assert_eq!(
+        reporter.take(),
+        ["ohai:Untapping acme/tools", "print:Untapped (1 files, 4B)."]
+    );
 }
