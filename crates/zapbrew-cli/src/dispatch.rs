@@ -75,19 +75,17 @@ pub struct Plan {
 /// Convert one parsed command into its operation and catalog classification.
 ///
 /// `width` is the resolved output width (zero forces one item per line). The
-/// fallible steps are a non-UTF-8 `--appdir` and `--dry-run` combined with
-/// `--cask`, both returned as typed refusals.
+/// fallible steps are a non-UTF-8 `--appdir` and a formula-only install flag
+/// combined with `--cask`, both returned as typed refusals.
 pub fn plan(command: Commands, globals: &GlobalArgs, width: usize) -> Result<Plan, OpError> {
     let plan = match command {
         Commands::Install(args) => {
             if args.cask {
-                // The cask path has no dry-run: pouring a cask downloads
-                // artifacts and writes the Caskroom and app directory. Accepting
-                // the flag and installing anyway would make a safety flag lie.
-                if args.dry_run {
+                if let Some(flag) = unsupported_cask_flag(&args) {
                     return Err(OpError::Refusal {
-                        message: "zapbrew cannot preview a cask install: --dry-run is not supported with --cask. Use brew."
-                            .to_owned(),
+                        message: format!(
+                            "zapbrew cannot honor {flag} with --cask: the cask install path does not support it. Use brew."
+                        ),
                     });
                 }
                 Plan {
@@ -414,6 +412,27 @@ fn shim_action(command: ShimCommand) -> shim::ShimAction {
         ShimCommand::Install => shim::ShimAction::Install,
         ShimCommand::Remove => shim::ShimAction::Remove,
     }
+}
+
+/// Name the first install flag that `cask::install::Args` cannot carry.
+///
+/// The cask argument surface is `tokens`, `appdir` and `force`. Every other
+/// `InstallArgs` field would be dropped on the way through, so accepting one
+/// and installing anyway would silently discard an explicit request — and for
+/// `--dry-run` and `--only-dependencies` it would mutate the Caskroom and the
+/// application directory that the flag asked it to leave alone. Refuse instead.
+/// Order is the flag order in `InstallArgs`, so the message is stable.
+fn unsupported_cask_flag(args: &crate::cli::InstallArgs) -> Option<&'static str> {
+    [
+        (args.only_dependencies, "--only-dependencies"),
+        (args.dry_run, "--dry-run"),
+        (args.build_from_source, "--build-from-source"),
+        (args.head, "--HEAD"),
+        (args.interactive, "--interactive"),
+        (args.include_test, "--include-test"),
+    ]
+    .into_iter()
+    .find_map(|(present, flag)| present.then_some(flag))
 }
 
 /// Convert an optional cask `--appdir` to a UTF-8 path, refusing non-UTF-8.
@@ -987,19 +1006,43 @@ mod tests {
         assert!(matches!(error, zapbrew_ops::OpError::InvalidState { .. }));
     }
 
+    /// Every flag `cask::install::Args` cannot carry must be refused, not
+    /// dropped. The list is the guard's list: a new `InstallArgs` flag that is
+    /// plumbed into the formula path but not the cask path fails here.
     #[test]
-    fn cask_install_dry_run_is_refused_before_mutation() {
-        let cli = Cli::parse_from(["zapbrew", "install", "--cask", "--dry-run", "firefox"]);
-        let error = plan(cli.command.expect("command"), &cli.globals, WIDTH)
-            .expect_err("--dry-run with --cask must refuse instead of installing");
-        match error {
-            zapbrew_ops::OpError::Refusal { message } => {
-                assert!(
-                    message.contains("--dry-run is not supported with --cask"),
-                    "unexpected refusal: {message}"
-                );
+    fn cask_install_refuses_every_unsupported_flag() {
+        for flag in [
+            "--only-dependencies",
+            "--dry-run",
+            "--build-from-source",
+            "--HEAD",
+            "--interactive",
+            "--include-test",
+        ] {
+            let cli = Cli::parse_from(["zapbrew", "install", "--cask", flag, "firefox"]);
+            let error = plan(cli.command.expect("command"), &cli.globals, WIDTH)
+                .expect_err("an unsupported flag with --cask must refuse");
+            match error {
+                zapbrew_ops::OpError::Refusal { message } => assert!(
+                    message.contains(flag) && message.contains("--cask"),
+                    "refusal must name {flag}: {message}"
+                ),
+                other => panic!("expected a refusal for {flag}, got {other:?}"),
             }
-            other => panic!("expected a refusal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cask_install_without_unsupported_flags_still_plans() {
+        let cli = Cli::parse_from(["zapbrew", "install", "--cask", "--force", "firefox"]);
+        let plan = plan(cli.command.expect("command"), &cli.globals, WIDTH)
+            .expect("a plain cask install must still plan");
+        match plan.kind {
+            OpKind::CaskInstall(args) => {
+                assert_eq!(args.tokens, vec!["firefox".to_owned()]);
+                assert!(args.force, "force must reach cask args");
+            }
+            other => panic!("expected a cask install, got {other:?}"),
         }
     }
 
