@@ -488,11 +488,11 @@ impl FormulaTransaction<'_> {
         {
             cleanup_leftovers.push(backup.clone());
         }
-        if let Some(step_root) = self.journal.steps.cleanup_path()
-            && remove_after_commit(&self.ctx.env, step_root).is_err()
-            && path_entry_exists(step_root)
+        if let Some(step_root) = self.journal.steps.take_cleanup_root()
+            && remove_after_commit(&self.ctx.env, &step_root).is_err()
+            && path_entry_exists(&step_root)
         {
-            cleanup_leftovers.push(step_root.to_path_buf());
+            cleanup_leftovers.push(step_root);
         }
         if !cleanup_leftovers.is_empty() {
             cleanup_leftovers.sort();
@@ -503,7 +503,6 @@ impl FormulaTransaction<'_> {
             });
         }
         self.journal.backup = None;
-        self.journal.steps.clear();
         self.journal.old_unlinked = None;
         self.journal.created_dirs.clear();
         Ok(Summary {

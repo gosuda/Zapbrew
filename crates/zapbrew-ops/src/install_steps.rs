@@ -357,16 +357,17 @@ impl StepJournal {
         }
         leftovers.sort();
         leftovers.dedup();
+        self.root = None;
+        self.inverses.clear();
+        self.next_backup = 0;
         leftovers
     }
 
-    pub(crate) fn cleanup_path(&self) -> Option<&Utf8Path> {
-        self.root.as_deref()
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.root = None;
+    pub(crate) fn take_cleanup_root(&mut self) -> Option<Utf8PathBuf> {
+        let root = self.root.take();
         self.inverses.clear();
+        self.next_backup = 0;
+        root
     }
 }
 

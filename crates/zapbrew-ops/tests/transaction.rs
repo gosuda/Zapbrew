@@ -346,3 +346,54 @@ async fn partial_backup_cleanup_failure_keeps_new_keg_active() {
     assert_eq!(leftovers.len(), 1);
     assert!(leftovers[0].is_dir());
 }
+
+#[tokio::test]
+async fn step_root_cleanup_failure_keeps_new_keg_active() {
+    let server = MockServer::start().await;
+    let bytes = tarball("root", &[("bin/root", b"new keg")]);
+    let digest = sha(&bytes);
+    mount(&server, "/root", &bytes).await;
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    let managed = environment.prefix.join("var/root/managed.conf");
+    std::fs::create_dir_all(managed.parent().expect("managed parent")).expect("managed parent");
+    std::fs::write(&managed, b"old").expect("old managed file");
+    let mut root = formula(
+        "root",
+        &format!("{}/root", server.uri()),
+        &digest,
+        ":any_skip_relocation",
+    );
+    root["post_install_steps"] = json!([{
+        "type": "write",
+        "path": {"base": "var", "path": "root/managed.conf"},
+        "content": "new",
+        "overwrite": true
+    }]);
+    let context = ctx(environment.clone(), vec![root]);
+    zapbrew_ops::transaction_test_support::fail_next_backup_cleanup("root")
+        .expect("arm cleanup failure");
+
+    let error = install::run(&context, args(&["root"]))
+        .await
+        .expect_err("step journal cleanup is reported");
+
+    let leftovers = match error {
+        zapbrew_ops::OpError::CleanupIncomplete { keg, leftovers } => {
+            assert_eq!(keg, environment.cellar.join("root/1.0"));
+            leftovers
+        }
+        other => panic!("expected cleanup error, got {other}"),
+    };
+    assert_eq!(std::fs::read(&managed).expect("managed file"), b"new");
+    assert!(environment.prefix.join("bin/root").is_symlink());
+    assert!(environment.prefix.join("opt/root").is_symlink());
+    assert!(environment.linked.join("root").is_symlink());
+    assert_eq!(leftovers.len(), 1);
+    assert!(leftovers[0].is_dir());
+    assert!(
+        leftovers[0]
+            .file_name()
+            .is_some_and(|name| name.starts_with(".zapbrew-step-journal-"))
+    );
+}

@@ -62,17 +62,14 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
                     .join(", "),
             });
         }
-        if let Some(root) = journal.cleanup_path().map(|p| p.to_path_buf()) {
+        if let Some(root) = journal.take_cleanup_root() {
             let remove = crate::install_steps::remove_tree_confined(&ctx.env, &root);
-            journal.clear();
             if remove.is_err() && std::fs::symlink_metadata(root.as_std_path()).is_ok() {
                 return Err(OpError::CleanupIncomplete {
                     keg: keg_path,
                     leftovers: vec![root],
                 });
             }
-        } else {
-            journal.clear();
         }
     }
 
