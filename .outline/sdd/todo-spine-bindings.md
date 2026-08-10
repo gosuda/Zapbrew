@@ -17,7 +17,7 @@ The binding applies while the spine anchor mode is active. Each current task has
 
 | Task | Status | Anchor | Reason |
 |---|---|---|---|
-| Pin representative workload and trusted baseline | in progress | Hoare | The baseline is the optimization precondition. |
+| Pin representative workload and trusted baseline | blocked | Hoare | The ledger and deterministic W4 workload must exist before the baseline can be trusted. |
 | Split measured units into hot and cold | blocked | Maeda | The split concentrates effort where measurement shows signal. |
 | State contracts and compute performance floors | blocked | Hoare | PRE, POST, and floor invariants define acceptable optimization. |
 | Classify surfaces and derive replacements blind | blocked | Feynman | Re-derive from atomic behavior before reading implementation choices. |
@@ -85,8 +85,8 @@ The binding applies while the spine anchor mode is active. Each current task has
 | Task | Status | Anchor | Reason |
 |---|---|---|---|
 | Verify and commit journal concern | completed | Carmack | The reviewed journal concern must exist as one reproducible commit before later tasks build on it. |
-| Author canonical ledger scope fragments | pending | Feynman | Each fragment explains one bounded product surface before integration. |
-| Implement five-artifact stabilization ledger | pending | Hoare | The executable contract must reject false completion mechanically. |
+| Author canonical ledger scope fragments | completed | Feynman | Each reviewed fragment explains one bounded product surface before integration. |
+| Implement five-artifact stabilization ledger | in progress | Hoare | The executable contract must reject false completion mechanically. |
 | Review and bind canonical ledger scope | pending | Hoare | Independent review and maintainer authority bind the canonical universe. |
 | Implement deterministic W4 journal workload | pending | Carmack | One reproducible command must exercise the complete journal path. |
 | Record and land Linux journal cells | pending | Ive | Each Linux success and failure path needs finished evidence. |
