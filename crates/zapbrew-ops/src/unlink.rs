@@ -17,7 +17,12 @@ pub struct Args {
 
 pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
     let names = canonical_names(&args.names, "unlink")?;
-    let locks = acquire_formula_locks(&ctx.env, &names)?;
+    // A preview must not create a lock file or contend with a real operation.
+    let locks = if args.dry_run {
+        None
+    } else {
+        Some(acquire_formula_locks(&ctx.env, &names)?)
+    };
     let state = scan_selected(&ctx.env, &names)?;
     let prefix = Prefix::new(ctx.env.clone());
 

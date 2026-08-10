@@ -13,8 +13,10 @@ use crate::install::{
 use crate::install_steps::InstallSteps;
 use crate::outdated::is_outdated;
 use crate::state::{InstalledFormula, scan_selected};
+use crate::tap::formula_taps;
 use crate::transaction::{
-    InstallInput, acquire_formula_locks, cleanup_replaced_kegs, install as install_transaction,
+    InstallInput, acquire_formula_locks, acquire_shared_tap_locks, cleanup_replaced_kegs,
+    install as install_transaction,
 };
 use crate::{Ctx, OpError};
 
@@ -35,16 +37,20 @@ struct UpgradePlan<'a> {
 }
 
 pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
-    // brew's perform_preinstall_checks: refresh `<prefix>/lib/ld.so` for
-    // relocated Linux bottles on a fresh prefix.
-    zapbrew_prefix::symlink_ld_so(&ctx.env)?;
-    zapbrew_prefix::setup_preferred_gcc_libs(&ctx.env)?;
-
     let named = !args.names.is_empty();
     let (names, formulae) = if named {
         resolve_named(ctx, &args.names).await?
     } else {
         enumerate_installed(ctx)?
+    };
+    let _tap_locks = if args.dry_run {
+        None
+    } else {
+        // Acquire shared tap locks before formula locks to prevent lock-order
+        // inversion with untap's exclusive tap locks. Held through receipt
+        // commit (end of function).
+        let taps = formula_taps(formulae.iter().copied())?;
+        Some(acquire_shared_tap_locks(&ctx.env, &taps)?)
     };
     let _locks = if args.dry_run {
         None
@@ -122,6 +128,12 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
         }
         return Ok(());
     }
+
+    // brew's perform_preinstall_checks: refresh `<prefix>/lib/ld.so` for
+    // relocated Linux bottles on a fresh prefix. Deferred until after the
+    // dry-run and empty-selection returns so neither mutates the prefix.
+    zapbrew_prefix::symlink_ld_so(&ctx.env)?;
+    zapbrew_prefix::setup_preferred_gcc_libs(&ctx.env)?;
 
     print_upgrade_summary(ctx, "Upgrading", &selected);
     let plans = build_plans(ctx, &selected)?;

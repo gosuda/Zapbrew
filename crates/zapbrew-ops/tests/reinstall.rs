@@ -349,3 +349,72 @@ async fn quiet_reinstall_drops_caveats() {
             .any(|line| line.starts_with("print:Config lives in"))
     );
 }
+
+// ---------------------------------------------------------------------------
+// Per-tap lock contention test
+// ---------------------------------------------------------------------------
+
+use zapbrew_ops::tap_lock_test_support;
+use zapbrew_prefix::{LockGuard, PrefixError};
+
+fn formula_with_tap(url: &str, digest: &str, tap: &str) -> Value {
+    let mut f = formula(url, digest);
+    f["tap"] = json!(tap);
+    f
+}
+
+fn tap_lock(env: &Env, raw_tap: &str) -> LockGuard {
+    let path = tap_lock_test_support::lock_path(&env.locks, raw_tap).expect("tap lock path");
+    let dir = path.parent().expect("lock dir");
+    let name = path.file_name().expect("lock file name");
+    LockGuard::acquire(dir, name).expect("exclusive tap lock for test")
+}
+
+#[tokio::test]
+async fn reinstall_blocked_by_exclusive_tap_lock() {
+    let server = MockServer::start().await;
+    let bottle = tarball("root", &[("bin/root", b"old")]);
+    let digest = sha(&bottle);
+    mount(&server, "/root", &bottle).await;
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    let locks = environment.locks.clone();
+    let ctx = ctx(
+        environment.clone(),
+        vec![formula_with_tap(
+            &format!("{}/root", server.uri()),
+            &digest,
+            "acme/tools",
+        )],
+    );
+    initial_install(&ctx).await;
+
+    // The initial install created a formula lock file that persists on disk
+    // after the LockGuard dropped. Remove it so we can prove reinstall's
+    // tap-before-formula ordering: if reinstall blocks at the tap lock, no
+    // formula lock file should (re)appear.
+    let _ = std::fs::remove_file(locks.join("root.formula.lock"));
+    let _lock = tap_lock(&environment, "acme/tools");
+
+    let error = reinstall::run(
+        &ctx,
+        reinstall::Args {
+            names: vec!["root".to_owned()],
+        },
+    )
+    .await
+    .expect_err("reinstall must be blocked by exclusive tap lock");
+    assert!(
+        matches!(
+            error,
+            zapbrew_ops::OpError::Prefix(PrefixError::LockBusy { .. })
+        ),
+        "expected LockBusy from tap lock, got: {error}"
+    );
+
+    // Formula lock must not have been created — tap locks come first.
+    assert!(
+        !locks.join("root.formula.lock").exists(),
+        "formula lock must not be created when tap lock blocks"
+    );
+}

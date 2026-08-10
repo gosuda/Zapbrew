@@ -782,3 +782,160 @@ async fn include_test_pours_test_dependencies_but_tab_excludes_them() {
         "runtime_dependencies must exclude build/test even when poured"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Per-tap lock contention tests
+// ---------------------------------------------------------------------------
+//
+// These tests prove that install acquires a shared tap lock (via the
+// tap_lock_test_support path helpers) before formula locks, that dry-runs
+// acquire neither, and that tap-before-formula ordering holds.
+//
+// Formulae below carry a `"tap": "acme/tools"` field so that `formula_taps`
+// returns a non-empty set, exercising the real lock wiring in install::run.
+//
+// `tap_lock_test_support::lock_path` computes the same path that
+// `acquire_shared_tap_locks` uses internally, so holding a `LockGuard` on
+// that path deterministically blocks install without timing.
+//
+
+use zapbrew_ops::tap_lock_test_support;
+use zapbrew_prefix::{LockGuard, PrefixError};
+
+fn formula_with_tap(name: &str, version: &str, url: &str, sha: &str, tap: &str) -> Value {
+    let mut f = formula(name, version, url, sha);
+    f["tap"] = json!(tap);
+    f
+}
+
+fn tap_lock(env: &Env, raw_tap: &str) -> LockGuard {
+    let path = tap_lock_test_support::lock_path(&env.locks, raw_tap).expect("tap lock path");
+    let dir = path.parent().expect("lock dir");
+    let name = path.file_name().expect("lock file name");
+    LockGuard::acquire(dir, name).expect("exclusive tap lock for test")
+}
+
+#[tokio::test]
+async fn install_blocked_by_exclusive_tap_lock() {
+    let server = MockServer::start().await;
+    let tarball = bottle("root", "1.0", &[("bin/root", b"root")]);
+    let sha = digest(&tarball);
+    mount_blob(&server, "/root", &tarball, 0).await;
+    let temp = TempDir::new().expect("temp");
+    let env = scratch_env(&temp);
+    let (ctx, _) = context(
+        env.clone(),
+        vec![formula_with_tap(
+            "root",
+            "1.0",
+            &format!("{}/root", server.uri()),
+            &sha,
+            "acme/tools",
+        )],
+    );
+
+    let _lock = tap_lock(&env, "acme/tools");
+
+    let error = install::run(&ctx, args("root"))
+        .await
+        .expect_err("install must be blocked by exclusive tap lock");
+    assert!(
+        matches!(
+            error,
+            zapbrew_ops::OpError::Prefix(PrefixError::LockBusy { .. })
+        ),
+        "expected LockBusy from tap lock, got: {error}"
+    );
+
+    // No keg committed, no formula lock file created.
+    assert!(!ctx.env.cellar.join("root").exists());
+    let formula_lock = ctx.env.locks.join("root.formula.lock");
+    assert!(
+        !formula_lock.exists(),
+        "formula lock must not be created when tap lock blocks"
+    );
+}
+
+#[tokio::test]
+async fn install_rejects_symlinked_tap_lock_directory() {
+    let server = MockServer::start().await;
+    let temp = TempDir::new().expect("temp");
+    let env = scratch_env(&temp);
+    std::fs::create_dir_all(env.locks.join("taps")).expect("tap locks root");
+    let external = env.prefix.parent().expect("prefix parent").join("external");
+    std::fs::create_dir_all(&external).expect("external directory");
+    symlink(
+        external.as_std_path(),
+        env.locks.join("taps/acme").as_std_path(),
+    )
+    .expect("symlink tap lock directory");
+    let sha = digest(b"unused");
+    let (ctx, _) = context(
+        env,
+        vec![formula_with_tap(
+            "root",
+            "1.0",
+            &format!("{}/root", server.uri()),
+            &sha,
+            "acme/tools",
+        )],
+    );
+
+    let error = install::run(&ctx, args("root"))
+        .await
+        .expect_err("install must reject a symlinked tap lock directory");
+
+    assert!(
+        matches!(error, zapbrew_ops::OpError::InvalidState { .. }),
+        "expected InvalidState, got: {error}"
+    );
+    assert!(
+        !external.join("homebrew-tools.tap.lock").exists(),
+        "lock acquisition must not follow the symlink"
+    );
+    assert!(
+        !ctx.env.locks.join("root.formula.lock").exists(),
+        "formula lock must not precede tap lock validation"
+    );
+}
+
+#[tokio::test]
+async fn install_dry_run_succeeds_under_exclusive_tap_lock_and_creates_no_formula_lock() {
+    let server = MockServer::start().await;
+    let tarball = bottle("root", "1.0", &[("bin/root", b"root")]);
+    let sha = digest(&tarball);
+    mount_blob(&server, "/root", &tarball, 0).await;
+    let temp = TempDir::new().expect("temp");
+    let env = scratch_env(&temp);
+    let locks = env.locks.clone();
+    let (ctx, _) = context(
+        env.clone(),
+        vec![formula_with_tap(
+            "root",
+            "1.0",
+            &format!("{}/root", server.uri()),
+            &sha,
+            "acme/tools",
+        )],
+    );
+
+    // Hold an exclusive tap lock — dry-run must NOT be blocked by it because
+    // dry-runs acquire no tap locks.
+    let _lock = tap_lock(&env, "acme/tools");
+
+    install::run(
+        &ctx,
+        Args {
+            dry_run: true,
+            ..args("root")
+        },
+    )
+    .await
+    .expect("dry run must succeed under exclusive tap lock");
+
+    // No formula lock file created.
+    assert!(
+        !locks.join("root.formula.lock").exists(),
+        "dry-run must not create a formula lock"
+    );
+}

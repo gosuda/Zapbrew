@@ -1,13 +1,16 @@
+use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
 use camino::{Utf8Path, Utf8PathBuf};
+use zapbrew_api::Formula;
 use zapbrew_prefix::Env;
 
 use crate::platform::{git_clone, run_checked};
 use crate::size::disk_usage_readable;
+use crate::transaction::acquire_exclusive_tap_locks;
 use crate::{Ctx, OpError};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -108,6 +111,45 @@ impl TapStats {
     }
 }
 
+/// Lock sub-directory for per-tap advisory locks: `locks/taps/<user>`.
+///
+/// The `<user>` component is the normalized tap user (case-folded, with the
+/// Homebrew/Linuxbrew identity mapping applied by [`TapName::parse`]). Using it
+/// as a path component — rather than embedding it in the file name — makes the
+/// lock path collision-free: two different taps cannot produce the same
+/// `(user, repository)` pair after normalization.
+pub(crate) fn tap_lock_dir(locks: &Utf8Path, tap: &TapName) -> Utf8PathBuf {
+    locks.join("taps").join(tap.user())
+}
+
+/// Lock file name for a tap: `homebrew-<repository>.tap.lock`.
+///
+/// The `homebrew-` prefix mirrors the on-disk tap directory name, and the
+/// repository is already normalized (case-folded, `homebrew-` stripped) by
+/// [`TapName::parse`]. Combined with [`tap_lock_dir`] the full lock path is
+/// `locks/taps/<user>/homebrew-<repository>.tap.lock`.
+pub(crate) fn tap_lock_file_name(tap: &TapName) -> String {
+    format!("homebrew-{}.tap.lock", tap.repository())
+}
+
+/// Collect the set of taps referenced by `formulae`, parsed and normalized.
+///
+/// Formulae whose `tap` field is `None` (rare for API-served formulae) are
+/// skipped. Each distinct tap appears once, sorted by the derived
+/// [`TapName`] ordering. A malformed `tap` string propagates as
+/// [`OpError`].
+pub(crate) fn formula_taps<'a>(
+    formulae: impl IntoIterator<Item = &'a Formula>,
+) -> Result<Vec<TapName>, OpError> {
+    let mut taps: BTreeSet<TapName> = BTreeSet::new();
+    for formula in formulae {
+        if let Some(raw_tap) = &formula.tap {
+            taps.insert(TapName::parse(raw_tap)?);
+        }
+    }
+    Ok(taps.into_iter().collect())
+}
+
 /// Canonical on-disk directory for a tap name such as `user/repo`.
 ///
 /// Reuses [`TapName`] normalization — case-folding, `homebrew-` stripping, and
@@ -136,6 +178,9 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
         });
     }
 
+    // Acquire an exclusive tap lock so a concurrent untap cannot remove the
+    // tap directory while we are cloning into it. Held until function exit.
+    let _tap_lock = acquire_exclusive_tap_locks(&ctx.env, std::slice::from_ref(&tap))?;
     let destination = tap.path(&ctx.env);
     if path_exists(&destination)? {
         return Err(OpError::Refusal {

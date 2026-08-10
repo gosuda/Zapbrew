@@ -131,10 +131,7 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
             ServiceAction::Cleanup => unreachable!("cleanup returned before target resolution"),
             ServiceAction::Start => start(ctx, &target)?,
             ServiceAction::Stop => stop(ctx, &target)?,
-            ServiceAction::Restart => {
-                stop(ctx, &target)?;
-                start(ctx, &target)?;
-            }
+            ServiceAction::Restart => restart(ctx, &target)?,
             ServiceAction::Run => run_service(ctx, &target)?,
             ServiceAction::Info => info(ctx, &target)?,
             ServiceAction::Kill => kill(ctx, &target)?,
@@ -249,6 +246,23 @@ fn start(ctx: &Ctx, target: &Target) -> Result<(), OpError> {
     Ok(())
 }
 
+fn restart(ctx: &Ctx, target: &Target) -> Result<(), OpError> {
+    let transient = if matches!(&ctx.env.bottle_tag, BottleTag::MacOs { .. }) {
+        let name = plist_file_name(&target.name);
+        !launch_agents_dir(&ctx.env).join(&name).exists()
+            && transient_dir(&ctx.env).join(name).exists()
+    } else {
+        false
+    };
+
+    stop(ctx, target)?;
+    if transient {
+        run_service(ctx, target)
+    } else {
+        start(ctx, target)
+    }
+}
+
 fn stop(ctx: &Ctx, target: &Target) -> Result<(), OpError> {
     if !active(ctx, target)? {
         ctx.reporter
@@ -270,7 +284,7 @@ fn stop(ctx: &Ctx, target: &Target) -> Result<(), OpError> {
             stopped(ctx, target, &service_label(&target.name));
         }
         BottleTag::MacOs { .. } => {
-            let path = launch_agents_dir(&ctx.env).join(plist_file_name(&target.name));
+            let path = resolve_plist_path(&ctx.env, &target.name);
             run_checked(
                 ctx.commands.as_ref(),
                 &launchctl(LaunchctlAction::Unload, &path),
@@ -319,24 +333,139 @@ fn run_service(ctx: &Ctx, target: &Target) -> Result<(), OpError> {
             ran(ctx, target, &service_label(&target.name));
         }
         BottleTag::MacOs { .. } => {
-            let path = launch_agents_dir(&ctx.env).join(plist_file_name(&target.name));
+            let transient = transient_dir(&ctx.env).join(plist_file_name(&target.name));
             write_file(
-                &path,
+                &transient,
                 render_launchd_plist(&ctx.env, &target.name, &target.config)?,
             )?;
-            run_checked(
+            let persistent = launch_agents_dir(&ctx.env).join(plist_file_name(&target.name));
+
+            // Keep the persistent plist until transient activation succeeds.
+            // Load the transient plist first so a load failure never destroys
+            // the last recoverable LaunchAgents file.
+            if let Err(err) = run_checked(
                 ctx.commands.as_ref(),
-                &launchctl(LaunchctlAction::Load, &path),
-            )?;
-            run_checked(
+                &launchctl(LaunchctlAction::Load, &transient),
+            ) {
+                return Err(rollback_transient(
+                    ctx,
+                    &transient,
+                    &plist_label(&target.name),
+                    TransientActivation::LoadAttempted,
+                    err,
+                ));
+            }
+
+            // Start the job by label. On failure unload the transient job and
+            // remove its artifact, leaving the persistent plist untouched.
+            if let Err(err) = run_checked(
                 ctx.commands.as_ref(),
                 &launchctl_start(&plist_label(&target.name)),
-            )?;
+            ) {
+                return Err(rollback_transient(
+                    ctx,
+                    &transient,
+                    &plist_label(&target.name),
+                    TransientActivation::Loaded,
+                    err,
+                ));
+            }
+
+            // Both transient steps succeeded: now retire the persistent plist.
+            // If removal fails, roll back the transient activation so the
+            // persistent file remains the recovery path.
+            match fs::remove_file(&persistent) {
+                Ok(()) => {}
+                Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+                Err(source) => {
+                    let original =
+                        OpError::io("remove persistent service file", persistent, source);
+                    return Err(rollback_transient(
+                        ctx,
+                        &transient,
+                        &plist_label(&target.name),
+                        TransientActivation::Loaded,
+                        original,
+                    ));
+                }
+            }
             ran(ctx, target, &plist_label(&target.name));
         }
         BottleTag::All => return Err(unsupported_platform()),
     }
     Ok(())
+}
+
+/// Activation state of the transient launchd job at the point of failure.
+enum TransientActivation {
+    /// `launchctl load` was attempted but may not have registered the job.
+    /// Probe the label with `launchctl list` before deciding to unload.
+    LoadAttempted,
+    /// The job is known to be loaded (`launchctl load` succeeded); unload
+    /// directly without probing.
+    Loaded,
+}
+
+/// Roll back a failed transient launchd activation so the persistent
+/// LaunchAgents plist remains the recovery path. The transient artifact is
+/// always removed. Whether the job is unloaded depends on `activation`:
+///
+/// - [`TransientActivation::LoadAttempted`]: probe the label with
+///   `launchctl list`. Unload only when the probe confirms the job exists.
+///   If the probe itself errors, the job state is unknown — report it as a
+///   leftover without attempting a blind unload.
+/// - [`TransientActivation::Loaded`]: unload directly (the job was
+///   confirmed loaded by a prior successful `launchctl load`).
+///
+/// Returns `original` unchanged when rollback leaves nothing behind, or
+/// [`OpError::RollbackIncomplete`] when a loaded job or artifact survives —
+/// the original error is never swallowed.
+fn rollback_transient(
+    ctx: &Ctx,
+    transient: &Utf8Path,
+    label: &str,
+    activation: TransientActivation,
+    original: OpError,
+) -> OpError {
+    let mut leftovers: Vec<String> = Vec::new();
+
+    let need_unload = match activation {
+        TransientActivation::Loaded => true,
+        TransientActivation::LoadAttempted => match probe(ctx, &launchctl_list(label)) {
+            Ok(true) => true,
+            Ok(false) => false,
+            Err(probe_err) => {
+                leftovers.push(format!("unknown job state for {label} ({probe_err})"));
+                false
+            }
+        },
+    };
+
+    if need_unload
+        && let Err(unload_err) = run_checked(
+            ctx.commands.as_ref(),
+            &launchctl(LaunchctlAction::Unload, transient),
+        )
+    {
+        leftovers.push(format!("loaded job at {transient} ({unload_err})"));
+    }
+
+    match fs::remove_file(transient) {
+        Ok(()) => {}
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+        Err(source) => {
+            leftovers.push(format!("{transient} ({source})"));
+        }
+    }
+
+    if leftovers.is_empty() {
+        original
+    } else {
+        OpError::RollbackIncomplete {
+            original: Box::new(original),
+            leftovers: leftovers.join(", "),
+        }
+    }
 }
 
 fn info(ctx: &Ctx, target: &Target) -> Result<(), OpError> {
@@ -422,35 +551,8 @@ fn cleanup(ctx: &Ctx) -> Result<(), OpError> {
             }
         }
         BottleTag::MacOs { .. } => {
-            let dir = launch_agents_dir(&ctx.env);
-            if dir.exists() {
-                let entries = fs::read_dir(&dir)
-                    .map_err(|source| OpError::io("read service directory", dir.clone(), source))?;
-                for entry in entries {
-                    let entry = entry
-                        .map_err(|source| OpError::io("read service entry", dir.clone(), source))?;
-                    let path = utf8_entry_path(&entry, &dir)?;
-                    let Some(name) = formula_name_from_plist(&path) else {
-                        continue;
-                    };
-                    if installed.contains(&name) {
-                        continue;
-                    }
-                    if probe(ctx, &launchctl_list(&plist_label(&name)))? {
-                        continue;
-                    }
-                    run_checked(
-                        ctx.commands.as_ref(),
-                        &launchctl(LaunchctlAction::Unload, &path),
-                    )?;
-                    ctx.reporter
-                        .print(&format!("Removing unused service file: {path}"));
-                    fs::remove_file(&path).map_err(|source| {
-                        OpError::io("remove service file", path.clone(), source)
-                    })?;
-                    cleaned = true;
-                }
-            }
+            cleaned = cleanup_plist_dir(ctx, &launch_agents_dir(&ctx.env), &installed)?;
+            cleaned |= cleanup_plist_dir(ctx, &transient_dir(&ctx.env), &installed)?;
         }
         BottleTag::All => return Err(unsupported_platform()),
     }
@@ -459,6 +561,45 @@ fn cleanup(ctx: &Ctx) -> Result<(), OpError> {
             .print("All user-space services OK, nothing cleaned...");
     }
     Ok(())
+}
+
+/// Scan one macOS plist directory for uninstalled, inactive service files,
+/// unloading and removing each one. Returns whether any file was removed.
+fn cleanup_plist_dir(
+    ctx: &Ctx,
+    dir: &Utf8Path,
+    installed: &InstalledState,
+) -> Result<bool, OpError> {
+    let mut cleaned = false;
+    if !dir.exists() {
+        return Ok(false);
+    }
+    let entries = fs::read_dir(dir)
+        .map_err(|source| OpError::io("read service directory", dir.to_owned(), source))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|source| OpError::io("read service entry", dir.to_owned(), source))?;
+        let path = utf8_entry_path(&entry, dir)?;
+        let Some(name) = formula_name_from_plist(&path) else {
+            continue;
+        };
+        if installed.contains(&name) {
+            continue;
+        }
+        if probe(ctx, &launchctl_list(&plist_label(&name)))? {
+            continue;
+        }
+        run_checked(
+            ctx.commands.as_ref(),
+            &launchctl(LaunchctlAction::Unload, &path),
+        )?;
+        ctx.reporter
+            .print(&format!("Removing unused service file: {path}"));
+        fs::remove_file(&path)
+            .map_err(|source| OpError::io("remove service file", path.clone(), source))?;
+        cleaned = true;
+    }
+    Ok(cleaned)
 }
 
 fn active(ctx: &Ctx, target: &Target) -> Result<bool, OpError> {
@@ -520,10 +661,29 @@ fn launch_agents_dir(env: &Env) -> Utf8PathBuf {
     env.home.join("Library/LaunchAgents")
 }
 
+fn transient_dir(env: &Env) -> Utf8PathBuf {
+    env.prefix.join("var/zapbrew/services")
+}
+
+/// Resolve the macOS plist path for `name`, preferring the persistent
+/// LaunchAgents location, then the transient run location. Returns the
+/// persistent path when neither exists so callers get a sensible default.
+fn resolve_plist_path(env: &Env, name: &str) -> Utf8PathBuf {
+    let persistent = launch_agents_dir(env).join(plist_file_name(name));
+    if persistent.exists() {
+        return persistent;
+    }
+    let transient = transient_dir(env).join(plist_file_name(name));
+    if transient.exists() {
+        return transient;
+    }
+    persistent
+}
+
 fn service_file(env: &Env, name: &str) -> Result<Utf8PathBuf, OpError> {
     match &env.bottle_tag {
         BottleTag::Linux { .. } => Ok(systemd_dir(env).join(service_unit(name))),
-        BottleTag::MacOs { .. } => Ok(launch_agents_dir(env).join(plist_file_name(name))),
+        BottleTag::MacOs { .. } => Ok(resolve_plist_path(env, name)),
         BottleTag::All => Err(unsupported_platform()),
     }
 }

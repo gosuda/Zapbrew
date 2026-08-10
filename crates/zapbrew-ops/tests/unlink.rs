@@ -1,10 +1,11 @@
 mod support;
 
+use zapbrew_ops::OpError;
 use zapbrew_ops::unlink::{self, Args};
 use zapbrew_pour::{LinkOptions, link};
-use zapbrew_prefix::Prefix;
+use zapbrew_prefix::{LockGuard, Prefix, PrefixError};
 
-use support::{Fixture, fingerprint, formula, is_symlink, write};
+use support::{Fixture, fingerprint, formula, is_symlink};
 
 #[tokio::test]
 async fn linked_keg_wins_over_newer_and_real_unlink_keeps_opt() {
@@ -50,7 +51,6 @@ async fn dry_run_selects_max_scheme_and_is_byte_identical() {
     link(&high_scheme, &prefix, LinkOptions::default()).expect("initial link");
     std::fs::remove_file(fixture.env.linked.join("foo")).expect("drop linked record");
     let (ctx, reporter) = fixture.context(vec![formula("foo", "1.0", 1)]);
-    write(&ctx.env.locks.join("foo.formula.lock"), "");
     let before = fingerprint(&ctx.env.prefix);
 
     unlink::run(
@@ -62,6 +62,10 @@ async fn dry_run_selects_max_scheme_and_is_byte_identical() {
     )
     .await
     .expect("dry-run unlink");
+    assert!(
+        !ctx.env.locks.exists(),
+        "dry-run must not create the locks directory"
+    );
 
     assert_eq!(fingerprint(&ctx.env.prefix), before);
     assert_eq!(
@@ -71,6 +75,49 @@ async fn dry_run_selects_max_scheme_and_is_byte_identical() {
             format!("print:{}", ctx.env.prefix.join("bin/current")),
         ]
     );
+}
+
+#[tokio::test]
+async fn dry_run_ignores_a_held_formula_lock_that_blocks_real_unlink() {
+    let fixture = Fixture::new();
+    let keg = fixture.keg("foo", "1.0", 0);
+    fixture.keg_file(&keg, "bin/foo", "foo");
+    let prefix = Prefix::new(fixture.env.clone());
+    link(&keg, &prefix, LinkOptions::default()).expect("initial link");
+    let (ctx, _reporter) = fixture.context(vec![formula("foo", "1.0", 0)]);
+    let held = LockGuard::acquire(&ctx.env.locks, "foo.formula.lock").expect("hold formula lock");
+
+    unlink::run(
+        &ctx,
+        Args {
+            names: vec!["foo".to_owned()],
+            dry_run: true,
+        },
+    )
+    .await
+    .expect("dry-run must not contend on formula lock");
+
+    let before = fingerprint(&ctx.env.prefix);
+    let error = unlink::run(
+        &ctx,
+        Args {
+            names: vec!["foo".to_owned()],
+            dry_run: false,
+        },
+    )
+    .await
+    .expect_err("real unlink must contend on formula lock");
+    assert!(
+        matches!(error, OpError::Prefix(PrefixError::LockBusy { .. })),
+        "expected LockBusy, got: {error}"
+    );
+    assert_eq!(
+        fingerprint(&ctx.env.prefix),
+        before,
+        "blocked real unlink must not mutate"
+    );
+
+    drop(held);
 }
 
 #[tokio::test]
@@ -134,7 +181,6 @@ async fn dry_run_lists_removed_and_pruned_matching_real_unlink() {
     );
 
     let (ctx, reporter) = fixture.context(vec![formula("nested", "1.0", 0)]);
-    write(&ctx.env.locks.join("nested.formula.lock"), "");
     let before = fingerprint(&ctx.env.prefix);
 
     unlink::run(
@@ -146,6 +192,10 @@ async fn dry_run_lists_removed_and_pruned_matching_real_unlink() {
     )
     .await
     .expect("dry-run unlink");
+    assert!(
+        !ctx.env.locks.exists(),
+        "dry-run must not create the locks directory"
+    );
 
     assert_eq!(
         fingerprint(&ctx.env.prefix),

@@ -253,10 +253,12 @@ impl Keg {
     }
 }
 
-/// Exclusive prefix lock held for the lifetime of the guard.
+/// Advisory prefix lock held for the lifetime of the guard.
 ///
 /// The underlying [`File`] is kept open so the advisory lock is released when
-/// the guard (and thus the file descriptor) is dropped.
+/// the guard (and thus the file descriptor) is dropped. Both exclusive
+/// ([`acquire`][LockGuard::acquire]) and shared
+/// ([`acquire_shared`][LockGuard::acquire_shared]) locks are supported.
 #[derive(Debug)]
 pub struct LockGuard {
     path: Utf8PathBuf,
@@ -270,6 +272,42 @@ impl LockGuard {
     /// `lock_file_name` is typically `"<rack>.formula.lock"`. Contention maps to
     /// [`PrefixError::LockBusy`] with command `"brew"`.
     pub fn acquire(locks_dir: &Utf8Path, lock_file_name: &str) -> Result<Self, PrefixError> {
+        Self::open(locks_dir, lock_file_name).and_then(|(path, file)| match file.try_lock() {
+            Ok(()) => Ok(Self { path, _file: file }),
+            Err(TryLockError::WouldBlock) => Err(PrefixError::LockBusy {
+                command: DEFAULT_LOCK_COMMAND.to_owned(),
+                path,
+            }),
+            Err(TryLockError::Error(source)) => Err(PrefixError::io("lock", &path, source)),
+        })
+    }
+
+    /// Create `locks_dir` / `lock_file_name` if needed and acquire a nonblocking
+    /// **shared** (reader) lock.
+    ///
+    /// Multiple shared locks may be held concurrently on the same lock file, but
+    /// neither a shared nor an exclusive lock can be acquired while an exclusive
+    /// lock is held, and vice versa. Contention maps to
+    /// [`PrefixError::LockBusy`] with command `"brew"`.
+    pub fn acquire_shared(locks_dir: &Utf8Path, lock_file_name: &str) -> Result<Self, PrefixError> {
+        Self::open(locks_dir, lock_file_name).and_then(|(path, file)| {
+            match file.try_lock_shared() {
+                Ok(()) => Ok(Self { path, _file: file }),
+                Err(TryLockError::WouldBlock) => Err(PrefixError::LockBusy {
+                    command: DEFAULT_LOCK_COMMAND.to_owned(),
+                    path,
+                }),
+                Err(TryLockError::Error(source)) => Err(PrefixError::io("lock", &path, source)),
+            }
+        })
+    }
+
+    /// Open (creating if needed) the lock file under `locks_dir`, returning the
+    /// full path and open [`File`].
+    fn open(
+        locks_dir: &Utf8Path,
+        lock_file_name: &str,
+    ) -> Result<(Utf8PathBuf, File), PrefixError> {
         validate_segment("lock", lock_file_name)?;
 
         fs::create_dir_all(locks_dir)
@@ -284,14 +322,7 @@ impl LockGuard {
             .open(path.as_std_path())
             .map_err(|source| PrefixError::io("open", &path, source))?;
 
-        match file.try_lock() {
-            Ok(()) => Ok(Self { path, _file: file }),
-            Err(TryLockError::WouldBlock) => Err(PrefixError::LockBusy {
-                command: DEFAULT_LOCK_COMMAND.to_owned(),
-                path,
-            }),
-            Err(TryLockError::Error(source)) => Err(PrefixError::io("lock", &path, source)),
-        }
+        Ok((path, file))
     }
 
     /// Path of the lock file.

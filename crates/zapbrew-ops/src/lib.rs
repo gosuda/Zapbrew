@@ -182,3 +182,31 @@ pub mod shim_test_support {
         shim::run_with_exe(ctx, shim::Args { action }, exe)
     }
 }
+
+#[doc(hidden)]
+pub mod tap_lock_test_support {
+    use camino::{Utf8Path, Utf8PathBuf};
+
+    use crate::tap::{TapName, tap_lock_dir, tap_lock_file_name};
+
+    /// Lock sub-directory for `raw_tap` under `locks` (e.g.
+    /// `locks/taps/<user>`). Exposed for deterministic lock-acquisition probes
+    /// in tests.
+    pub fn lock_dir(locks: &Utf8Path, raw_tap: &str) -> Result<Utf8PathBuf, String> {
+        let tap = TapName::parse(raw_tap).map_err(|e| e.to_string())?;
+        Ok(tap_lock_dir(locks, &tap))
+    }
+
+    /// Lock file name for `raw_tap` (e.g. `homebrew-<repo>.tap.lock`).
+    pub fn lock_file_name(raw_tap: &str) -> Result<String, String> {
+        let tap = TapName::parse(raw_tap).map_err(|e| e.to_string())?;
+        Ok(tap_lock_file_name(&tap))
+    }
+
+    /// Full lock path for `raw_tap` under `locks`.
+    pub fn lock_path(locks: &Utf8Path, raw_tap: &str) -> Result<Utf8PathBuf, String> {
+        let dir = lock_dir(locks, raw_tap)?;
+        let name = lock_file_name(raw_tap)?;
+        Ok(dir.join(name))
+    }
+}

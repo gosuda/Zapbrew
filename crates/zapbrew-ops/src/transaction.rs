@@ -13,6 +13,7 @@ use zapbrew_prefix::{Env, Keg, LockGuard, Prefix, Tab};
 use zapbrew_types::{BottleFile, FormulaName};
 
 use crate::install_steps::{InstallSteps, StepJournal, remove_tree_confined};
+use crate::tap;
 use crate::{Ctx, OpError};
 
 static TRANSACTION_ID: AtomicU64 = AtomicU64::new(1);
@@ -114,6 +115,54 @@ pub(crate) fn acquire_formula_locks(
             &env.locks,
             &format!("{name}.formula.lock"),
         )?);
+    }
+    Ok(guards)
+}
+
+/// Acquire **exclusive** (writer) tap locks for every tap in `taps`.
+///
+/// Taps are sorted and de-duplicated before locking so the acquisition order is
+/// deterministic regardless of caller input order. Each lock file lives at
+/// `locks/taps/<user>/homebrew-<repository>.tap.lock`, derived from the
+/// normalized [`tap::TapName`] components. The base locks directory and each
+/// per-user sub-directory are created safely via [`ensure_directory`].
+pub(crate) fn acquire_exclusive_tap_locks(
+    env: &Env,
+    taps: &[tap::TapName],
+) -> Result<Vec<LockGuard>, OpError> {
+    ensure_directory(&env.locks, &env.prefix, None)?;
+    let mut sorted: Vec<&tap::TapName> = taps.iter().collect();
+    sorted.sort();
+    sorted.dedup();
+    let mut guards = Vec::with_capacity(sorted.len());
+    for tap in sorted {
+        let dir = tap::tap_lock_dir(&env.locks, tap);
+        ensure_directory(&dir, &env.locks, None)?;
+        let name = tap::tap_lock_file_name(tap);
+        guards.push(LockGuard::acquire(&dir, &name)?);
+    }
+    Ok(guards)
+}
+
+/// Acquire **shared** (reader) tap locks for every tap in `taps`.
+///
+/// Sorting and de-duplication mirror [`acquire_exclusive_tap_locks`]. Shared
+/// locks allow concurrent installs from the same tap but block untap/tap
+/// writers, and vice versa.
+pub(crate) fn acquire_shared_tap_locks(
+    env: &Env,
+    taps: &[tap::TapName],
+) -> Result<Vec<LockGuard>, OpError> {
+    ensure_directory(&env.locks, &env.prefix, None)?;
+    let mut sorted: Vec<&tap::TapName> = taps.iter().collect();
+    sorted.sort();
+    sorted.dedup();
+    let mut guards = Vec::with_capacity(sorted.len());
+    for tap in sorted {
+        let dir = tap::tap_lock_dir(&env.locks, tap);
+        ensure_directory(&dir, &env.locks, None)?;
+        let name = tap::tap_lock_file_name(tap);
+        guards.push(LockGuard::acquire_shared(&dir, &name)?);
     }
     Ok(guards)
 }

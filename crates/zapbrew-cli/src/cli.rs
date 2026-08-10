@@ -228,7 +228,7 @@ pub struct InstallArgs {
     /// Include test dependencies during expansion.
     #[arg(long)]
     pub include_test: bool,
-    /// Treat the named arguments as casks.
+    /// Treat the named arguments as casks (macOS only).
     #[arg(long, conflicts_with = "formula")]
     pub cask: bool,
     /// Treat the named arguments as formulae.
@@ -249,7 +249,7 @@ pub struct UninstallArgs {
     /// Do not check for dependents before uninstalling.
     #[arg(long)]
     pub ignore_dependencies: bool,
-    /// Treat the named arguments as casks.
+    /// Treat the named arguments as casks (macOS only).
     #[arg(long, conflicts_with = "formula")]
     pub cask: bool,
     /// Treat the named arguments as formulae.
@@ -280,7 +280,7 @@ pub struct OutdatedArgs {
 
 #[derive(Debug, Args)]
 pub struct ListArgs {
-    /// Formula or cask names to list; empty lists all installed.
+    /// Formula or cask names to list; empty lists all formulae unless --cask is set.
     pub names: Vec<String>,
     /// Show version numbers.
     #[arg(long)]
@@ -288,7 +288,7 @@ pub struct ListArgs {
     /// Print one entry per line.
     #[arg(short = '1')]
     pub oneline: bool,
-    /// Treat the named arguments as casks.
+    /// List casks instead of formulae (macOS only).
     #[arg(long, conflicts_with = "formula")]
     pub cask: bool,
     /// Treat the named arguments as formulae.
@@ -438,7 +438,7 @@ pub struct SearchArgs {
 
 #[derive(Debug, Args)]
 pub struct ShellenvArgs {
-    /// Shell to emit integration for; defaults to the current shell.
+    /// Shell template: bash/sh, zsh, fish, csh/tcsh, or pwsh; other names use POSIX. Defaults to the current shell.
     pub shell: Option<String>,
 }
 

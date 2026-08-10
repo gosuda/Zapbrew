@@ -319,3 +319,51 @@ async fn rollback_failure_warns_without_masking_clone_error() {
     assert_eq!(output[0], "ohai:Tapping acme/failing");
     assert!(output[1].starts_with("opoo:Failed to remove partial tap acme/failing:"));
 }
+
+// ---------------------------------------------------------------------------
+// Per-tap lock contention test
+// ---------------------------------------------------------------------------
+
+use zapbrew_ops::tap_lock_test_support;
+use zapbrew_prefix::{LockGuard, PrefixError};
+
+#[tokio::test]
+async fn tap_blocked_by_shared_tap_lock() {
+    let fixture = Fixture::new();
+    let (mut ctx, _reporter) = fixture.context(Vec::new());
+    ctx.commands = Arc::new(CloneRunner::new(ResultKind::Clone(Vec::new())));
+
+    // Hold a shared tap lock (as install would) — tap's exclusive lock must
+    // be blocked by it.
+    let path =
+        tap_lock_test_support::lock_path(&fixture.env.locks, "acme/tools").expect("tap lock path");
+    let dir = path.parent().expect("lock dir");
+    let name = path.file_name().expect("lock file name");
+    let _shared = LockGuard::acquire_shared(dir, name).expect("shared tap lock");
+
+    let error = tap::run(
+        &ctx,
+        Args {
+            name: Some("acme/tools".to_owned()),
+            url: None,
+            force: true,
+        },
+    )
+    .await
+    .expect_err("tap must be blocked by shared tap lock");
+
+    assert!(
+        matches!(error, OpError::Prefix(PrefixError::LockBusy { .. })),
+        "expected LockBusy from tap lock, got: {error}"
+    );
+
+    // Tap directory must not have been created.
+    assert!(
+        !fixture
+            .env
+            .library
+            .join("Taps/acme/homebrew-tools")
+            .exists(),
+        "tap directory must not exist when tap is blocked by shared lock"
+    );
+}

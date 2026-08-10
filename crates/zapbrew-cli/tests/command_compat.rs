@@ -1,7 +1,8 @@
 //! Process-boundary command-compatibility contracts.
 //!
-//! Four assert_cmd cases pin the exact bytes and exit status of the real
-//! `zapbrew` binary at the OS process boundary. The unknown-formula case
+//! Five tests drive the real `zapbrew` binary at the OS process boundary. The
+//! command-reference case pins all 41 generated help blocks; the other four
+//! pin exact bytes and exit status. The unknown-formula case
 //! traverses the production JWS verifier: `cargo test -p zapbrew-cli` unifies
 //! the `zapbrew-api` `test-trust-root` dev-dependency feature into the binary
 //! built for this test (resolver 3), so the embedded trust anchor is the
@@ -10,6 +11,7 @@
 //! (`HOMEBREW_NO_AUTO_UPDATE=1` plus a pre-seeded, verified cache) short-circuits
 //! before any HTTP request, so the run is fully offline and deterministic.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::time::Duration;
 
@@ -23,6 +25,134 @@ use tempfile::TempDir;
 const FORMULA_JWS: &[u8] = include_bytes!("../../zapbrew-api/testdata/formula.jws.json");
 const MIGRATIONS_JWS: &[u8] =
     include_bytes!("../../zapbrew-api/testdata/formula_tap_migrations.jws.json");
+
+#[derive(Debug)]
+struct DocumentedCommand {
+    args: Vec<String>,
+    help: String,
+}
+
+fn fenced_block(lines: &[&str], heading: usize) -> String {
+    let start = lines[heading..]
+        .iter()
+        .position(|line| *line == "```text")
+        .map(|offset| heading + offset + 1)
+        .expect("text fence after command heading");
+    let end = lines[start..]
+        .iter()
+        .position(|line| *line == "```")
+        .map(|offset| start + offset)
+        .expect("closing text fence");
+    format!("{}\n", lines[start..end].join("\n"))
+}
+
+fn documented_commands(reference: &str) -> Vec<DocumentedCommand> {
+    let lines: Vec<&str> = reference.lines().collect();
+    lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            line.strip_prefix("### `zapbrew ")
+                .or_else(|| line.strip_prefix("#### `zapbrew "))
+                .and_then(|command| command.strip_suffix('`'))
+                .map(|command| DocumentedCommand {
+                    args: command.split_whitespace().map(str::to_owned).collect(),
+                    help: fenced_block(&lines, index),
+                })
+        })
+        .collect()
+}
+
+fn binary_help(args: &[String]) -> String {
+    let output = Command::cargo_bin("zapbrew")
+        .expect("binary")
+        .args(args)
+        .arg("--help")
+        .output()
+        .expect("run help");
+    assert!(output.status.success(), "status: {:?}", output.status);
+    assert!(output.stderr.is_empty(), "stderr: {:?}", output.stderr);
+    String::from_utf8(output.stdout).expect("UTF-8 help")
+}
+
+fn child_commands(help: &str) -> Vec<&str> {
+    let Some((_, remainder)) = help.split_once("Commands:\n") else {
+        return Vec::new();
+    };
+    let commands = remainder
+        .split_once("\n\nOptions:\n")
+        .map_or(remainder, |(commands, _)| commands);
+    commands
+        .lines()
+        .filter_map(|line| {
+            let name = line.split_whitespace().next()?;
+            (name != "help").then_some(name)
+        })
+        .collect()
+}
+
+fn binary_help_tree(root_help: &str) -> BTreeMap<Vec<String>, String> {
+    let mut pending: Vec<Vec<String>> = child_commands(root_help)
+        .into_iter()
+        .map(|name| vec![name.to_owned()])
+        .collect();
+    let mut tree = BTreeMap::new();
+    while let Some(path) = pending.pop() {
+        let help = binary_help(&path);
+        for child in child_commands(&help) {
+            let mut child_path = path.clone();
+            child_path.push(child.to_owned());
+            pending.push(child_path);
+        }
+        assert!(
+            tree.insert(path, help).is_none(),
+            "duplicate command path in help tree"
+        );
+    }
+    tree
+}
+
+#[test]
+fn command_reference_matches_binary_help() {
+    const REFERENCE: &str = include_str!("../../../docs/commands.md");
+
+    let documented = documented_commands(REFERENCE);
+    assert_eq!(documented.len(), 40, "documented command help blocks");
+
+    let root_help = binary_help(&[]);
+    let actual_global = root_help
+        .split_once("\nOptions:\n")
+        .map(|(_, options)| format!("Options:\n{options}"))
+        .expect("root Options section");
+    let reference_lines: Vec<&str> = REFERENCE.lines().collect();
+    let global_heading = reference_lines
+        .iter()
+        .position(|line| *line == "## Global options and path queries")
+        .expect("global options heading");
+    assert_eq!(
+        fenced_block(&reference_lines, global_heading),
+        actual_global
+    );
+
+    let actual = binary_help_tree(&root_help);
+    let documented_paths: BTreeSet<Vec<String>> = documented
+        .iter()
+        .map(|command| command.args.clone())
+        .collect();
+    let actual_paths: BTreeSet<Vec<String>> = actual.keys().cloned().collect();
+    assert_eq!(documented_paths, actual_paths);
+
+    for command in documented {
+        assert_eq!(
+            command.help,
+            *actual
+                .get(&command.args)
+                .expect("documented command exists in binary help tree"),
+            "stale help for zapbrew {}",
+            command.args.join(" ")
+        );
+    }
+}
 
 #[test]
 fn version_is_homebrew_compatible() {

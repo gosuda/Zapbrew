@@ -184,7 +184,6 @@ async fn dry_run_lists_exact_paths_and_is_byte_identical_for_link_and_overwrite(
     fixture.keg_file(&foo, "bin/tool", "foo");
     let (ctx, reporter) = fixture.context(vec![formula("foo", "1.0", 0)]);
     fs::create_dir_all(&ctx.env.prefix).expect("prefix");
-    write(&ctx.env.locks.join("foo.formula.lock"), "");
     let before = fingerprint(&ctx.env.prefix);
 
     link::run(
@@ -197,6 +196,10 @@ async fn dry_run_lists_exact_paths_and_is_byte_identical_for_link_and_overwrite(
     )
     .await
     .expect("link dry run");
+    assert!(
+        !ctx.env.locks.exists(),
+        "dry-run must not create the locks directory"
+    );
     assert_eq!(fingerprint(&ctx.env.prefix), before);
     assert_eq!(
         reporter.take(),
@@ -219,6 +222,10 @@ async fn dry_run_lists_exact_paths_and_is_byte_identical_for_link_and_overwrite(
     )
     .await
     .expect("overwrite dry run");
+    assert!(
+        !ctx.env.locks.exists(),
+        "dry-run must not create the locks directory"
+    );
     assert_eq!(fingerprint(&ctx.env.prefix), before);
     assert_eq!(
         reporter.take(),

@@ -8,7 +8,10 @@ use zapbrew_types::FormulaName;
 use crate::install::{format_size, make_tab, replacement, resolve_formula, substitute_prefixes};
 use crate::install_steps::InstallSteps;
 use crate::state::scan_selected;
-use crate::transaction::{InstallInput, acquire_formula_locks, install as install_transaction};
+use crate::tap::formula_taps;
+use crate::transaction::{
+    InstallInput, acquire_formula_locks, acquire_shared_tap_locks, install as install_transaction,
+};
 use crate::{Ctx, OpError};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -31,6 +34,10 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
         }
     }
 
+    // Acquire shared tap locks before formula locks to prevent lock-order
+    // inversion with untap's exclusive tap locks. Held through receipt commit.
+    let taps = formula_taps(formulae.iter().map(|(f, _)| *f))?;
+    let _tap_locks = acquire_shared_tap_locks(&ctx.env, &taps)?;
     let _locks = acquire_formula_locks(&ctx.env, &affected)?;
     let state = scan_selected(&ctx.env, &affected)?;
     let mut plans = Vec::with_capacity(formulae.len());
