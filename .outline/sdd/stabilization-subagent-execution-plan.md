@@ -113,10 +113,13 @@ One fresh implementer adds an ignored `zapbrew-ops` integration workload. It mus
 - generate the bottle and catalog deterministically;
 - use `Catalog::from_payload` and loopback transport;
 - execute real `install::run` through pour, relocation, receipt, link, and structured overwrite steps;
-- create a step-journal root on every measured install;
+- ship sentinel bytes at the structured overwrite target so `StepJournal::backup` creates a step-journal root on every measured install;
+- prove success by observing the replacement bytes and absence of a step-journal root;
+- add an unmeasured deterministic rollback case that observes sentinel restoration and absence of the failed keg and step-journal root;
 - call only `install::run` and public APIs that exist at PRE HEAD; never reference `StepJournal` internals or J0-only symbols;
-- reset each prefix between iterations;
-- scale until the command median is at least one second;
+- freeze one fixed iteration count in the source before W2; PRE and POST must run that identical count and the workload must never adapt at runtime;
+- use fresh prefix subdirectories while leaving accumulated-tree cleanup outside the timed command through recorded-root hyperfine hooks;
+- self-report the install-loop duration and iteration count;
 - require no private signing key, public network, or new dependency.
 
 A fresh reviewer verifies that the workload reaches the journal success and cleanup path and does not measure compilation.
@@ -125,18 +128,22 @@ A fresh reviewer verifies that the workload reaches the journal success and clea
 
 Dependencies: W1 reviewed.
 
-Use an isolated worktree at the unchanged HEAD for PRE. Copy the exact workload source into PRE and verify its digest matches POST. Use separate release target directories. Never stash or rewrite the active tree.
+PRE is commit `dad688adff8b9783ac6c884d1adca01df9861307`, the parent of the journal Interface commit. Use an isolated worktree at that unchanged commit. Copy the exact workload source into PRE and require its digest to equal POST. Before measurement, prove that the crate delta from PRE to POST is exactly the four J0 Rust files and that neither tree has another crate-level change. Never stash or rewrite the active tree.
+
+Build the release test executables into separate target directories with identical `CARGO_PROFILE_RELEASE_DEBUG=true` settings. Record the source, binary, toolchain, platform, architecture, and file-system-stage digests. Smoke the executables directly, then invoke those executables directly for measurement; never place `cargo test` inside the timed command.
 
 For both executables:
 
-- smoke once;
+- use the same fixed iteration count and invocation;
+- keep recorded-root setup and cleanup outside timing with hyperfine prepare and cleanup hooks;
 - run `hyperfine --warmup 3 --min-runs 10`;
-- store raw samples and environment identity;
+- store every raw sample and the self-reported install-loop duration;
+- reject evidence unless the install loop is at least 90% of hyperfine wall time;
 - reject median below one second;
 - reject standard deviation at or above 20% of median;
 - require `POST median <= PRE median * 1.05`.
 
-Profile the same workload. Store at least ten aligned unit-attribution samples with dispersion below 20% for the journal classification, including a cold verdict; enlarge the repeated workload until a cold unit's absolute time is measurable. If the gate remains noisy, block instead of inferring cold from code review. A scaling claim needs two fixture sizes, one digest per size, and aligned samples per size.
+Use `perf` on the same debuginfo-enabled executables for at least ten aligned unit-attribution samples with dispersion below 20%. If inlining prevents journal attribution, use a separate stage-disabled build only as a fallback; that third build never supplies PRE/POST gate evidence. Enlarge the fixed workload before both builds if attribution is too short or noisy. A scaling claim needs two fixed declared fixture sizes, one digest per size, and at least ten aligned raw samples with dispersion below 20% for each size.
 
 ### W3: Resolve the journal performance branch
 
