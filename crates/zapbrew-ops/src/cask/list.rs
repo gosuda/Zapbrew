@@ -1,11 +1,10 @@
 use std::fs;
 
-use camino::{Utf8Path, Utf8PathBuf};
-
+use super::resolve;
 use super::transaction::installed_version_dirs;
-use super::{require_macos, resolve};
 use crate::render::columns;
 use crate::{Ctx, OpError};
+use camino::{Utf8Path, Utf8PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Args {
@@ -16,7 +15,6 @@ pub struct Args {
 }
 
 pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
-    require_macos(ctx)?;
     if args.tokens.is_empty() {
         let installed = scan_tokens(&ctx.env.caskroom)?;
         if args.versions {

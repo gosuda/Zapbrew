@@ -190,7 +190,7 @@ fn seed_record(fixture: &Fixture, token: &str, version: &str, appdir: &str, arti
     std::fs::write(version_dir.join(".zapbrew-record.json"), bytes).expect("seed record");
 }
 #[tokio::test]
-async fn linux_refuses_all_cask_verbs() {
+async fn linux_refuses_cask_mutations() {
     let fixture = Fixture::new();
     let (ctx, _reporter) =
         fixture.context_casks(vec![], Arc::new(PanicRunner), reqwest::Client::new());
@@ -213,11 +213,6 @@ async fn linux_refuses_all_cask_verbs() {
     .await;
     assert!(
         matches!(err(uninstall), OpError::Refusal { message } if message == "Casks are not supported on Linux.")
-    );
-
-    let list = zapbrew_ops::cask::list::run(&ctx, zapbrew_ops::cask::list::Args::default()).await;
-    assert!(
-        matches!(err(list), OpError::Refusal { message } if message == "Casks are not supported on Linux.")
     );
 }
 
