@@ -30,7 +30,8 @@ fn require_macos(ctx: &Ctx) -> Result<(), OpError> {
     }
 }
 
-fn resolve<'a>(ctx: &'a Ctx, requested: &str) -> Result<&'a Cask, OpError> {
+/// Resolve a requested token against the cask catalog, honoring old-token renames.
+pub(crate) fn resolve<'a>(ctx: &'a Ctx, requested: &str) -> Result<&'a Cask, OpError> {
     ctx.casks.get(requested).ok_or_else(|| OpError::Refusal {
         message: format!("Cask '{requested}' is unavailable."),
     })

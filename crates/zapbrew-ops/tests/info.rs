@@ -703,3 +703,214 @@ async fn quiet_info_drops_caveats() {
     assert!(!messages.iter().any(|line| line == "ohai:Caveats"));
     assert!(!messages.iter().any(|line| line.starts_with("print:Use ")));
 }
+
+fn context_with_casks(
+    environment: Env,
+    formulae: &[Value],
+    casks: &[Value],
+    recording: RecordingReporter,
+) -> (Ctx, Arc<RecordingReporter>) {
+    let formula_payload = serde_json::to_vec(formulae).expect("formula payload");
+    let catalog = Arc::new(
+        Catalog::from_payload(&formula_payload, &environment.bottle_tag).expect("catalog"),
+    );
+    let cask_payload = serde_json::to_vec(casks).expect("cask payload");
+    let casks = Arc::new(
+        CaskCatalog::from_payload(&cask_payload, &environment.bottle_tag).expect("cask catalog"),
+    );
+    let recording = Arc::new(recording);
+    let reporter: Arc<dyn Reporter> = recording.clone();
+    (
+        Ctx {
+            env: environment,
+            http: reqwest::Client::new(),
+            catalog,
+            casks,
+            commands: Arc::new(PanicRunner),
+            reporter,
+        },
+        recording,
+    )
+}
+
+fn cask_fixture() -> Vec<Value> {
+    vec![json!({
+        "token": "sample-cask",
+        "old_tokens": ["old-sample"],
+        "name": ["Sample App"],
+        "desc": "A sample app",
+        "homepage": "https://example.test/sample-cask",
+        "version": "1.2.3",
+        "sha256": "no_check",
+        "url": "https://example.test/sample-cask.zip",
+        "artifacts": [{"app": ["Sample.app"]}],
+        "depends_on": {"formula": ["sample-dep"], "cask": ["other-cask"]},
+        "caveats": "Restart to apply.",
+        "auto_updates": true,
+        "deprecated": false,
+        "disabled": false
+    })]
+}
+
+#[tokio::test]
+async fn cask_text_renders_title_dependencies_artifacts_and_caveats() {
+    let temp = TempDir::new().expect("temp");
+    let (ctx, reporter) = context_with_casks(
+        env(&temp),
+        &[],
+        &cask_fixture(),
+        RecordingReporter::default(),
+    );
+
+    info::run(
+        &ctx,
+        Args {
+            names: vec!["sample-cask".to_owned()],
+            json_v2: false,
+        },
+    )
+    .await
+    .expect("cask info");
+
+    assert_eq!(
+        reporter.take(),
+        [
+            "ohai:sample-cask: 1.2.3 (auto_updates) (Sample App)",
+            "print:A sample app",
+            "print:https://example.test/sample-cask",
+            "print:Old Tokens: old-sample",
+            "print:Not installed",
+            "ohai:Dependencies",
+            "print:Formula (1): sample-dep",
+            "print:Cask (1): other-cask (cask)",
+            "ohai:Artifacts",
+            "print:app {\"app\":[\"Sample.app\"]}",
+            "ohai:Caveats",
+            "print:Restart to apply.",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn cask_json_v2_returns_raw_cask_object_in_catalog_order() {
+    let temp = TempDir::new().expect("temp");
+    let (ctx, reporter) = context_with_casks(
+        env(&temp),
+        &[],
+        &cask_fixture(),
+        RecordingReporter::default(),
+    );
+
+    info::run(
+        &ctx,
+        Args {
+            names: vec!["sample-cask".to_owned()],
+            json_v2: true,
+        },
+    )
+    .await
+    .expect("cask info json");
+
+    let lines = reporter.take();
+    assert_eq!(lines.len(), 1);
+    let text = lines[0].strip_prefix("print:").expect("json is printed");
+    let parsed: Value = serde_json::from_str(text).expect("valid json");
+    assert_eq!(parsed["formulae"], json!([]));
+    assert_eq!(parsed["casks"].as_array().expect("array").len(), 1);
+    assert_eq!(parsed["casks"][0]["token"], "sample-cask");
+    assert_eq!(parsed["casks"][0]["version"], "1.2.3");
+    assert_eq!(parsed["casks"][0]["auto_updates"], true);
+}
+
+#[tokio::test]
+async fn cask_old_token_resolves_and_renders_canonical_info() {
+    let temp = TempDir::new().expect("temp");
+    let (ctx, reporter) = context_with_casks(
+        env(&temp),
+        &[],
+        &cask_fixture(),
+        RecordingReporter::default(),
+    );
+
+    info::run(
+        &ctx,
+        Args {
+            names: vec!["old-sample".to_owned()],
+            json_v2: false,
+        },
+    )
+    .await
+    .expect("old cask info");
+
+    let messages = reporter.take();
+    assert!(
+        messages
+            .iter()
+            .any(|line| line == "ohai:sample-cask: 1.2.3 (auto_updates) (Sample App)")
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|line| line == "print:Old Tokens: old-sample")
+    );
+}
+
+#[tokio::test]
+async fn missing_cask_name_is_typed() {
+    let temp = TempDir::new().expect("temp");
+    let (ctx, _reporter) = context_with_casks(
+        env(&temp),
+        &[],
+        &cask_fixture(),
+        RecordingReporter::default(),
+    );
+
+    let missing = info::run(
+        &ctx,
+        Args {
+            names: vec!["no-such-cask".to_owned()],
+            json_v2: false,
+        },
+    )
+    .await
+    .expect_err("missing cask");
+    assert!(matches!(
+        missing,
+        zapbrew_ops::OpError::MissingFormula { ref name } if name == "no-such-cask"
+    ));
+}
+
+#[tokio::test]
+async fn formula_info_regression_ignores_cask_catalog() {
+    let temp = TempDir::new().expect("temp");
+    let formulae = vec![json!({
+        "name": "plain",
+        "full_name": "vendor/tools/plain",
+        "tap": "vendor/tools",
+        "desc": "Plain formula",
+        "homepage": "https://example.test/plain",
+        "versions": {"stable": "1.0", "bottle": false},
+        "ruby_source_path": "Formula/plain.rb"
+    })];
+    let casks = cask_fixture();
+    let (ctx, reporter) =
+        context_with_casks(env(&temp), &formulae, &casks, RecordingReporter::default());
+
+    info::run(
+        &ctx,
+        Args {
+            names: vec!["plain".to_owned()],
+            json_v2: false,
+        },
+    )
+    .await
+    .expect("formula info with casks present");
+
+    let messages = reporter.take();
+    assert!(
+        messages
+            .iter()
+            .any(|line| line == "ohai:vendor/tools/plain: stable 1.0")
+    );
+    assert!(messages.iter().any(|line| line == "print:Plain formula"));
+}

@@ -312,3 +312,238 @@ async fn named_mode_refuses_not_installed_and_warns_for_missing_api() {
         vec!["opoo:ghost is installed but unavailable in the formula API; skipping."]
     );
 }
+
+fn context_with_casks(
+    env: Env,
+    formulae: Vec<Value>,
+    casks: Vec<Value>,
+) -> (Ctx, Arc<RecordingReporter>) {
+    let formula_payload = serde_json::to_vec(&formulae).expect("catalog payload");
+    let catalog =
+        Arc::new(Catalog::from_payload(&formula_payload, &env.bottle_tag).expect("catalog"));
+    let cask_payload = serde_json::to_vec(&casks).expect("cask payload");
+    let casks = Arc::new(CaskCatalog::from_payload(&cask_payload, &env.bottle_tag).expect("casks"));
+    let recording = Arc::new(RecordingReporter::default());
+    let reporter: Arc<dyn Reporter> = recording.clone();
+    (
+        Ctx {
+            env,
+            http: reqwest::Client::new(),
+            catalog,
+            casks,
+            commands: Arc::new(PanicRunner),
+            reporter,
+        },
+        recording,
+    )
+}
+
+fn cask(token: &str, version: &str, auto_updates: bool) -> Value {
+    json!({
+        "token": token,
+        "version": version,
+        "auto_updates": auto_updates,
+        "sha256": "no_check"
+    })
+}
+
+fn install_cask(env: &Env, token: &str, version: &str) {
+    std::fs::create_dir_all(env.caskroom.join(token).join(version)).expect("cask dir");
+}
+
+#[tokio::test]
+async fn cask_default_omits_uninstalled_and_shows_installed_outdated() {
+    let temp = TempDir::new().expect("temp");
+    let env = env(&temp);
+    install_cask(&env, "normal-cask", "0.9");
+    install_cask(&env, "fresh-cask", "1.0");
+
+    let casks = vec![
+        cask("normal-cask", "1.0", false),
+        cask("fresh-cask", "1.0", false),
+        cask("uninstalled-cask", "1.0", false),
+    ];
+    let (ctx, reporter) = context_with_casks(env, vec![], casks);
+
+    outdated::run(&ctx, Args::default())
+        .await
+        .expect("outdated");
+    assert_eq!(reporter.take(), vec!["print:normal-cask".to_owned()]);
+}
+
+#[tokio::test]
+async fn cask_auto_updates_boundaries() {
+    let temp = TempDir::new().expect("temp");
+    let env = env(&temp);
+    install_cask(&env, "auto-cask", "0.9");
+
+    let casks = vec![cask("auto-cask", "1.0", true)];
+    let (ctx, reporter) = context_with_casks(env, vec![], casks);
+
+    // Default and greedy_latest skip auto-updating casks.
+    for args in [
+        Args::default(),
+        Args {
+            greedy_latest: true,
+            ..Args::default()
+        },
+    ] {
+        outdated::run(&ctx, args).await.expect("outdated auto");
+        assert!(
+            reporter.take().is_empty(),
+            "auto-updating cask should be skipped"
+        );
+    }
+
+    // Greedy and greedy_auto_updates include auto-updating casks.
+    outdated::run(
+        &ctx,
+        Args {
+            greedy: true,
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("greedy");
+    assert_eq!(reporter.take(), vec!["print:auto-cask".to_owned()]);
+
+    outdated::run(
+        &ctx,
+        Args {
+            greedy_auto_updates: true,
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("greedy auto updates");
+    assert_eq!(reporter.take(), vec!["print:auto-cask".to_owned()]);
+}
+
+#[tokio::test]
+async fn cask_latest_version_boundaries() {
+    let temp = TempDir::new().expect("temp");
+    let env = env(&temp);
+    install_cask(&env, "latest-cask", "1.0.0");
+
+    let casks = vec![cask("latest-cask", "latest", false)];
+    let (ctx, reporter) = context_with_casks(env, vec![], casks);
+
+    // Default and greedy_auto_updates skip version :latest casks.
+    for args in [
+        Args::default(),
+        Args {
+            greedy_auto_updates: true,
+            ..Args::default()
+        },
+    ] {
+        outdated::run(&ctx, args).await.expect("outdated latest");
+        assert!(reporter.take().is_empty(), "latest cask should be skipped");
+    }
+
+    // Greedy and greedy_latest each include version :latest casks.
+    for greedy_latest in [true, false] {
+        outdated::run(
+            &ctx,
+            Args {
+                greedy: true,
+                greedy_latest,
+                ..Args::default()
+            },
+        )
+        .await
+        .expect("greedy latest");
+        assert_eq!(reporter.take(), vec!["print:latest-cask".to_owned()]);
+    }
+
+    // greedy_latest alone also includes version :latest casks.
+    outdated::run(
+        &ctx,
+        Args {
+            greedy_latest: true,
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("greedy_latest alone");
+    assert_eq!(reporter.take(), vec!["print:latest-cask".to_owned()]);
+}
+
+#[tokio::test]
+async fn cask_outdated_verbose_and_json_v2_exact() {
+    let temp = TempDir::new().expect("temp");
+    let env = env(&temp);
+    install_cask(&env, "normal-cask", "0.9");
+
+    let casks = vec![cask("normal-cask", "1.0", false)];
+    let (ctx, reporter) = context_with_casks(env, vec![], casks);
+
+    outdated::run(
+        &ctx,
+        Args {
+            verbose: true,
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("verbose outdated");
+    assert_eq!(
+        reporter.take(),
+        vec!["print:normal-cask (0.9) != 1.0".to_owned()]
+    );
+
+    outdated::run(
+        &ctx,
+        Args {
+            json_v2: true,
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("json outdated");
+    let lines = reporter.take();
+    assert_eq!(lines.len(), 1);
+    let text = lines[0].strip_prefix("print:").expect("json is printed");
+    let parsed: Value = serde_json::from_str(text).expect("valid json");
+    assert_eq!(parsed["formulae"], json!([]));
+    assert_eq!(parsed["casks"].as_array().expect("array").len(), 1);
+    assert_eq!(parsed["casks"][0]["name"], "normal-cask");
+    assert_eq!(parsed["casks"][0]["installed_versions"], json!(["0.9"]));
+    assert_eq!(parsed["casks"][0]["current_version"], "1.0");
+    assert_eq!(parsed["casks"][0]["pinned"], false);
+    assert_eq!(parsed["casks"][0]["pinned_version"], Value::Null);
+}
+
+#[tokio::test]
+async fn named_cask_outdated_reports_and_missing_errors() {
+    let temp = TempDir::new().expect("temp");
+    let env = env(&temp);
+    install_cask(&env, "named-cask", "0.9");
+
+    let casks = vec![cask("named-cask", "1.0", false)];
+    let (ctx, reporter) = context_with_casks(env, vec![], casks);
+
+    outdated::run(
+        &ctx,
+        Args {
+            names: vec!["named-cask".to_owned()],
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("named outdated");
+    assert_eq!(reporter.take(), vec!["print:named-cask".to_owned()]);
+
+    let missing = outdated::run(
+        &ctx,
+        Args {
+            names: vec!["missing-cask".to_owned()],
+            ..Args::default()
+        },
+    )
+    .await
+    .expect_err("missing cask");
+    assert!(matches!(
+        missing,
+        zapbrew_ops::OpError::Refusal { message } if message == "missing-cask is not installed"
+    ));
+}

@@ -115,15 +115,15 @@ pub enum Commands {
     Uninstall(UninstallArgs),
     /// Upgrade outdated formulae.
     Upgrade(UpgradeArgs),
-    /// List outdated formulae.
+    /// List outdated formulae and casks.
     Outdated(OutdatedArgs),
     /// List installed formulae or casks.
     List(ListArgs),
-    /// Show information about formulae.
+    /// Show information about formulae and casks.
     Info(InfoArgs),
     /// Show dependencies of formulae.
     Deps(DepsArgs),
-    /// Show formulae that depend on the named formulae.
+    /// Show formulae and casks that depend on the named formulae or casks.
     Uses(UsesArgs),
     /// List installed formulae not required by others.
     Leaves(LeavesArgs),
@@ -271,11 +271,20 @@ pub struct UpgradeArgs {
 
 #[derive(Debug, Args)]
 pub struct OutdatedArgs {
-    /// Formula names to check; empty checks all.
+    /// Formula or cask names to check; empty checks all installed formulae and casks.
     pub names: Vec<String>,
     /// Emit JSON output (v2 schema).
     #[arg(long, value_name = "v2", num_args = 0..=1, require_equals = true, default_missing_value = "v2")]
     pub json: Option<JsonVersion>,
+    /// Include casks with auto-updates or `latest` versions.
+    #[arg(long)]
+    pub greedy: bool,
+    /// Include casks whose version is `latest`.
+    #[arg(long)]
+    pub greedy_latest: bool,
+    /// Include casks that update themselves.
+    #[arg(long)]
+    pub greedy_auto_updates: bool,
 }
 
 #[derive(Debug, Args)]
@@ -298,7 +307,7 @@ pub struct ListArgs {
 
 #[derive(Debug, Args)]
 pub struct InfoArgs {
-    /// Formula names to describe.
+    /// Formula or cask names to describe.
     pub names: Vec<String>,
     /// Emit JSON output (v2 schema).
     #[arg(long, value_name = "v2", num_args = 0..=1, require_equals = true, default_missing_value = "v2")]
@@ -331,12 +340,12 @@ pub struct DepsArgs {
 
 #[derive(Debug, Args)]
 pub struct UsesArgs {
-    /// Formula names.
+    /// Formula or cask names.
     pub names: Vec<String>,
     /// Resolve the reverse-dependency closure recursively.
     #[arg(short = 'r', long)]
     pub recursive: bool,
-    /// Restrict results to installed formulae.
+    /// Restrict results to installed formulae and casks.
     #[arg(long)]
     pub installed: bool,
     /// Include `:build` dependencies.

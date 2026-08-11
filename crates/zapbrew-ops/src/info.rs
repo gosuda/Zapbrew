@@ -3,11 +3,11 @@ use std::str::FromStr;
 
 use serde::Serialize;
 use serde_json::Value;
-use zapbrew_api::{Dependency, DependencyTag, Formula};
+use zapbrew_api::{Cask, Dependency, DependencyTag, Formula};
 use zapbrew_types::FormulaName;
 
 use crate::install::{format_size, substitute_prefixes};
-use crate::state::{InstalledFormula, InstalledKeg, scan_selected};
+use crate::state::{InstalledCask, InstalledFormula, InstalledKeg, scan_casks, scan_selected};
 use crate::{Ctx, OpError};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -16,43 +16,74 @@ pub struct Args {
     pub json_v2: bool,
 }
 
-pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
-    let formulae = if args.names.is_empty() {
-        if !args.json_v2 {
-            return Err(OpError::Refusal {
-                message: "this command requires a formula or cask argument".to_owned(),
-            });
-        }
-        ctx.catalog.iter().collect::<Vec<_>>()
-    } else {
-        args.names
-            .iter()
-            .map(|requested| {
-                ctx.catalog
-                    .get(requested)
-                    .ok_or_else(|| OpError::MissingFormula {
-                        name: requested.clone(),
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?
-    };
+enum Target<'a> {
+    Formula(&'a Formula),
+    Cask(&'a Cask),
+}
 
+pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
     if args.json_v2 {
-        ctx.reporter.print(&json_v2(&formulae)?);
+        let (formulae, casks) = if args.names.is_empty() {
+            (
+                ctx.catalog.iter().collect::<Vec<_>>(),
+                ctx.casks.iter().collect::<Vec<_>>(),
+            )
+        } else {
+            let mut formulae = Vec::new();
+            let mut casks = Vec::new();
+            for requested in &args.names {
+                if let Some(formula) = ctx.catalog.get(requested) {
+                    formulae.push(formula);
+                } else if let Some(cask) = ctx.casks.get(requested) {
+                    casks.push(cask);
+                } else {
+                    return Err(OpError::MissingFormula {
+                        name: requested.clone(),
+                    });
+                }
+            }
+            (formulae, casks)
+        };
+        ctx.reporter.print(&json_v2(&formulae, &casks)?);
         return Ok(());
     }
 
-    let selected = formulae
-        .iter()
-        .map(|formula| formula.name.clone())
-        .collect::<BTreeSet<_>>();
-    let state = scan_selected(&ctx.env, &selected)?;
+    if args.names.is_empty() {
+        return Err(OpError::Refusal {
+            message: "this command requires a formula or cask argument".to_owned(),
+        });
+    }
 
-    for (index, formula) in formulae.into_iter().enumerate() {
+    let mut targets = Vec::new();
+    let mut selected = BTreeSet::new();
+    for requested in &args.names {
+        if let Some(formula) = ctx.catalog.get(requested) {
+            selected.insert(formula.name.clone());
+            targets.push(Target::Formula(formula));
+        } else if let Some(cask) = ctx.casks.get(requested) {
+            targets.push(Target::Cask(cask));
+        } else {
+            return Err(OpError::MissingFormula {
+                name: requested.clone(),
+            });
+        }
+    }
+
+    let state = scan_selected(&ctx.env, &selected)?;
+    let cask_state = scan_casks(&ctx.env)?;
+
+    for (index, target) in targets.iter().enumerate() {
         if index > 0 {
             ctx.reporter.print("");
         }
-        render_formula(ctx, formula, state.formula(&formula.name));
+        match target {
+            Target::Formula(formula) => {
+                render_formula(ctx, formula, state.formula(&formula.name));
+            }
+            Target::Cask(cask) => {
+                render_cask(ctx, cask, cask_state.cask(&cask.token))?;
+            }
+        }
     }
     Ok(())
 }
@@ -111,6 +142,90 @@ fn render_formula(ctx: &Ctx, formula: &Formula, installed: Option<&InstalledForm
         ctx.reporter.ohai("Caveats");
         ctx.reporter.print(&substitute_prefixes(ctx, caveats));
     }
+}
+
+fn render_cask(ctx: &Ctx, cask: &Cask, installed: Option<&InstalledCask>) -> Result<(), OpError> {
+    let mut title = format!(
+        "{}: {}",
+        cask.token,
+        cask.version.as_deref().unwrap_or("latest")
+    );
+    if cask.auto_updates {
+        title.push_str(" (auto_updates)");
+    }
+    if !cask.name.is_empty() {
+        title.push_str(&format!(" ({})", cask.name.join(", ")));
+    }
+    ctx.reporter.ohai(&title);
+
+    if let Some(description) = &cask.desc {
+        ctx.reporter.print(description);
+    }
+    if let Some(homepage) = &cask.homepage {
+        ctx.reporter.print(homepage);
+    }
+    if !cask.old_tokens.is_empty() {
+        ctx.reporter
+            .print(&format!("Old Tokens: {}", cask.old_tokens.join(", ")));
+    }
+
+    match installed.and_then(InstalledCask::installed_version) {
+        Some(version) => ctx.reporter.print(&format!("Installed ({version})")),
+        None => ctx.reporter.print("Not installed"),
+    }
+
+    render_cask_dependencies(ctx, cask);
+    render_cask_artifacts(ctx, cask)?;
+
+    if !ctx.reporter.is_quiet()
+        && let Some(caveats) = cask.caveats.as_deref().filter(|text| !text.is_empty())
+    {
+        ctx.reporter.ohai("Caveats");
+        ctx.reporter.print(caveats);
+    }
+    Ok(())
+}
+
+fn render_cask_dependencies(ctx: &Ctx, cask: &Cask) {
+    let mut lines = Vec::new();
+    if !cask.depends_on.formula.is_empty() {
+        lines.push(format!(
+            "Formula ({}): {}",
+            cask.depends_on.formula.len(),
+            cask.depends_on.formula.join(", ")
+        ));
+    }
+    if !cask.depends_on.cask.is_empty() {
+        let names: Vec<String> = cask
+            .depends_on
+            .cask
+            .iter()
+            .map(|token| format!("{token} (cask)"))
+            .collect();
+        lines.push(format!("Cask ({}): {}", names.len(), names.join(", ")));
+    }
+    if lines.is_empty() {
+        return;
+    }
+    ctx.reporter.ohai("Dependencies");
+    for line in lines {
+        ctx.reporter.print(&line);
+    }
+}
+
+fn render_cask_artifacts(ctx: &Ctx, cask: &Cask) -> Result<(), OpError> {
+    if cask.artifacts.is_empty() {
+        return Ok(());
+    }
+    ctx.reporter.ohai("Artifacts");
+    for artifact in &cask.artifacts {
+        let value =
+            serde_json::to_string(&artifact.value).map_err(|source| OpError::InvalidState {
+                reason: format!("serialize cask artifact: {source}"),
+            })?;
+        ctx.reporter.print(&format!("{} {}", artifact.kind, value));
+    }
+    Ok(())
 }
 
 /// Keg whose receipt reports install intent, with Homebrew `Tab.for_formula`
@@ -249,13 +364,13 @@ fn github_url(formula: &Formula) -> Option<String> {
 #[derive(Serialize)]
 struct JsonV2<'a> {
     formulae: Vec<&'a Value>,
-    casks: [(); 0],
+    casks: Vec<&'a Value>,
 }
 
-fn json_v2(formulae: &[&Formula]) -> Result<String, OpError> {
+fn json_v2(formulae: &[&Formula], casks: &[&Cask]) -> Result<String, OpError> {
     let payload = JsonV2 {
         formulae: formulae.iter().map(|formula| &formula.raw).collect(),
-        casks: [],
+        casks: casks.iter().map(|cask| &cask.raw).collect(),
     };
     serde_json::to_string_pretty(&payload).map_err(|source| OpError::InvalidState {
         reason: format!("serialize info JSON: {source}"),

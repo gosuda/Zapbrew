@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
-use zapbrew_api::{Catalog, DependencyTag, Formula, UsesFromMacos};
+use zapbrew_api::{Cask, CaskCatalog, Catalog, DependencyTag, Formula, UsesFromMacos};
 use zapbrew_types::{BottleTag, MacOsVersion};
 
 use crate::OpError;
@@ -224,6 +224,80 @@ where
     }
     matches.sort();
     Ok(matches)
+}
+
+/// Find formulae and casks that reach every formula-or-cask target through
+/// dependency edges expressible by the signed catalogs.
+pub fn uses_with_casks<I, S>(
+    catalog: &Catalog,
+    casks: &CaskCatalog,
+    targets: I,
+    options: &UsesOptions,
+) -> Result<Vec<String>, OpError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    validate_host(options.host)?;
+
+    let mut sought = HashSet::new();
+    for target in targets {
+        let requested = target.as_ref();
+        if let Some(formula) = catalog.get(requested) {
+            sought.insert(Package::Formula(formula.name.clone()));
+        } else if let Some(cask) = casks.get(requested) {
+            sought.insert(Package::Cask(cask.token.clone()));
+        } else {
+            return Err(OpError::MissingFormula {
+                name: requested.to_owned(),
+            });
+        }
+    }
+    if sought.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let formula_sought: HashSet<String> = sought
+        .iter()
+        .filter_map(|target| match target {
+            Package::Formula(name) => Some(name.clone()),
+            Package::Cask(_) => None,
+        })
+        .collect();
+    let cask_target_present = formula_sought.len() < sought.len();
+    let mut matches = HashSet::new();
+
+    // A formula can only reach other formulae.
+    if !cask_target_present {
+        for candidate in catalog.iter() {
+            if formula_sought.contains(&candidate.name) {
+                continue;
+            }
+            if formula_reaches_all(catalog, candidate, &formula_sought, options)? {
+                matches.insert(candidate.name.clone());
+            }
+        }
+    }
+
+    // A cask can reach formulae and other casks through its depends_on block.
+    for candidate in casks.iter() {
+        if sought.contains(&Package::Cask(candidate.token.clone())) {
+            continue;
+        }
+        if cask_reaches_all(catalog, casks, candidate, &sought, options)? {
+            matches.insert(candidate.token.clone());
+        }
+    }
+
+    let mut matches: Vec<_> = matches.into_iter().collect();
+    matches.sort();
+    Ok(matches)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum Package {
+    Formula(String),
+    Cask(String),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -454,5 +528,84 @@ fn collect_reachable(
             collect_reachable(catalog, dependency, options, false, visited, reached)?;
         }
     }
+    Ok(())
+}
+
+fn cask_reaches_all(
+    catalog: &Catalog,
+    casks: &CaskCatalog,
+    current: &Cask,
+    sought: &HashSet<Package>,
+    options: &UsesOptions,
+) -> Result<bool, OpError> {
+    let mut reached = HashSet::new();
+    if options.recursive {
+        let mut visited = HashSet::from([Package::Cask(current.token.clone())]);
+        collect_cask_reachable(
+            catalog,
+            casks,
+            current,
+            options,
+            true,
+            &mut visited,
+            &mut reached,
+        )?;
+    } else {
+        for name in &current.depends_on.formula {
+            if let Some(dependency) = catalog.get(name) {
+                reached.insert(Package::Formula(dependency.name.clone()));
+            }
+        }
+        for token in &current.depends_on.cask {
+            if let Some(dependency) = casks.get(token) {
+                reached.insert(Package::Cask(dependency.token.clone()));
+            }
+        }
+    }
+    Ok(sought.is_subset(&reached))
+}
+
+fn collect_cask_reachable(
+    catalog: &Catalog,
+    casks: &CaskCatalog,
+    current: &Cask,
+    options: &UsesOptions,
+    root_edge: bool,
+    visited: &mut HashSet<Package>,
+    reached: &mut HashSet<Package>,
+) -> Result<(), OpError> {
+    for name in &current.depends_on.formula {
+        let Some(dependency) = catalog.get(name) else {
+            continue;
+        };
+        let package = Package::Formula(dependency.name.clone());
+        reached.insert(package.clone());
+        if visited.insert(package) {
+            let mut formula_visited = HashSet::from([dependency.name.clone()]);
+            let mut formula_reached = HashSet::new();
+            collect_reachable(
+                catalog,
+                dependency,
+                options,
+                false,
+                &mut formula_visited,
+                &mut formula_reached,
+            )?;
+            for name in formula_reached {
+                reached.insert(Package::Formula(name));
+            }
+        }
+    }
+    for token in &current.depends_on.cask {
+        let Some(dependency) = casks.get(token) else {
+            continue;
+        };
+        let package = Package::Cask(dependency.token.clone());
+        reached.insert(package.clone());
+        if visited.insert(package) {
+            collect_cask_reachable(catalog, casks, dependency, options, false, visited, reached)?;
+        }
+    }
+    let _ = root_edge;
     Ok(())
 }

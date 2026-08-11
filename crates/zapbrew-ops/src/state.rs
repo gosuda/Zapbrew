@@ -160,6 +160,103 @@ impl InstalledState {
     }
 }
 
+/// Installed versions observed for one Caskroom token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct InstalledCask {
+    token: String,
+    versions: Vec<String>,
+}
+
+impl InstalledCask {
+    #[must_use]
+    pub(crate) fn token(&self) -> &str {
+        &self.token
+    }
+
+    #[must_use]
+    pub(crate) fn installed_version(&self) -> Option<&str> {
+        self.versions.last().map(String::as_str)
+    }
+}
+
+/// Immutable, token-sorted snapshot of installed Caskroom state.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct InstalledCaskState {
+    casks: BTreeMap<String, InstalledCask>,
+}
+
+impl InstalledCaskState {
+    #[must_use]
+    pub(crate) fn cask(&self, token: &str) -> Option<&InstalledCask> {
+        self.casks.get(token)
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &InstalledCask> {
+        self.casks.values()
+    }
+}
+
+/// Scan the Caskroom without following token or version symlinks.
+pub(crate) fn scan_casks(env: &Env) -> Result<InstalledCaskState, OpError> {
+    let entries = match fs::read_dir(&env.caskroom) {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(InstalledCaskState::default());
+        }
+        Err(source) => return Err(OpError::io("read", &env.caskroom, source)),
+    };
+    let mut casks = BTreeMap::new();
+    for entry in entries {
+        let entry = entry.map_err(|source| OpError::io("read", &env.caskroom, source))?;
+        let path =
+            Utf8PathBuf::from_path_buf(entry.path()).map_err(|path| OpError::InvalidState {
+                reason: format!("non-UTF-8 Caskroom path: {}", path.display()),
+            })?;
+        let Some(token) = path.file_name() else {
+            continue;
+        };
+        let metadata =
+            fs::symlink_metadata(&path).map_err(|source| OpError::io("inspect", &path, source))?;
+        if token.starts_with('.') || !metadata.is_dir() || metadata.file_type().is_symlink() {
+            continue;
+        }
+        let versions = cask_versions(&path)?;
+        if !versions.is_empty() {
+            casks.insert(
+                token.to_owned(),
+                InstalledCask {
+                    token: token.to_owned(),
+                    versions,
+                },
+            );
+        }
+    }
+    Ok(InstalledCaskState { casks })
+}
+
+fn cask_versions(token_dir: &Utf8Path) -> Result<Vec<String>, OpError> {
+    let entries =
+        fs::read_dir(token_dir).map_err(|source| OpError::io("read", token_dir, source))?;
+    let mut versions = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|source| OpError::io("read", token_dir, source))?;
+        let path =
+            Utf8PathBuf::from_path_buf(entry.path()).map_err(|path| OpError::InvalidState {
+                reason: format!("non-UTF-8 Caskroom path: {}", path.display()),
+            })?;
+        let Some(version) = path.file_name() else {
+            continue;
+        };
+        let metadata =
+            fs::symlink_metadata(&path).map_err(|source| OpError::io("inspect", &path, source))?;
+        if !version.starts_with('.') && metadata.is_dir() && !metadata.file_type().is_symlink() {
+            versions.push(version.to_owned());
+        }
+    }
+    versions.sort();
+    Ok(versions)
+}
+
 /// Scan every rack, keg, and receipt under `env` exactly once into an immutable snapshot.
 pub fn scan(env: &Env) -> Result<InstalledState, OpError> {
     if !env.cellar.exists() {
@@ -281,7 +378,7 @@ fn same_target(left: Option<&PathBuf>, right: Option<&PathBuf>) -> bool {
     matches!((left, right), (Some(left), Some(right)) if left == right)
 }
 
-fn dependency_matches(recorded: &str, requested: &str) -> bool {
+pub(crate) fn dependency_matches(recorded: &str, requested: &str) -> bool {
     recorded == requested || recorded.rsplit('/').next() == requested.rsplit('/').next()
 }
 

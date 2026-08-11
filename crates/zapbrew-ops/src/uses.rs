@@ -1,6 +1,6 @@
-use crate::dependency::{EdgeFilter, UsesOptions, uses};
+use crate::dependency::{EdgeFilter, UsesOptions, uses_with_casks};
 use crate::render::columns;
-use crate::state::scan;
+use crate::state::{scan, scan_casks};
 use crate::{Ctx, OpError};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -17,8 +17,9 @@ pub struct Args {
 }
 
 pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
-    let mut matches = uses(
+    let mut matches = uses_with_casks(
         ctx.catalog.as_ref(),
+        ctx.casks.as_ref(),
         &args.names,
         &UsesOptions {
             host: ctx.env.bottle_tag,
@@ -33,7 +34,8 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
     )?;
     if args.installed {
         let state = scan(&ctx.env)?;
-        matches.retain(|name| state.contains(name));
+        let cask_state = scan_casks(&ctx.env)?;
+        matches.retain(|name| state.contains(name) || cask_state.cask(name).is_some());
     }
 
     let rendered = columns(&matches, args.width);

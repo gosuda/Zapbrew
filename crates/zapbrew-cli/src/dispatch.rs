@@ -158,11 +158,14 @@ pub fn plan(command: Commands, globals: &GlobalArgs, width: usize) -> Result<Pla
         },
         Commands::Outdated(args) => Plan {
             needs_formula: true,
-            needs_cask: false,
+            needs_cask: true,
             kind: OpKind::Outdated(outdated::Args {
                 names: args.names,
                 verbose: globals.verbose,
                 json_v2: args.json.is_some(),
+                greedy: args.greedy,
+                greedy_latest: args.greedy_latest,
+                greedy_auto_updates: args.greedy_auto_updates,
             }),
         },
         Commands::List(args) => {
@@ -192,7 +195,7 @@ pub fn plan(command: Commands, globals: &GlobalArgs, width: usize) -> Result<Pla
         }
         Commands::Info(args) => Plan {
             needs_formula: true,
-            needs_cask: false,
+            needs_cask: true,
             kind: OpKind::Info(info::Args {
                 names: args.names,
                 json_v2: args.json.is_some(),
@@ -213,7 +216,7 @@ pub fn plan(command: Commands, globals: &GlobalArgs, width: usize) -> Result<Pla
         },
         Commands::Uses(args) => Plan {
             needs_formula: true,
-            needs_cask: false,
+            needs_cask: true,
             kind: OpKind::Uses(uses::Args {
                 names: args.names,
                 recursive: args.recursive,
@@ -712,11 +715,23 @@ mod tests {
     #[test]
     fn outdated_sources_verbose_and_json() {
         assert_eq!(
-            planned(&["zapbrew", "-v", "outdated", "--json=v2"]).kind,
+            planned(&[
+                "zapbrew",
+                "-v",
+                "outdated",
+                "--json=v2",
+                "--greedy",
+                "--greedy-latest",
+                "--greedy-auto-updates",
+            ])
+            .kind,
             OpKind::Outdated(zapbrew_ops::outdated::Args {
                 names: Vec::new(),
                 verbose: true,
                 json_v2: true,
+                greedy: true,
+                greedy_latest: true,
+                greedy_auto_updates: true,
             })
         );
         assert_eq!(
@@ -725,6 +740,9 @@ mod tests {
                 names: Vec::new(),
                 verbose: false,
                 json_v2: false,
+                greedy: false,
+                greedy_latest: false,
+                greedy_auto_updates: false,
             })
         );
     }
@@ -1002,10 +1020,7 @@ mod tests {
             &["zapbrew", "install", "wget", "--include-test"][..],
             &["zapbrew", "reinstall", "wget"][..],
             &["zapbrew", "upgrade"][..],
-            &["zapbrew", "outdated"][..],
-            &["zapbrew", "info", "wget"][..],
             &["zapbrew", "deps", "wget"][..],
-            &["zapbrew", "uses", "wget"][..],
             &["zapbrew", "link", "wget"][..],
             &["zapbrew", "fetch", "wget"][..],
             &["zapbrew", "cleanup"][..],
@@ -1014,6 +1029,13 @@ mod tests {
             &["zapbrew", "services", "list"][..],
         ] {
             assert_eq!(classify(args), (true, false), "args: {args:?}");
+        }
+        for args in [
+            &["zapbrew", "outdated"][..],
+            &["zapbrew", "info", "wget"][..],
+            &["zapbrew", "uses", "firefox"][..],
+        ] {
+            assert_eq!(classify(args), (true, true), "args: {args:?}");
         }
     }
 

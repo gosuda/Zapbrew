@@ -48,11 +48,11 @@ Options:
 | [`reinstall`](#zapbrew-reinstall) | Reinstall formulae |
 | [`uninstall`](#zapbrew-uninstall) | Uninstall formulae or casks |
 | [`upgrade`](#zapbrew-upgrade) | Upgrade outdated formulae |
-| [`outdated`](#zapbrew-outdated) | List outdated formulae |
+| [`outdated`](#zapbrew-outdated) | List outdated formulae and casks |
 | [`list`](#zapbrew-list) | List installed formulae or casks |
-| [`info`](#zapbrew-info) | Show information about formulae |
+| [`info`](#zapbrew-info) | Show information about formulae and casks |
 | [`deps`](#zapbrew-deps) | Show dependencies of formulae |
-| [`uses`](#zapbrew-uses) | Show formulae that depend on the named formulae |
+| [`uses`](#zapbrew-uses) | Show formulae and casks that depend on the named formulae or casks |
 | [`leaves`](#zapbrew-leaves) | List installed formulae not required by others |
 | [`autoremove`](#zapbrew-autoremove) | Uninstall formulae that are no longer needed |
 | [`pin`](#zapbrew-pin) | Pin formulae, preventing upgrades |
@@ -188,22 +188,25 @@ Options:
 
 ### `zapbrew outdated`
 
-List outdated formulae.
+List outdated formulae and casks.
 
 ```text
-List outdated formulae
+List outdated formulae and casks
 
 Usage: zapbrew outdated [OPTIONS] [NAMES]...
 
 Arguments:
-  [NAMES]...  Formula names to check; empty checks all
+  [NAMES]...  Formula or cask names to check; empty checks all installed formulae and casks
 
 Options:
-      --debug        Enable debug output
-      --json[=<v2>]  Emit JSON output (v2 schema) [possible values: v2]
-  -q, --quiet        Suppress non-essential output
-  -v, --verbose      Enable verbose output
-  -h, --help         Print help
+      --debug                Enable debug output
+      --json[=<v2>]          Emit JSON output (v2 schema) [possible values: v2]
+      --greedy               Include casks with auto-updates or `latest` versions
+  -q, --quiet                Suppress non-essential output
+      --greedy-latest        Include casks whose version is `latest`
+  -v, --verbose              Enable verbose output
+      --greedy-auto-updates  Include casks that update themselves
+  -h, --help                 Print help
 ```
 
 ### `zapbrew list`
@@ -231,15 +234,15 @@ Options:
 
 ### `zapbrew info`
 
-Show information about formulae.
+Show information about formulae and casks.
 
 ```text
-Show information about formulae
+Show information about formulae and casks
 
 Usage: zapbrew info [OPTIONS] [NAMES]...
 
 Arguments:
-  [NAMES]...  Formula names to describe
+  [NAMES]...  Formula or cask names to describe
 
 Options:
       --debug        Enable debug output
@@ -276,20 +279,20 @@ Options:
 
 ### `zapbrew uses`
 
-Show formulae that depend on the named formulae.
+Show formulae and casks that depend on the named formulae or casks.
 
 ```text
-Show formulae that depend on the named formulae
+Show formulae and casks that depend on the named formulae or casks
 
 Usage: zapbrew uses [OPTIONS] [NAMES]...
 
 Arguments:
-  [NAMES]...  Formula names
+  [NAMES]...  Formula or cask names
 
 Options:
       --debug             Enable debug output
   -r, --recursive         Resolve the reverse-dependency closure recursively
-      --installed         Restrict results to installed formulae
+      --installed         Restrict results to installed formulae and casks
   -q, --quiet             Suppress non-essential output
       --include-build     Include `:build` dependencies
   -v, --verbose           Enable verbose output

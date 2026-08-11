@@ -211,3 +211,197 @@ async fn empty_result_emits_nothing_and_missing_target_is_typed() {
         other => panic!("expected missing formula, got {other:?}"),
     }
 }
+
+fn context_with_casks(formulae: &[u8], casks: &[u8]) -> (TempDir, Ctx, Arc<RecordingReporter>) {
+    let temp = TempDir::new().expect("temp");
+    let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).expect("utf8 temp");
+    let env = Env::detect_from(
+        &EnvDetectInput {
+            os: "linux".to_owned(),
+            arch: "x86_64".to_owned(),
+            home: root.join("home"),
+            xdg_cache_home: None,
+            vars: HashMap::from([
+                (
+                    "HOMEBREW_PREFIX".to_owned(),
+                    root.join("prefix").to_string(),
+                ),
+                ("HOMEBREW_CACHE".to_owned(), root.join("cache").to_string()),
+                ("HOMEBREW_TEMP".to_owned(), root.join("temp").to_string()),
+            ]),
+            available_parallelism: 2,
+        },
+        &PanicRunner,
+    )
+    .expect("scratch env");
+    let catalog = Arc::new(Catalog::from_payload(formulae, &env.bottle_tag).expect("catalog"));
+    let casks = Arc::new(CaskCatalog::from_payload(casks, &env.bottle_tag).expect("casks"));
+    let recording = Arc::new(RecordingReporter::default());
+    let reporter: Arc<dyn Reporter> = recording.clone();
+    let ctx = Ctx {
+        env,
+        http: reqwest::Client::new(),
+        catalog,
+        casks,
+        commands: Arc::new(PanicRunner),
+        reporter,
+    };
+    (temp, ctx, recording)
+}
+
+fn install_cask(env: &Env, token: &str, version: &str) {
+    std::fs::create_dir_all(env.caskroom.join(token).join(version)).expect("cask dir");
+}
+
+const CASK_FORMULAE: &[u8] = br#"[
+  {"name":"dep","full_name":"dep","versions":{"stable":"1"}},
+  {"name":"consumer","full_name":"consumer","versions":{"stable":"1"},"dependencies":["dep"]},
+  {"name":"base","full_name":"base","versions":{"stable":"1"}}
+]"#;
+
+const CASKS: &[u8] = br#"[
+  {"token":"a-cask","version":"1.0","depends_on":{"formula":["dep"]}},
+  {"token":"b-cask","version":"1.0","depends_on":{"cask":["legacy-cask"]}},
+  {"token":"old-cask","old_tokens":["legacy-cask"],"version":"1.0","depends_on":{"cask":["a-cask"]}},
+  {"token":"intersect","version":"1.0","depends_on":{"formula":["dep"],"cask":["a-cask"]}},
+  {"token":"base-consumer","version":"1.0","depends_on":{"formula":["base"]}}
+]"#;
+const BROKEN_FORMULAE: &[u8] = br#"[
+  {"name":"dep","full_name":"dep","versions":{"stable":"1"}}
+]"#;
+
+const BROKEN_CASKS: &[u8] = br#"[
+  {"token":"a-cask","version":"1.0","depends_on":{"formula":["dep"]}},
+  {"token":"b-cask","version":"1.0","depends_on":{"formula":["missing-formula"],"cask":["missing-cask"]}},
+  {"token":"c-cask","version":"1.0","depends_on":{"formula":["dep"],"cask":["a-cask"]}}
+]"#;
+
+#[tokio::test]
+async fn cask_depending_on_formula_appears_in_uses() {
+    let (_temp, ctx, reporter) = context_with_casks(CASK_FORMULAE, CASKS);
+    uses::run(&ctx, args(&["dep"])).await.expect("uses dep");
+    assert_eq!(reporter.take(), ["a-cask\nconsumer\nintersect\n"]);
+}
+
+#[tokio::test]
+async fn cask_depending_on_cask_appears_recursively() {
+    let (_temp, ctx, reporter) = context_with_casks(CASK_FORMULAE, CASKS);
+    uses::run(
+        &ctx,
+        Args {
+            recursive: true,
+            ..args(&["dep"])
+        },
+    )
+    .await
+    .expect("uses dep recursive");
+    assert_eq!(
+        reporter.take(),
+        ["a-cask\nb-cask\nconsumer\nintersect\nold-cask\n"]
+    );
+}
+
+#[tokio::test]
+async fn cask_target_only_reaches_cask_dependents() {
+    let (_temp, ctx, reporter) = context_with_casks(CASK_FORMULAE, CASKS);
+    uses::run(
+        &ctx,
+        Args {
+            recursive: true,
+            ..args(&["a-cask"])
+        },
+    )
+    .await
+    .expect("uses a-cask");
+    assert_eq!(reporter.take(), ["b-cask\nintersect\nold-cask\n"]);
+}
+
+#[tokio::test]
+async fn uses_resolves_cask_aliases_as_target_and_dependency() {
+    let (_temp, ctx, reporter) = context_with_casks(CASK_FORMULAE, CASKS);
+    // Target "legacy-cask" resolves to "old-cask"; "b-cask" depends on the old token
+    // "legacy-cask", so the cask catalog resolves the edge and reports "b-cask".
+    uses::run(
+        &ctx,
+        Args {
+            recursive: true,
+            ..args(&["legacy-cask"])
+        },
+    )
+    .await
+    .expect("uses legacy-cask");
+    assert_eq!(reporter.take(), ["b-cask\n"]);
+}
+
+#[tokio::test]
+async fn installed_filter_keeps_cask_and_formula() {
+    let (_temp, ctx, reporter) = context_with_casks(CASK_FORMULAE, CASKS);
+    install(&ctx.env, "consumer");
+    install_cask(&ctx.env, "a-cask", "1.0");
+
+    uses::run(
+        &ctx,
+        Args {
+            installed: true,
+            ..args(&["dep"])
+        },
+    )
+    .await
+    .expect("uses dep installed");
+    assert_eq!(reporter.take(), ["a-cask\nconsumer\n"]);
+}
+
+#[tokio::test]
+async fn mixed_target_intersection_requires_both_formula_and_cask() {
+    let (_temp, ctx, reporter) = context_with_casks(CASK_FORMULAE, CASKS);
+    // "intersect" directly depends on both the formula "dep" and the cask "a-cask".
+    uses::run(&ctx, args(&["dep", "a-cask"]))
+        .await
+        .expect("intersection");
+    assert_eq!(reporter.take(), ["intersect\n"]);
+}
+
+#[tokio::test]
+async fn formula_only_uses_regression_with_casks_present() {
+    let (_temp, ctx, reporter) = context_with_casks(CASK_FORMULAE, CASKS);
+    // base has no cask dependents in the fixture.
+    uses::run(&ctx, args(&["base"])).await.expect("uses base");
+    assert_eq!(reporter.take(), ["base-consumer\n"]);
+}
+
+#[tokio::test]
+async fn missing_cask_target_is_typed() {
+    let (_temp, ctx, _reporter) = context_with_casks(CASK_FORMULAE, CASKS);
+    let error = uses::run(&ctx, args(&["no-such-cask"]))
+        .await
+        .expect_err("missing cask");
+    match error {
+        OpError::MissingFormula { name } => assert_eq!(name, "no-such-cask"),
+        other => panic!("expected missing formula error, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn missing_dependency_edges_are_ignored_in_recursive_cask_uses() {
+    let (_temp, ctx, reporter) = context_with_casks(BROKEN_FORMULAE, BROKEN_CASKS);
+    // Unrelated missing formula and cask edges must not abort the query.
+    uses::run(
+        &ctx,
+        Args {
+            recursive: true,
+            ..args(&["a-cask"])
+        },
+    )
+    .await
+    .expect("uses a-cask despite missing unrelated edge");
+    assert_eq!(reporter.take(), ["c-cask\n"]);
+
+    // Genuine target resolution errors remain unchanged.
+    let error = uses::run(&ctx, args(&["no-such-cask"]))
+        .await
+        .expect_err("missing cask still errors");
+    match error {
+        OpError::MissingFormula { name } => assert_eq!(name, "no-such-cask"),
+        other => panic!("expected missing formula error, got {other:?}"),
+    }
+}
