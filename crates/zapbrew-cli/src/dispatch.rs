@@ -75,8 +75,8 @@ pub struct Plan {
 /// Convert one parsed command into its operation and catalog classification.
 ///
 /// `width` is the resolved output width (zero forces one item per line). The
-/// fallible steps are a non-UTF-8 `--appdir` and a formula-only install flag
-/// combined with `--cask`, both returned as typed refusals.
+/// fallible steps are `--appdir` without `--cask`, a non-UTF-8 `--appdir`, and a
+/// formula-only install flag combined with `--cask`, all returned as typed refusals.
 pub fn plan(command: Commands, globals: &GlobalArgs, width: usize) -> Result<Plan, OpError> {
     let plan = match command {
         Commands::Install(args) => {
@@ -98,6 +98,13 @@ pub fn plan(command: Commands, globals: &GlobalArgs, width: usize) -> Result<Pla
                     }),
                 }
             } else {
+                if args.appdir.is_some() {
+                    return Err(OpError::Refusal {
+                        message: "zapbrew cannot honor --appdir without --cask: \
+                                  the formula install path does not support it. Use brew."
+                            .to_owned(),
+                    });
+                }
                 Plan {
                     needs_formula: true,
                     needs_cask: false,
@@ -1088,6 +1095,32 @@ mod tests {
         match plan.kind {
             OpKind::Install(args) => assert!(args.dry_run, "dry_run must reach install args"),
             other => panic!("expected a formula install, got {other:?}"),
+        }
+    }
+    #[test]
+    fn install_appdir_is_refused_for_formula_and_mapped_for_cask() {
+        let cli = Cli::parse_from(["zapbrew", "install", "wget", "--appdir", "/Apps"]);
+        let error = plan(cli.command.expect("command"), &cli.globals, WIDTH)
+            .expect_err("formula --appdir must refuse");
+        match error {
+            zapbrew_ops::OpError::Refusal { message } => assert!(
+                message.contains("--appdir") && message.contains("--cask"),
+                "refusal must name --appdir and --cask: {message}"
+            ),
+            other => panic!("expected a refusal for --appdir, got {other:?}"),
+        }
+
+        let cask_cli = Cli::parse_from([
+            "zapbrew", "install", "--cask", "firefox", "--appdir", "/Apps",
+        ]);
+        let cask_plan = plan(cask_cli.command.expect("command"), &cask_cli.globals, WIDTH)
+            .expect("cask --appdir must still plan");
+        match cask_plan.kind {
+            OpKind::CaskInstall(args) => {
+                assert_eq!(args.tokens, vec!["firefox".to_owned()]);
+                assert_eq!(args.appdir, Some("/Apps".into()));
+            }
+            other => panic!("expected a cask install, got {other:?}"),
         }
     }
 }
