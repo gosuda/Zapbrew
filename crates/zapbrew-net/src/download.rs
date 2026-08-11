@@ -269,7 +269,7 @@ async fn attempt_artifact_download(
     url: &str,
     paths: &CachePaths,
 ) -> Result<(), NetError> {
-    let existing = incomplete_len(&paths.incomplete)?;
+    let existing = incomplete_len(&env.cache, &paths.incomplete)?;
 
     let mut request = http.get(url).header(ACCEPT, "application/octet-stream");
 
@@ -311,6 +311,13 @@ async fn attempt_artifact_download(
         tokio::fs::create_dir_all(parent.as_std_path())
             .await
             .map_err(|source| NetError::io("create", parent, source))?;
+    }
+    let current = incomplete_len(&env.cache, &paths.incomplete)?;
+    if append && current != existing {
+        return Err(unsafe_cache_path(
+            &paths.incomplete,
+            "incomplete download changed during resume",
+        ));
     }
 
     let mut file = if append {
@@ -370,7 +377,7 @@ async fn attempt_download(
     paths: &CachePaths,
 ) -> Result<(), NetError> {
     let url = bottle.url.as_str();
-    let existing = incomplete_len(&paths.incomplete)?;
+    let existing = incomplete_len(&env.cache, &paths.incomplete)?;
 
     let mut request = http.get(url).header(ACCEPT, "application/octet-stream");
 
@@ -418,6 +425,13 @@ async fn attempt_download(
         tokio::fs::create_dir_all(parent.as_std_path())
             .await
             .map_err(|source| NetError::io("create", parent, source))?;
+    }
+    let current = incomplete_len(&env.cache, &paths.incomplete)?;
+    if append && current != existing {
+        return Err(unsafe_cache_path(
+            &paths.incomplete,
+            "incomplete download changed during resume",
+        ));
     }
 
     let mut file = if append {
@@ -617,12 +631,51 @@ impl RetryDelay {
     }
 }
 
-fn incomplete_len(path: &camino::Utf8Path) -> Result<u64, NetError> {
-    match std::fs::metadata(path.as_std_path()) {
-        Ok(meta) => Ok(meta.len()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(0),
-        Err(err) => Err(NetError::io("stat", path, err)),
+fn incomplete_len(cache: &camino::Utf8Path, path: &camino::Utf8Path) -> Result<u64, NetError> {
+    if path == cache || !path.starts_with(cache) {
+        return Err(unsafe_cache_path(path, "path is outside the cache"));
     }
+
+    let mut current = path;
+    let mut len = 0;
+    loop {
+        match std::fs::symlink_metadata(current.as_std_path()) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(unsafe_cache_path(current, "path is a symlink"));
+            }
+            Ok(meta) if current == path && !meta.is_file() => {
+                return Err(unsafe_cache_path(
+                    path,
+                    "incomplete path is not a regular file",
+                ));
+            }
+            Ok(meta) if current != path && !meta.is_dir() => {
+                return Err(unsafe_cache_path(
+                    current,
+                    "cache ancestor is not a directory",
+                ));
+            }
+            Ok(meta) if current == path => len = meta.len(),
+            Ok(_) => {}
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => return Err(NetError::io("inspect", current, source)),
+        }
+        if current == cache {
+            break;
+        }
+        current = current
+            .parent()
+            .ok_or_else(|| unsafe_cache_path(path, "path has no cache-root ancestor"))?;
+    }
+    Ok(len)
+}
+
+fn unsafe_cache_path(path: &camino::Utf8Path, reason: &'static str) -> NetError {
+    NetError::io(
+        "validate",
+        path,
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, reason),
+    )
 }
 
 /// Parse the start offset from a `Content-Range` value like `bytes 5-22/23`.

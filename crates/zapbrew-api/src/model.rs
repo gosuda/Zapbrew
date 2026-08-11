@@ -185,6 +185,7 @@ pub struct Cask {
     pub auto_updates: bool,
     pub deprecated: bool,
     pub disabled: bool,
+    pub disable_reason: Option<String>,
     /// The merged JSON object this cask was parsed from.
     pub raw: Value,
 }
@@ -202,9 +203,10 @@ pub struct CaskArtifact {
 
 /// Artifact directive keys recognized as the artifact's kind. Any other key in
 /// the object (e.g. `target`) is a modifier retained inside [`CaskArtifact::value`].
-const CASK_ARTIFACT_KINDS: &[&str] = &[
+pub const CASK_ARTIFACT_KINDS: &[&str] = &[
     "app",
     "suite",
+    "appimage",
     "binary",
     "manpage",
     "pkg",
@@ -231,6 +233,10 @@ const CASK_ARTIFACT_KINDS: &[&str] = &[
     "vst3_plugin",
     "artifact",
     "stage_only",
+    "preflight_steps",
+    "postflight_steps",
+    "uninstall_preflight_steps",
+    "uninstall_postflight_steps",
     "zsh_completion",
     "bash_completion",
     "fish_completion",
@@ -481,7 +487,7 @@ fn cask_from_value(item: Value, tag: &BottleTag) -> Result<Cask, ApiError> {
             source,
         })?;
 
-    let artifacts = rc.artifacts.into_iter().filter_map(cask_artifact).collect();
+    let artifacts = rc.artifacts.into_iter().map(cask_artifact).collect();
     let depends_on = cask_depends_on(rc.depends_on);
 
     Ok(Cask {
@@ -499,21 +505,26 @@ fn cask_from_value(item: Value, tag: &BottleTag) -> Result<Cask, ApiError> {
         auto_updates: rc.auto_updates.unwrap_or(false),
         deprecated: rc.deprecated,
         disabled: rc.disabled,
+        disable_reason: rc.disable_reason,
         raw,
     })
 }
 
-/// Turn one artifact object into a [`CaskArtifact`], classifying its kind by
-/// the first recognized directive key (falling back to the first key so
-/// unknown kinds are preserved for fail-closed handling downstream).
-fn cask_artifact(value: Value) -> Option<CaskArtifact> {
-    let obj = value.as_object()?;
-    let kind = obj
-        .keys()
-        .find(|k| CASK_ARTIFACT_KINDS.contains(&k.as_str()))
-        .or_else(|| obj.keys().next())?
-        .clone();
-    Some(CaskArtifact { kind, value })
+/// Turn one raw artifact into a [`CaskArtifact`], classifying its kind by the
+/// first recognized directive key. Unknown object keys are preserved for
+/// fail-closed handling downstream; non-object and empty artifacts receive a
+/// stable malformed marker so they cannot disappear during parsing.
+fn cask_artifact(value: Value) -> CaskArtifact {
+    let kind = value
+        .as_object()
+        .and_then(|obj| {
+            obj.keys()
+                .find(|key| CASK_ARTIFACT_KINDS.contains(&key.as_str()))
+                .or_else(|| obj.keys().next())
+        })
+        .cloned()
+        .unwrap_or_else(|| "<malformed>".to_owned());
+    CaskArtifact { kind, value }
 }
 
 fn cask_depends_on(value: Value) -> CaskDependsOn {
@@ -691,6 +702,8 @@ struct RawCask {
     deprecated: bool,
     #[serde(default)]
     disabled: bool,
+    #[serde(default)]
+    disable_reason: Option<String>,
 }
 
 #[cfg(test)]
@@ -954,7 +967,8 @@ mod tests {
             "depends_on": {"cask": ["something"], "formula": ["openssl@3"], "macos": {">=": ["10.15"]}},
             "auto_updates": true,
             "deprecated": false,
-            "disabled": false
+            "disabled": true,
+            "disable_reason": "is discontinued upstream"
           }
         ]"#;
         let casks = parse_casks(payload.as_bytes(), &linux_x86()).unwrap();
@@ -965,6 +979,11 @@ mod tests {
         assert_eq!(c.name, ["Everything"]);
         assert_eq!(c.version.as_deref(), Some("1.2.3"));
         assert!(c.auto_updates);
+        assert!(c.disabled);
+        assert_eq!(
+            c.disable_reason.as_deref(),
+            Some("is discontinued upstream")
+        );
 
         let kinds: Vec<&str> = c.artifacts.iter().map(|a| a.kind.as_str()).collect();
         assert_eq!(kinds, ["uninstall", "installer", "app", "zap"]);

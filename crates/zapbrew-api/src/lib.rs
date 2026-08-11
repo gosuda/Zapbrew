@@ -9,7 +9,7 @@ mod transport;
 pub use catalog::{CaskCatalog, Catalog, RefreshReport, Resolution, force_refresh};
 pub use error::ApiError;
 pub use model::{
-    Bottle, Cask, CaskArtifact, CaskDependsOn, Conflict, Dependency, DependencyTag, Formula,
-    KegOnlyReason, UsesFromMacos,
+    Bottle, CASK_ARTIFACT_KINDS, Cask, CaskArtifact, CaskDependsOn, Conflict, Dependency,
+    DependencyTag, Formula, KegOnlyReason, UsesFromMacos,
 };
 pub use transport::ApiWarning;

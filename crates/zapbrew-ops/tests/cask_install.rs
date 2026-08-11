@@ -190,22 +190,13 @@ fn seed_record(fixture: &Fixture, token: &str, version: &str, appdir: &str, arti
     std::fs::write(version_dir.join(".zapbrew-record.json"), bytes).expect("seed record");
 }
 #[tokio::test]
-async fn linux_refuses_cask_mutations() {
+async fn linux_uninstall_still_refuses() {
     let fixture = Fixture::new();
     let (ctx, _reporter) =
         fixture.context_casks(vec![], Arc::new(PanicRunner), reqwest::Client::new());
-    let install = install::run(
+    let uninstall = uninstall::run(
         &ctx,
-        install_args(&["foo"], Utf8Path::new("/tmp/apps"), false),
-    )
-    .await;
-    assert!(
-        matches!(err(install), OpError::Refusal { message } if message == "Casks are not supported on Linux.")
-    );
-
-    let uninstall = zapbrew_ops::cask::uninstall::run(
-        &ctx,
-        zapbrew_ops::cask::uninstall::Args {
+        uninstall::Args {
             tokens: vec!["foo".to_owned()],
             zap: false,
         },
@@ -214,6 +205,561 @@ async fn linux_refuses_cask_mutations() {
     assert!(
         matches!(err(uninstall), OpError::Refusal { message } if message == "Casks are not supported on Linux.")
     );
+}
+
+#[tokio::test]
+async fn linux_missing_cask_refuses() {
+    let fixture = Fixture::new();
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![], Arc::new(PanicRunner), reqwest::Client::new());
+    let result = install::run(
+        &ctx,
+        install_args(&["ghost"], &fixture.env.home.join("Applications"), false),
+    )
+    .await;
+    assert!(
+        matches!(err(result), OpError::Refusal { message } if message == "Cask 'ghost' is unavailable.")
+    );
+}
+
+#[tokio::test]
+async fn linux_install_refuses_macos_only_before_io() {
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    for (kind, artifact) in [
+        ("app", json!({"app": ["Foo.app"]})),
+        ("suite", json!({"suite": ["Bar"]})),
+        ("pkg", json!({"pkg": ["Foo.pkg"]})),
+        ("service", json!({"service": ["Foo.service"]})),
+        ("colorpicker", json!({"colorpicker": ["Foo.colorpicker"]})),
+        ("prefpane", json!({"prefpane": ["Foo.prefPane"]})),
+        ("dictionary", json!({"dictionary": ["Foo.dictionary"]})),
+        ("input_method", json!({"input_method": ["Foo.app"]})),
+        (
+            "internet_plugin",
+            json!({"internet_plugin": ["Foo.plugin"]}),
+        ),
+        (
+            "keyboard_layout",
+            json!({"keyboard_layout": ["Foo.bundle"]}),
+        ),
+        ("qlplugin", json!({"qlplugin": ["Foo.qlgenerator"]})),
+        ("mdimporter", json!({"mdimporter": ["Foo.mdimporter"]})),
+        ("screen_saver", json!({"screen_saver": ["Foo.saver"]})),
+        (
+            "audio_unit_plugin",
+            json!({"audio_unit_plugin": ["Foo.component"]}),
+        ),
+        ("vst_plugin", json!({"vst_plugin": ["Foo.vst"]})),
+        ("vst3_plugin", json!({"vst3_plugin": ["Foo.vst3"]})),
+    ] {
+        let value = cask(
+            "maconly",
+            "https://example.test/App.tar.gz",
+            "no_check",
+            vec![artifact],
+        );
+        let (ctx, _reporter) =
+            fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+        let result = install::run(&ctx, install_args(&["maconly"], &appdir, false)).await;
+        let error = err(result);
+        assert!(
+            matches!(&error, OpError::Refusal { message } if message == "maconly: This cask requires macOS."),
+            "{kind}: expected requires-macOS, got {error:?}"
+        );
+        assert!(
+            !fixture.env.caskroom.join(".staging").exists(),
+            "{kind}: staging created"
+        );
+    }
+}
+
+#[tokio::test]
+async fn linux_install_refuses_macos_dependency_before_io() {
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    let mut value = cask(
+        "macdep",
+        "https://example.test/App.tar.gz",
+        "no_check",
+        vec![json!({"binary": ["tool"]})],
+    );
+    value["depends_on"] = json!({"macos": {">=": ["10.15"]}});
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+    let result = install::run(&ctx, install_args(&["macdep"], &appdir, false)).await;
+    let error = err(result);
+    assert!(
+        matches!(&error, OpError::Refusal { message } if message == "macdep: This cask requires macOS."),
+        "expected requires-macOS for depends_on.macos, got {error:?}"
+    );
+    assert!(!fixture.env.caskroom.join(".staging").exists());
+}
+
+#[tokio::test]
+async fn linux_install_refuses_execution_artifacts_before_io() {
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    for (label, artifact, expected_kind) in [
+        (
+            "installer script",
+            json!({"installer": [{"script": {"executable": "install.sh"}}]}),
+            "installer",
+        ),
+        (
+            "installer manual",
+            json!({"installer": [{"manual": "Caffeine.app"}]}),
+            "",
+        ),
+        ("preflight", json!({"preflight": null}), "preflight"),
+        ("postflight", json!({"postflight": null}), "postflight"),
+        (
+            "uninstall_preflight",
+            json!({"uninstall_preflight": null}),
+            "uninstall_preflight",
+        ),
+        (
+            "uninstall_postflight",
+            json!({"uninstall_postflight": null}),
+            "uninstall_postflight",
+        ),
+        (
+            "preflight_steps",
+            json!({"preflight_steps": [{"steps": []}]}),
+            "preflight_steps",
+        ),
+        (
+            "postflight_steps",
+            json!({"postflight_steps": [{"steps": []}]}),
+            "postflight_steps",
+        ),
+        (
+            "uninstall_preflight_steps",
+            json!({"uninstall_preflight_steps": [{"steps": []}]}),
+            "uninstall_preflight_steps",
+        ),
+        (
+            "uninstall_postflight_steps",
+            json!({"uninstall_postflight_steps": [{"steps": []}]}),
+            "uninstall_postflight_steps",
+        ),
+    ] {
+        let token = "danger";
+        let value = cask(
+            token,
+            "https://example.test/App.tar.gz",
+            "no_check",
+            vec![artifact],
+        );
+        let (ctx, _reporter) =
+            fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+        let result = install::run(&ctx, install_args(&[token], &appdir, false)).await;
+        let error = err(result);
+        if expected_kind.is_empty() {
+            assert!(
+                matches!(&error, OpError::Refusal { message } if message == "danger: This cask requires macOS."),
+                "{label}: expected requires-macOS, got {error:?}"
+            );
+        } else {
+            let want = format!("Cask 'danger' uses unsupported artifact '{expected_kind}'.");
+            assert!(
+                matches!(&error, OpError::Refusal { message } if message == &want),
+                "{label}: expected {want}, got {error:?}"
+            );
+        }
+        assert!(
+            !fixture.env.caskroom.join(".staging").exists(),
+            "{label}: staging created"
+        );
+    }
+}
+
+#[tokio::test]
+async fn linux_install_refuses_mixed_cask_before_io() {
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    let value = cask(
+        "mixed",
+        "https://example.test/App.tar.gz",
+        "no_check",
+        vec![json!({"binary": ["tool"]}), json!({"app": ["Foo.app"]})],
+    );
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+    let result = install::run(&ctx, install_args(&["mixed"], &appdir, false)).await;
+    let error = err(result);
+    assert!(
+        matches!(&error, OpError::Refusal { message } if message == "mixed: This cask requires macOS."),
+        "expected requires-macOS for mixed cask, got {error:?}"
+    );
+    assert!(!fixture.env.caskroom.join(".staging").exists());
+}
+
+#[tokio::test]
+async fn linux_install_refuses_malformed_multiple_directives() {
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    let value = cask(
+        "malformed",
+        "https://example.test/App.tar.gz",
+        "no_check",
+        vec![json!({"binary": ["tool"], "app": ["Foo.app"]})],
+    );
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+    let result = install::run(&ctx, install_args(&["malformed"], &appdir, false)).await;
+    let error = err(result);
+    assert!(
+        matches!(&error, OpError::Refusal { message } if message == "Cask 'malformed' artifact declares multiple directives; exactly one is required."),
+        "expected malformed message, got {error:?}"
+    );
+    assert!(!fixture.env.caskroom.join(".staging").exists());
+}
+
+#[tokio::test]
+async fn linux_install_refuses_unknown_artifact() {
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    let value = cask(
+        "unknown",
+        "https://example.test/App.tar.gz",
+        "no_check",
+        vec![json!({"future_kind": ["x"]})],
+    );
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+    let result = install::run(&ctx, install_args(&["unknown"], &appdir, false)).await;
+    let error = err(result);
+    assert!(
+        matches!(&error, OpError::Refusal { message } if message == "Cask 'unknown' uses unsupported artifact 'future_kind'."),
+        "expected unknown message, got {error:?}"
+    );
+    assert!(!fixture.env.caskroom.join(".staging").exists());
+}
+
+#[tokio::test]
+async fn linux_install_refuses_dmg_before_download() {
+    let server = MockServer::start().await;
+    let body = tar_gz(&[("bin/tool", b"tool")]);
+    let sha = sha_hex(&body);
+    let url = serve(&server, "/App.dmg", body).await;
+    let value = cask("disky", &url, &sha, vec![json!({"binary": ["tool"]})]);
+
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+    let result = install::run(&ctx, install_args(&["disky"], &appdir, false)).await;
+    let error = err(result);
+    assert!(
+        matches!(&error, OpError::Refusal { message } if message == "Cask 'disky' ships a macOS disk image, which is unavailable on Linux."),
+        "expected .dmg message, got {error:?}"
+    );
+    assert!(!fixture.env.caskroom.join(".staging").exists());
+    assert!(
+        server
+            .received_requests()
+            .await
+            .is_none_or(|requests| requests.is_empty()),
+        "no download may be attempted"
+    );
+}
+
+#[tokio::test]
+async fn linux_install_refuses_malformed_stage_only() {
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    for artifact in [
+        json!({"stage_only": [false]}),
+        json!({"stage_only": ["false"]}),
+    ] {
+        let value = cask(
+            "badstage",
+            "https://example.test/App.tar.gz",
+            "no_check",
+            vec![artifact],
+        );
+        let (ctx, _reporter) =
+            fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+        let result = install::run(&ctx, install_args(&["badstage"], &appdir, false)).await;
+        let error = err(result);
+        assert!(
+            matches!(&error, OpError::Refusal { message } if message == "Cask 'badstage' uses unsupported artifact 'stage_only'."),
+            "expected stage_only refusal, got {error:?}"
+        );
+        assert!(!fixture.env.caskroom.join(".staging").exists());
+    }
+}
+
+#[tokio::test]
+async fn linux_installs_reversible_artifacts() {
+    let server = MockServer::start().await;
+    let body = tar_gz(&[
+        ("bin/tool", b"#!/bin/sh\n"),
+        ("man/tool.1", b".TH tool 1\n"),
+        ("bin/Foo.AppImage", b"appimage"),
+        ("Fancy.font", b"font"),
+        ("_tool", b"compdef"),
+        ("extra.txt", b"extra"),
+        ("bash-tool", b"complete"),
+        ("fish-tool", b"complete"),
+    ]);
+    let sha = sha_hex(&body);
+    let url = serve(&server, "/Bundle.tar.gz", body).await;
+
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    let value = cask(
+        "bundle",
+        &url,
+        &sha,
+        vec![
+            json!({"binary": ["bin/tool"], "target": "tool"}),
+            json!({"manpage": ["man/tool.1"]}),
+            json!({"appimage": ["bin/Foo.AppImage"], "target": "Foo"}),
+            json!({"font": ["Fancy.font"]}),
+            json!({"zsh_completion": ["_tool"]}),
+            json!({"bash_completion": ["bash-tool"]}),
+            json!({"fish_completion": ["fish-tool"]}),
+            json!({"artifact": ["extra.txt"], "target": format!("{}/extra.txt", appdir)}),
+        ],
+    );
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+    install::run(&ctx, install_args(&["bundle"], &appdir, false))
+        .await
+        .expect("linux reversible install");
+
+    let prefix = &fixture.env.prefix;
+    let home = &fixture.env.home;
+    assert!(
+        std::fs::symlink_metadata(prefix.join("bin/tool").as_std_path())
+            .expect("bin")
+            .file_type()
+            .is_symlink()
+    );
+    assert!(
+        std::fs::symlink_metadata(prefix.join("share/man/man1/tool.1").as_std_path())
+            .expect("man")
+            .file_type()
+            .is_symlink()
+    );
+    assert!(
+        std::fs::symlink_metadata(home.join("Applications/Foo").as_std_path())
+            .expect("appimage")
+            .file_type()
+            .is_symlink()
+    );
+    assert!(home.join("Library/Fonts/Fancy.font").is_file());
+    assert!(prefix.join("share/zsh/site-functions/_tool").is_file());
+    assert!(prefix.join("etc/bash_completion.d/bash-tool").is_file());
+    assert!(
+        prefix
+            .join("share/fish/vendor_completions.d/fish-tool")
+            .is_file()
+    );
+    assert!(appdir.join("extra.txt").is_file());
+    assert!(fixture.env.caskroom.join("bundle/1.0").is_dir());
+    let staging = fixture.env.caskroom.join(".staging");
+    assert_eq!(
+        std::fs::read_dir(&staging).map(|e| e.count()).unwrap_or(0),
+        0,
+        "staging empty after success"
+    );
+}
+
+#[tokio::test]
+async fn linux_stage_only_stages_without_deploy() {
+    let server = MockServer::start().await;
+    let body = tar_gz(&[("bin/tool", b"tool")]);
+    let sha = sha_hex(&body);
+    let url = serve(&server, "/Stage.tar.gz", body).await;
+    let value = cask("stagey", &url, &sha, vec![json!({"stage_only": [true]})]);
+
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+    install::run(&ctx, install_args(&["stagey"], &appdir, false))
+        .await
+        .expect("stage_only install");
+
+    assert!(!fixture.env.prefix.join("bin/tool").exists());
+    assert!(fixture.env.caskroom.join("stagey/1.0").is_dir());
+    assert!(
+        fixture
+            .env
+            .caskroom
+            .join("stagey/1.0/.zapbrew-record.json")
+            .is_file()
+    );
+    let staging = fixture.env.caskroom.join(".staging");
+    assert_eq!(
+        std::fs::read_dir(&staging).map(|e| e.count()).unwrap_or(0),
+        0,
+        "staging empty after stage_only"
+    );
+}
+
+#[tokio::test]
+async fn linux_rollback_restores_on_action_failure() {
+    let server = MockServer::start().await;
+    let body = tar_gz(&[("bin/tool", b"tool"), ("man/tool.1", b".TH tool 1\n")]);
+    let sha = sha_hex(&body);
+    let url = serve(&server, "/Roll.tar.gz", body).await;
+    let value = cask(
+        "roll",
+        &url,
+        &sha,
+        vec![
+            json!({"binary": ["bin/tool"]}),
+            json!({"manpage": ["man/tool.1"]}),
+        ],
+    );
+
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    let man_target = fixture.env.prefix.join("share/man/man1/tool.1");
+    std::fs::create_dir_all(man_target.parent().expect("man target parent")).expect("man parent");
+    std::fs::write(&man_target, b"blocker").expect("blocker");
+
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+    let result = install::run(&ctx, install_args(&["roll"], &appdir, false)).await;
+    assert!(result.is_err(), "expected apply to fail");
+
+    // The first symlink was rolled back.
+    assert!(!fixture.env.prefix.join("bin/tool").exists());
+    // The pre-existing man file was left untouched.
+    assert_eq!(std::fs::read(&man_target).expect("man"), b"blocker");
+    let staging = fixture.env.caskroom.join(".staging");
+    assert_eq!(
+        std::fs::read_dir(&staging).map(|e| e.count()).unwrap_or(0),
+        0,
+        "staging drained after rollback"
+    );
+}
+
+#[tokio::test]
+async fn linux_rollback_removes_newly_created_parent_tree() {
+    let server = MockServer::start().await;
+    let body = tar_gz(&[("first", b"one"), ("second", b"two")]);
+    let sha = sha_hex(&body);
+    let url = serve(&server, "/Parents.tar.gz", body).await;
+    let fixture = Fixture::new();
+    let ssh = fixture.env.home.join(".ssh");
+    fs::create_dir_all(&ssh).expect("ssh");
+    fs::write(ssh.join("sentinel"), b"keep").expect("sentinel");
+    let authorized_keys = ssh.join("authorized_keys");
+    let child = authorized_keys.join("child");
+    let value = cask(
+        "parents",
+        &url,
+        &sha,
+        vec![
+            json!({"artifact": ["first"], "target": child.as_str()}),
+            json!({"artifact": ["second"], "target": authorized_keys.as_str()}),
+        ],
+    );
+    let appdir = fixture.env.home.join("Applications");
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+
+    let result = install::run(&ctx, install_args(&["parents"], &appdir, false)).await;
+    assert!(
+        result.is_err(),
+        "second target must collide with created parent"
+    );
+    assert!(ssh.is_dir(), "pre-existing parent must survive");
+    assert_eq!(fs::read(ssh.join("sentinel")).expect("sentinel"), b"keep");
+    assert!(
+        !authorized_keys.exists(),
+        "rollback must remove the parent tree created by the first action"
+    );
+}
+
+#[tokio::test]
+async fn linux_artifact_target_outside_roots_preflights() {
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    let value = cask(
+        "escape",
+        "https://example.test/App.tar.gz",
+        "no_check",
+        vec![json!({"artifact": ["payload.txt"], "target": "/etc/evil.txt"})],
+    );
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+    let result = install::run(&ctx, install_args(&["escape"], &appdir, false)).await;
+    let error = err(result);
+    assert!(
+        matches!(&error, OpError::Refusal { message } if message.contains("outside approved roots")),
+        "expected outside-roots refusal, got {error}"
+    );
+    assert!(!fixture.env.caskroom.join(".staging").exists());
+}
+
+#[tokio::test]
+async fn linux_artifact_unknown_top_level_key_refuses() {
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    let value = cask(
+        "evil-top",
+        "https://example.test/App.tar.gz",
+        "no_check",
+        vec![json!({"binary": ["tool"], "target": "tool", "evil": "x"})],
+    );
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+    let result = install::run(&ctx, install_args(&["evil-top"], &appdir, false)).await;
+    let error = err(result);
+    assert!(
+        matches!(&error, OpError::Refusal { message } if message.contains("unknown key")),
+        "expected unknown top-level key refusal, got {error}"
+    );
+    assert!(!fixture.env.caskroom.join(".staging").exists());
+}
+
+#[tokio::test]
+async fn linux_artifact_unknown_nested_option_key_refuses() {
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    let value = cask(
+        "evil-nested",
+        "https://example.test/App.tar.gz",
+        "no_check",
+        vec![json!({"binary": ["tool", {"target": "tool", "evil": "x"}]})],
+    );
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+    let result = install::run(&ctx, install_args(&["evil-nested"], &appdir, false)).await;
+    let error = err(result);
+    assert!(
+        matches!(&error, OpError::Refusal { message } if message.contains("unknown option")),
+        "expected unknown nested option refusal, got {error}"
+    );
+    assert!(!fixture.env.caskroom.join(".staging").exists());
+}
+
+#[tokio::test]
+async fn linux_stage_only_string_true_refuses() {
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    let value = cask(
+        "strue",
+        "https://example.test/App.tar.gz",
+        "no_check",
+        vec![json!({"stage_only": ["true"]})],
+    );
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+    let result = install::run(&ctx, install_args(&["strue"], &appdir, false)).await;
+    let error = err(result);
+    assert!(
+        matches!(&error, OpError::Refusal { message } if message == "Cask 'strue' uses unsupported artifact 'stage_only'."),
+        "expected stage_only string-true refusal, got {error}"
+    );
+    assert!(!fixture.env.caskroom.join(".staging").exists());
 }
 
 #[tokio::test]
@@ -229,6 +775,29 @@ async fn missing_cask_refuses() {
     assert!(
         matches!(err(result), OpError::Refusal { message } if message == "Cask 'ghost' is unavailable.")
     );
+}
+
+#[tokio::test]
+async fn disabled_cask_refuses_before_io() {
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    let mut value = cask(
+        "retired",
+        "https://example.test/App.tar.gz",
+        "no_check",
+        vec![json!({"binary": ["tool"]})],
+    );
+    value["disabled"] = json!(true);
+    value["disable_reason"] = json!("is discontinued upstream");
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+
+    let result = install::run(&ctx, install_args(&["retired"], &appdir, false)).await;
+    assert!(
+        matches!(err(result), OpError::Refusal { message } if message == "retired has been disabled because it is discontinued upstream!")
+    );
+    assert!(!fixture.env.caskroom.join(".staging").exists());
+    assert!(!fixture.env.locks.exists());
 }
 
 #[tokio::test]
@@ -279,6 +848,40 @@ async fn unsupported_artifact_preflights_before_io() {
 }
 
 #[tokio::test]
+async fn macos_refuses_linux_only_appimage_and_manual_installer_before_io() {
+    let fixture = Fixture::new().macos();
+    let appdir = fixture.env.home.join("Applications");
+    for (token, artifact, kind) in [
+        (
+            "linux-image",
+            json!({"appimage": ["Tool.AppImage"]}),
+            "appimage",
+        ),
+        (
+            "manual-installer",
+            json!({"installer": [{"manual": "Tool.app"}]}),
+            "installer",
+        ),
+    ] {
+        let value = cask(
+            token,
+            "https://example.test/App.tar.gz",
+            "no_check",
+            vec![artifact],
+        );
+        let (ctx, _reporter) =
+            fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+        let result = install::run(&ctx, install_args(&[token], &appdir, false)).await;
+        let expected = format!("Cask '{token}' uses unsupported artifact '{kind}'.");
+        assert!(
+            matches!(err(result), OpError::Refusal { message } if message == expected),
+            "{token}: expected {expected}"
+        );
+        assert!(!fixture.env.caskroom.join(".staging").exists());
+    }
+}
+
+#[tokio::test]
 async fn explicit_target_outside_approved_roots_preflights_before_io() {
     let fixture = Fixture::new().macos();
     for artifacts in [
@@ -306,6 +909,29 @@ async fn explicit_target_outside_approved_roots_preflights_before_io() {
         // No download or staging happened.
         assert!(!fixture.env.caskroom.join(".staging").exists());
     }
+}
+
+#[tokio::test]
+async fn explicit_target_inside_caskroom_preflights_before_io() {
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    let target = fixture.env.caskroom.join("owned/1.0");
+    let value = cask(
+        "internal-target",
+        "https://example.test/App.tar.gz",
+        "no_check",
+        vec![json!({"artifact": ["payload"], "target": target.as_str()})],
+    );
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+
+    let result = install::run(&ctx, install_args(&["internal-target"], &appdir, false)).await;
+    assert!(
+        matches!(&result, Err(OpError::Refusal { message }) if message.contains("managed Caskroom")),
+        "expected Caskroom target refusal, got {result:?}"
+    );
+    assert!(!fixture.env.caskroom.join(".staging").exists());
+    assert!(!fixture.env.locks.exists());
 }
 
 #[tokio::test]
@@ -364,6 +990,44 @@ async fn tar_with_symlink_entry_preserves_link_without_following() {
         Err(e) => panic!("read_link evil-link: {e}"),
     };
     assert_eq!(target, std::path::Path::new("/etc/passwd"));
+}
+
+#[tokio::test]
+async fn staged_record_symlink_refuses_without_overwriting_external_file() {
+    let server = MockServer::start().await;
+    let fixture = Fixture::new();
+    let sentinel = fixture.env.home.join("sentinel");
+    fs::create_dir_all(&fixture.env.home).expect("home");
+    fs::write(&sentinel, b"keep").expect("sentinel");
+    let body = tar_gz_with_symlink(
+        ("bin/tool", b"tool"),
+        (".zapbrew-record.json", sentinel.as_str()),
+    );
+    let sha = sha_hex(&body);
+    let url = serve(&server, "/Record.tar.gz", body).await;
+    let value = cask(
+        "record-link",
+        &url,
+        &sha,
+        vec![json!({"binary": ["bin/tool"]})],
+    );
+    let appdir = fixture.env.home.join("Applications");
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+
+    let result = install::run(&ctx, install_args(&["record-link"], &appdir, false)).await;
+    assert!(
+        matches!(&result, Err(OpError::Refusal { message }) if message.contains("symlink")),
+        "expected record symlink refusal, got {result:?}"
+    );
+    assert_eq!(fs::read(&sentinel).expect("sentinel survives"), b"keep");
+    assert!(!fixture.env.prefix.join("bin/tool").exists());
+    assert_eq!(
+        fs::read_dir(fixture.env.caskroom.join(".staging"))
+            .expect("staging root")
+            .count(),
+        0
+    );
 }
 
 #[tokio::test]
@@ -539,6 +1203,35 @@ fn find_receipt(meta: &Utf8Path) -> Utf8PathBuf {
         }
     }
     panic!("no receipt under {meta}");
+}
+
+#[tokio::test]
+async fn failed_promotion_removes_receipt_owned_directories() {
+    let server = MockServer::start().await;
+    let body = tar_gz(&[("bin/tool", b"tool")]);
+    let sha = sha_hex(&body);
+    let url = serve(&server, "/Blocked.tar.gz", body).await;
+    let fixture = Fixture::new();
+    let token_dir = fixture.env.caskroom.join("blocked");
+    fs::create_dir_all(&token_dir).expect("token dir");
+    let blocker = token_dir.join("1.0");
+    fs::write(&blocker, b"blocker").expect("version blocker");
+    let value = cask("blocked", &url, &sha, vec![json!({"binary": ["bin/tool"]})]);
+    let appdir = fixture.env.home.join("Applications");
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+
+    let result = install::run(&ctx, install_args(&["blocked"], &appdir, false)).await;
+    assert!(
+        result.is_err(),
+        "promotion must refuse the regular-file version"
+    );
+    assert_eq!(fs::read(&blocker).expect("blocker survives"), b"blocker");
+    assert!(
+        !token_dir.join(".metadata").exists(),
+        "rollback must remove the receipt tree created by this install"
+    );
+    assert!(!fixture.env.prefix.join("bin/tool").exists());
 }
 
 #[tokio::test]
@@ -1095,3 +1788,349 @@ async fn force_replace_backs_up_all_when_multiple_versions_present() {
 }
 
 fn _use_ctx(_ctx: &Ctx) {}
+
+#[tokio::test]
+async fn linux_install_refuses_malformed_and_duplicate_targets() {
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    for (name, artifact) in [
+        (
+            "non-string-target",
+            json!({"binary": ["tool"], "target": 123}),
+        ),
+        ("empty-target", json!({"binary": ["tool"], "target": ""})),
+        (
+            "duplicate-target",
+            json!({"binary": ["tool", {"target": "nested"}], "target": "top"}),
+        ),
+        (
+            "nested-non-string-target",
+            json!({"binary": ["tool", {"target": 123}]}),
+        ),
+        (
+            "nested-empty-target",
+            json!({"binary": ["tool", {"target": ""}]}),
+        ),
+    ] {
+        let value = cask(
+            name,
+            "https://example.test/App.tar.gz",
+            "no_check",
+            vec![artifact],
+        );
+        let (ctx, _reporter) =
+            fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+        let result = install::run(&ctx, install_args(&[name], &appdir, false)).await;
+        assert!(result.is_err(), "expected refusal for {name}");
+        assert!(
+            !fixture.env.caskroom.join(".staging").exists(),
+            "no staging for {name}"
+        );
+    }
+    assert!(
+        !fixture.env.locks.exists(),
+        "locks dir stays absent for target refusals"
+    );
+}
+
+#[tokio::test]
+async fn linux_install_refuses_pkg_ignored_modifiers() {
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    for (name, artifact) in [
+        (
+            "pkg-allow-untrusted",
+            json!({"pkg": "Foo.pkg", "allow_untrusted": true}),
+        ),
+        (
+            "pkg-choices",
+            json!({"pkg": "Foo.pkg", "choices": [{"key": "foo"}]}),
+        ),
+        (
+            "pkg-nested-untrusted",
+            json!({"pkg": ["Foo.pkg", {"allow_untrusted": true}]}),
+        ),
+    ] {
+        let value = cask(
+            name,
+            "https://example.test/App.tar.gz",
+            "no_check",
+            vec![artifact],
+        );
+        let (ctx, _reporter) =
+            fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+        let result = install::run(&ctx, install_args(&[name], &appdir, false)).await;
+        assert!(result.is_err(), "expected refusal for {name}");
+        assert!(
+            !fixture.env.caskroom.join(".staging").exists(),
+            "no staging for {name}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn linux_install_refuses_malformed_uninstall_zap() {
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    for (name, artifact) in [
+        ("uninstall-string", json!({"uninstall": "x"})),
+        ("uninstall-empty-object", json!({"uninstall": [{}]})),
+        (
+            "uninstall-unknown",
+            json!({"uninstall": [{"reboot": true}]}),
+        ),
+        (
+            "uninstall-launchctl-empty",
+            json!({"uninstall": [{"launchctl": ""}]}),
+        ),
+        (
+            "uninstall-pkgutil-empty",
+            json!({"uninstall": [{"pkgutil": []}]}),
+        ),
+        (
+            "uninstall-signal-string",
+            json!({"uninstall": [{"signal": "TERM"}]}),
+        ),
+        (
+            "uninstall-signal-empty-key",
+            json!({"uninstall": [{"signal": {"": "app"}}]}),
+        ),
+        (
+            "uninstall-signal-empty-value",
+            json!({"uninstall": [{"signal": {"TERM": ""}}]}),
+        ),
+        (
+            "uninstall-signal-empty-pair",
+            json!({"uninstall": [{"signal": [[]]}]}),
+        ),
+        (
+            "uninstall-signal-bad-pair",
+            json!({"uninstall": [{"signal": [["TERM", "app", "extra"]]}]}),
+        ),
+        (
+            "uninstall-delete-empty",
+            json!({"uninstall": [{"delete": ["ok", ""]}]}),
+        ),
+        ("zap-delete-empty", json!({"zap": [{"delete": ["ok", ""]}]})),
+    ] {
+        let value = cask(
+            name,
+            "https://example.test/App.tar.gz",
+            "no_check",
+            vec![artifact],
+        );
+        let (ctx, _reporter) =
+            fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+        let result = install::run(&ctx, install_args(&[name], &appdir, false)).await;
+        assert!(result.is_err(), "expected refusal for {name}");
+        assert!(
+            !fixture.env.caskroom.join(".staging").exists(),
+            "no staging for {name}"
+        );
+    }
+    assert!(
+        !fixture.env.locks.exists(),
+        "locks dir stays absent for directive refusals"
+    );
+}
+
+#[tokio::test]
+async fn linux_install_refuses_unsafe_version_and_token() {
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    for version in ["..", "a/b", "/etc"] {
+        let mut value = cask(
+            "badver",
+            "https://example.test/App.tar.gz",
+            "no_check",
+            vec![json!({"binary": ["tool"]})],
+        );
+        value["version"] = json!(version);
+        let (ctx, _reporter) =
+            fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+        let result = install::run(&ctx, install_args(&["badver"], &appdir, false)).await;
+        assert!(result.is_err(), "expected refusal for version {version}");
+        assert!(
+            !fixture.env.locks.exists(),
+            "no lock dir for unsafe version {version}"
+        );
+    }
+    for token in ["..", "a/b", "../x"] {
+        let value = cask(
+            token,
+            "https://example.test/App.tar.gz",
+            "no_check",
+            vec![json!({"binary": ["tool"]})],
+        );
+        let (ctx, _reporter) =
+            fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+        let result = install::run(&ctx, install_args(&[token], &appdir, false)).await;
+        assert!(result.is_err(), "expected refusal for token {token}");
+        assert!(
+            !fixture.env.locks.exists(),
+            "no lock dir for unsafe token {token}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn linux_install_refuses_dmg_url_forms_before_download() {
+    let server = MockServer::start().await;
+    let body = tar_gz(&[("bin/tool", b"tool")]);
+    let sha = sha_hex(&body);
+    let mut urls: Vec<(&'static str, String)> = Vec::new();
+    for route in ["/App.dmg", "/App.DMG", "/App%2Edmg"] {
+        let url = serve(&server, route, body.clone()).await;
+        urls.push((route, url));
+    }
+    Mock::given(method("GET"))
+        .and(path("/App.dmg"))
+        .and(wiremock::matchers::query_param("x", "y"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(body.clone()))
+        .mount(&server)
+        .await;
+    urls.push(("query", format!("{}{}?x=y", server.uri(), "/App.dmg")));
+    Mock::given(method("GET"))
+        .and(path("/App.dmg"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(body.clone()))
+        .mount(&server)
+        .await;
+    urls.push(("fragment", format!("{}{}#frag", server.uri(), "/App.dmg")));
+    for (route, url) in urls {
+        let fixture = Fixture::new();
+        let appdir = fixture.env.home.join("Applications");
+        let value = cask("disky", &url, &sha, vec![json!({"binary": ["tool"]})]);
+        let (ctx, _reporter) =
+            fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+        let result = install::run(&ctx, install_args(&["disky"], &appdir, false)).await;
+        let error = err(result);
+        assert!(
+            matches!(&error, OpError::Refusal { message } if message == "Cask 'disky' ships a macOS disk image, which is unavailable on Linux."),
+            "{route}: expected .dmg refusal, got {error:?}"
+        );
+        assert!(
+            !fixture.env.caskroom.join(".staging").exists(),
+            "{route}: no staging"
+        );
+        assert!(!fixture.env.locks.exists(), "{route}: no locks");
+    }
+    assert!(
+        server
+            .received_requests()
+            .await
+            .is_none_or(|requests| requests.is_empty()),
+        "no download for any .dmg form"
+    );
+}
+
+#[tokio::test]
+async fn linux_install_early_refusal_leaves_locks_dir_absent() {
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    fs::remove_dir_all(&fixture.env.locks).ok();
+    assert!(!fixture.env.locks.exists());
+    let value = cask(
+        "bad",
+        "https://example.test/App.tar.gz",
+        "no_check",
+        vec![json!({"binary": ["tool", {"target": 123}]})],
+    );
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+    let result = install::run(&ctx, install_args(&["bad"], &appdir, false)).await;
+    assert!(result.is_err());
+    assert!(!fixture.env.locks.exists(), "locks dir must stay absent");
+    assert!(!fixture.env.caskroom.join(".staging").exists());
+}
+
+#[tokio::test]
+async fn linux_install_refuses_symlinked_appdir_ancestor() {
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    let real = fixture.env.home.join("real-apps");
+    fs::create_dir_all(&real).expect("real appdir");
+    std::os::unix::fs::symlink(real.as_std_path(), appdir.as_std_path()).expect("appdir symlink");
+    let value = cask(
+        "symapp",
+        "https://example.test/App.tar.gz",
+        "no_check",
+        vec![json!({"binary": ["tool"]})],
+    );
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+    let result = install::run(&ctx, install_args(&["symapp"], &appdir, false)).await;
+    let error = err(result);
+    assert!(
+        error.to_string().contains("symlink"),
+        "expected symlink refusal, got {error}"
+    );
+    assert!(!fixture.env.caskroom.join(".staging").exists());
+}
+
+#[tokio::test]
+async fn linux_install_refuses_symlinked_caskroom_token_ancestor() {
+    let server = MockServer::start().await;
+    let body = tar_gz(&[("bin/tool", b"tool")]);
+    let sha = sha_hex(&body);
+    let url = serve(&server, "/App.tar.gz", body).await;
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    fs::create_dir_all(&fixture.env.caskroom).expect("Caskroom");
+    let real = fixture.env.caskroom.join("real-token");
+    fs::create_dir_all(&real).expect("real token");
+    std::os::unix::fs::symlink(
+        real.as_std_path(),
+        fixture.env.caskroom.join("symtoken").as_std_path(),
+    )
+    .expect("token symlink");
+    let value = cask("symtoken", &url, &sha, vec![json!({"binary": ["tool"]})]);
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+    let result = install::run(&ctx, install_args(&["symtoken"], &appdir, false)).await;
+    let error = err(result);
+    assert!(
+        error.to_string().contains("symlink") || error.to_string().contains("Caskroom"),
+        "expected Caskroom refusal, got {error}"
+    );
+    assert!(!fixture.env.caskroom.join("symtoken/1.0").exists());
+    assert!(!fixture.env.caskroom.join(".staging").exists());
+}
+
+#[tokio::test]
+async fn linux_install_refuses_symlinked_caskroom_metadata_ancestor() {
+    let server = MockServer::start().await;
+    let body = tar_gz(&[("bin/tool", b"tool")]);
+    let sha = sha_hex(&body);
+    let url = serve(&server, "/App.tar.gz", body).await;
+    let fixture = Fixture::new();
+    let appdir = fixture.env.home.join("Applications");
+    fs::create_dir_all(fixture.env.caskroom.join("metatoken")).expect("metadata token");
+    let real = fixture.env.caskroom.join("real-meta");
+    fs::create_dir_all(&real).expect("real metadata");
+    std::os::unix::fs::symlink(
+        real.as_std_path(),
+        fixture
+            .env
+            .caskroom
+            .join("metatoken/.metadata")
+            .as_std_path(),
+    )
+    .expect("metadata symlink");
+    let value = cask("metatoken", &url, &sha, vec![json!({"binary": ["tool"]})]);
+    let (ctx, _reporter) =
+        fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+    let result = install::run(&ctx, install_args(&["metatoken"], &appdir, false)).await;
+    let error = err(result);
+    assert!(
+        error.to_string().contains("symlink") || error.to_string().contains("Caskroom"),
+        "expected Caskroom refusal, got {error}"
+    );
+    assert!(!fixture.env.caskroom.join("metatoken/1.0").exists());
+    assert!(
+        !fixture
+            .env
+            .caskroom
+            .join("metatoken/.metadata/1.0")
+            .exists()
+    );
+}

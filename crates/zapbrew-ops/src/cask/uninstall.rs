@@ -7,8 +7,8 @@ use zapbrew_prefix::CommandSpec;
 
 use super::transaction::{installed_version_dirs, read_record};
 use super::{
-    acquire_locks, checked_command, confined_caskroom_child, expand_path, path_exists,
-    remove_entry, require_macos, string_values,
+    acquire_locks, artifact, checked_command, confined_caskroom_child, confined_caskroom_dir,
+    expand_path, path_exists, remove_entry, require_macos, string_values,
 };
 use crate::{Ctx, OpError};
 
@@ -46,6 +46,7 @@ fn resolve_installed(ctx: &Ctx, requested: &str) -> Result<String, OpError> {
     }
     let dir = confined_caskroom_child(ctx, requested)?;
     if fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink()) {
+        confined_caskroom_dir(ctx, &dir)?;
         return Ok(requested.to_owned());
     }
     Err(OpError::Refusal {
@@ -59,6 +60,7 @@ fn resolve_installed(ctx: &Ctx, requested: &str) -> Result<String, OpError> {
 /// aborts the whole operation with nothing removed.
 pub(super) fn remove(ctx: &Ctx, token: &str, zap: bool) -> Result<(), OpError> {
     let token_dir = ctx.env.caskroom.join(token);
+    confined_caskroom_dir(ctx, &token_dir)?;
     let versions = installed_version_dirs(&token_dir)?;
     if versions.is_empty() {
         return Err(not_installed(token));
@@ -80,13 +82,15 @@ pub(super) fn remove(ctx: &Ctx, token: &str, zap: bool) -> Result<(), OpError> {
     let mut seen = BTreeSet::new();
     let mut targets = Vec::new();
     for record in records.iter().rev() {
+        let appdir = record.appdir();
         for target in record.targets().collect::<Vec<_>>().into_iter().rev() {
             if seen.insert(target.clone()) {
-                targets.push(target);
+                targets.push((target, appdir.clone()));
             }
         }
     }
-    for target in &targets {
+    for (target, appdir) in &targets {
+        artifact::confined_target_physical(ctx, target, &[appdir.as_path()])?;
         remove_entry(target)?;
     }
 
@@ -95,15 +99,16 @@ pub(super) fn remove(ctx: &Ctx, token: &str, zap: bool) -> Result<(), OpError> {
         if zap {
             run_directives(ctx, &record.zap, &record.appdir())?;
         }
+        confined_caskroom_dir(ctx, version_dir)?;
         remove_entry(version_dir)?;
         let version = version_dir
             .file_name()
             .ok_or_else(|| OpError::InvalidState {
                 reason: format!("installed cask version has no basename: {version_dir}"),
             })?;
-        remove_version_receipts(&token_dir, version)?;
+        remove_version_receipts(ctx, &token_dir, version)?;
     }
-    prune_empty(&token_dir)?;
+    prune_empty(ctx, &token_dir)?;
     Ok(())
 }
 
@@ -116,43 +121,35 @@ fn preflight_directives(ctx: &Ctx, groups: &[Value], appdir: &Utf8Path) -> Resul
             let object = directive.as_object().ok_or_else(|| OpError::InvalidState {
                 reason: "stored cask removal directive is not an object".to_owned(),
             })?;
+            if object.is_empty() {
+                return Err(OpError::InvalidState {
+                    reason: "stored cask removal directive is empty".to_owned(),
+                });
+            }
             for (kind, value) in object {
+                if !artifact::DIRECTIVE_KEYS.contains(&kind.as_str()) {
+                    return Err(OpError::InvalidState {
+                        reason: format!("stored cask removal kind '{kind}' is unsupported"),
+                    });
+                }
+                if !artifact::directive_value_valid(kind, value) {
+                    return Err(OpError::InvalidState {
+                        reason: format!("stored {kind} directive has invalid shape"),
+                    });
+                }
                 match kind.as_str() {
                     "launchctl" => {
-                        let labels = string_values(value).ok_or_else(|| OpError::InvalidState {
-                            reason: "stored launchctl directive has invalid shape".to_owned(),
-                        })?;
-                        for label in &labels {
-                            validate_launchctl_label(label)?;
-                        }
-                    }
-                    "pkgutil" | "quit" | "signal" => {
-                        if kind == "signal" {
-                            if !value.is_object() && !value.is_array() {
-                                return Err(OpError::InvalidState {
-                                    reason: "stored signal directive has invalid shape".to_owned(),
-                                });
-                            }
-                        } else if string_values(value).is_none() {
-                            return Err(OpError::InvalidState {
-                                reason: format!("stored {kind} directive has invalid shape"),
-                            });
+                        for label in string_values(value).unwrap_or_default() {
+                            validate_launchctl_label(&label)?;
                         }
                     }
                     "delete" | "trash" | "rmdir" => {
-                        let paths = string_values(value).ok_or_else(|| OpError::InvalidState {
-                            reason: format!("stored {kind} directive has invalid shape"),
-                        })?;
-                        for path in paths {
+                        for path in string_values(value).unwrap_or_default() {
                             let expanded = expand_path(ctx, &path, appdir)?;
-                            ensure_removal_root(ctx, &expanded, appdir)?;
+                            artifact::confined_target_physical(ctx, &expanded, &[appdir])?;
                         }
                     }
-                    _ => {
-                        return Err(OpError::InvalidState {
-                            reason: format!("stored cask removal kind '{kind}' is unsupported"),
-                        });
-                    }
+                    _ => {}
                 }
             }
         }
@@ -174,6 +171,7 @@ fn run_directives(ctx: &Ctx, groups: &[Value], appdir: &Utf8Path) -> Result<(), 
                     "launchctl" => {
                         for label in string_values(value).unwrap_or_default() {
                             let plist = launch_agent_plist(ctx, &label)?;
+                            artifact::confined_target_physical(ctx, &plist, &[appdir])?;
                             checked_command(
                                 ctx,
                                 CommandSpec::new("/bin/launchctl")
@@ -195,12 +193,15 @@ fn run_directives(ctx: &Ctx, groups: &[Value], appdir: &Utf8Path) -> Result<(), 
                     }
                     "delete" | "trash" => {
                         for path in string_values(value).unwrap_or_default() {
-                            remove_entry(&expand_path(ctx, &path, appdir)?)?;
+                            let path = expand_path(ctx, &path, appdir)?;
+                            artifact::confined_target_physical(ctx, &path, &[appdir])?;
+                            remove_entry(&path)?;
                         }
                     }
                     "rmdir" => {
                         for path in string_values(value).unwrap_or_default() {
                             let path = expand_path(ctx, &path, appdir)?;
+                            artifact::confined_target_physical(ctx, &path, &[appdir])?;
                             match fs::remove_dir(&path) {
                                 Ok(()) => {}
                                 Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
@@ -219,22 +220,6 @@ fn run_directives(ctx: &Ctx, groups: &[Value], appdir: &Utf8Path) -> Result<(), 
     Ok(())
 }
 
-fn ensure_removal_root(ctx: &Ctx, path: &Utf8Path, appdir: &Utf8Path) -> Result<(), OpError> {
-    if path.starts_with(&ctx.env.home)
-        || path.starts_with(&ctx.env.prefix)
-        || path.starts_with(appdir)
-    {
-        Ok(())
-    } else {
-        Err(OpError::Refusal {
-            message: format!("Cask removal path '{path}' is outside approved roots."),
-        })
-    }
-}
-
-/// Validate a stored `launchctl` label before it builds a plist path or runs a
-/// command. A launchd label is a nonempty string of ASCII letters, digits, `.`,
-/// `_`, and `-`; any slash, separator, parent component, control byte, or other
 /// character is invalid stored record data.
 fn validate_launchctl_label(label: &str) -> Result<(), OpError> {
     let valid = !label.is_empty()
@@ -262,23 +247,26 @@ fn launch_agent_plist(ctx: &Ctx, label: &str) -> Result<Utf8PathBuf, OpError> {
         .join(format!("{label}.plist")))
 }
 
-fn remove_version_receipts(token_dir: &Utf8Path, version: &str) -> Result<(), OpError> {
+fn remove_version_receipts(ctx: &Ctx, token_dir: &Utf8Path, version: &str) -> Result<(), OpError> {
     let path = token_dir.join(".metadata").join(version);
+    confined_caskroom_dir(ctx, &path)?;
     remove_entry(&path)?;
     let metadata = token_dir.join(".metadata");
     if metadata.is_dir()
         && fs::read_dir(&metadata).is_ok_and(|mut entries| entries.next().is_none())
     {
+        confined_caskroom_dir(ctx, &metadata)?;
         fs::remove_dir(&metadata).map_err(|source| OpError::io("remove", &metadata, source))?;
     }
     Ok(())
 }
 
-fn prune_empty(token_dir: &Utf8Path) -> Result<(), OpError> {
-    if path_exists(token_dir)
-        && fs::read_dir(token_dir).is_ok_and(|mut entries| entries.next().is_none())
-    {
-        fs::remove_dir(token_dir).map_err(|source| OpError::io("remove", token_dir, source))?;
+fn prune_empty(ctx: &Ctx, token_dir: &Utf8Path) -> Result<(), OpError> {
+    if path_exists(token_dir) {
+        confined_caskroom_dir(ctx, token_dir)?;
+        if fs::read_dir(token_dir).is_ok_and(|mut entries| entries.next().is_none()) {
+            fs::remove_dir(token_dir).map_err(|source| OpError::io("remove", token_dir, source))?;
+        }
     }
     Ok(())
 }

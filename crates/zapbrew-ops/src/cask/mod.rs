@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
+use std::io;
 use std::path::{Component, Path};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -36,6 +37,17 @@ pub(crate) fn resolve<'a>(ctx: &'a Ctx, requested: &str) -> Result<&'a Cask, OpE
         message: format!("Cask '{requested}' is unavailable."),
     })
 }
+/// Return true only for one nonempty normal UTF-8 path component.
+pub(super) fn one_normal_component(name: &str) -> bool {
+    if name.is_empty() || name.contains('\0') {
+        return false;
+    }
+    let mut components = Utf8Path::new(name).components();
+    matches!(
+        (components.next(), components.next()),
+        (Some(Utf8Component::Normal(component)), None) if component == name
+    )
+}
 
 fn acquire_locks(ctx: &Ctx, tokens: &BTreeSet<String>) -> Result<Vec<LockGuard>, OpError> {
     fs::create_dir_all(&ctx.env.locks)
@@ -50,10 +62,12 @@ fn acquire_locks(ctx: &Ctx, tokens: &BTreeSet<String>) -> Result<Vec<LockGuard>,
 
 fn unique_stage(ctx: &Ctx, token: &str) -> Result<Utf8PathBuf, OpError> {
     let root = ctx.env.caskroom.join(".staging");
+    confined_caskroom_dir(ctx, &root)?;
     fs::create_dir_all(&root).map_err(|source| OpError::io("create", &root, source))?;
     loop {
         let id = UNIQUE_ID.fetch_add(1, Ordering::Relaxed);
         let path = root.join(format!("{token}-{}-{id}", std::process::id()));
+        confined_caskroom_dir(ctx, &path)?;
         match fs::create_dir(&path) {
             Ok(()) => return Ok(path),
             Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -69,6 +83,39 @@ fn string_values(value: &Value) -> Option<Vec<String>> {
             .iter()
             .map(|value| value.as_str().map(str::to_owned))
             .collect(),
+        _ => None,
+    }
+}
+/// Normalize the URL path used for archive dispatch and install preflight.
+///
+/// Query and fragment text never participates in the suffix. Valid percent
+/// escapes are decoded exactly once, then ASCII case is folded. Invalid percent
+/// escapes remain literal and therefore cannot manufacture a recognized suffix.
+pub(super) fn archive_suffix(url: &str) -> String {
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    let bytes = path.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && let Some((high, low)) = bytes.get(index + 1).zip(bytes.get(index + 2))
+            && let (Some(high), Some(low)) = (hex_value(*high), hex_value(*low))
+        {
+            decoded.push((high << 4) | low);
+            index += 3;
+            continue;
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&decoded).to_ascii_lowercase()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
         _ => None,
     }
 }
@@ -160,17 +207,86 @@ fn path_exists(path: &Utf8Path) -> bool {
 /// absolute paths, and nested paths are rejected before any join so a traversal
 /// token can never leave the Caskroom.
 fn confined_caskroom_child(ctx: &Ctx, token: &str) -> Result<Utf8PathBuf, OpError> {
-    let mut components = Utf8Path::new(token).components();
-    let single = matches!(
-        (components.next(), components.next()),
-        (Some(Utf8Component::Normal(name)), None) if name == token
-    );
-    if !single {
+    if !one_normal_component(token) {
         return Err(OpError::Refusal {
             message: format!("Cask '{token}' is unavailable."),
         });
     }
     Ok(ctx.env.caskroom.join(token))
+}
+
+/// Shared no-follow confinement for paths inside the Caskroom tree. Every existing
+/// ancestor from the path up to the Caskroom root is inspected with `symlink_metadata`;
+/// a symlink, non-directory ancestor, or I/O error blocks create/write/rename/remove/backup
+/// through it. This only protects against pre-existing static symlinks; a concurrent
+/// same-user swap between adjacent syscalls is outside this tranche's threat model.
+pub(super) fn confined_caskroom_path(ctx: &Ctx, path: &Utf8Path) -> Result<(), OpError> {
+    if !path.is_absolute() || !path.starts_with(&ctx.env.caskroom) {
+        return Err(OpError::Refusal {
+            message: format!("Caskroom path '{path}' is outside Caskroom."),
+        });
+    }
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err(OpError::Refusal {
+                message: format!("Caskroom path '{path}' is a symlink."),
+            });
+        }
+        Ok(meta) if path == ctx.env.caskroom && !meta.is_dir() => {
+            return Err(OpError::Refusal {
+                message: format!("Caskroom root '{path}' is not a directory."),
+            });
+        }
+        Ok(_) => {}
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+        Err(source) => return Err(OpError::io("inspect", path, source)),
+    }
+    let mut current = path;
+    while current != ctx.env.caskroom {
+        current = current.parent().unwrap_or(&ctx.env.caskroom);
+        let meta = match fs::symlink_metadata(current) {
+            Ok(meta) => meta,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => continue,
+            Err(source) => return Err(OpError::io("inspect", current, source)),
+        };
+        if meta.file_type().is_symlink() {
+            return Err(OpError::Refusal {
+                message: format!("Caskroom path '{path}' resolves through symlink '{current}'."),
+            });
+        }
+        if !meta.is_dir() {
+            return Err(OpError::Refusal {
+                message: format!("Caskroom path '{path}' has non-directory ancestor '{current}'."),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Require the confined leaf itself to be a directory when it already exists.
+pub(super) fn confined_caskroom_dir(ctx: &Ctx, path: &Utf8Path) -> Result<(), OpError> {
+    confined_caskroom_path(ctx, path)?;
+    match fs::symlink_metadata(path) {
+        Ok(meta) if !meta.is_dir() => Err(OpError::Refusal {
+            message: format!("Caskroom path '{path}' is not a directory."),
+        }),
+        Ok(_) => Ok(()),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(OpError::io("inspect", path, source)),
+    }
+}
+
+/// Require the confined leaf itself to be a regular file when it already exists.
+pub(super) fn confined_caskroom_file(ctx: &Ctx, path: &Utf8Path) -> Result<(), OpError> {
+    confined_caskroom_path(ctx, path)?;
+    match fs::symlink_metadata(path) {
+        Ok(meta) if !meta.is_file() => Err(OpError::Refusal {
+            message: format!("Caskroom path '{path}' is not a regular file."),
+        }),
+        Ok(_) => Ok(()),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(OpError::io("inspect", path, source)),
+    }
 }
 
 fn remove_entry(path: &Utf8Path) -> Result<(), OpError> {
@@ -237,5 +353,29 @@ fn checked_command(ctx: &Ctx, spec: CommandSpec) -> Result<Vec<u8>, OpError> {
 fn unsupported(token: &str, kind: &str) -> OpError {
     OpError::Refusal {
         message: format!("Cask '{token}' uses unsupported artifact '{kind}'."),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::archive_suffix;
+
+    #[test]
+    fn archive_suffix_strips_query_and_fragment_and_folds_case() {
+        assert!(archive_suffix("https://h/App.dmg?x=y#frag").ends_with(".dmg"));
+        assert!(archive_suffix("https://h/App.DMG").ends_with(".dmg"));
+    }
+
+    #[test]
+    fn archive_suffix_decodes_percent_encoded_dot() {
+        assert!(archive_suffix("https://h/App%2Edmg").ends_with(".dmg"));
+    }
+
+    #[test]
+    fn archive_suffix_malformed_percent_escapes_remain_literal() {
+        // %ZZ is not a valid escape, so the percent is left literal and no .dmg
+        // suffix is produced.
+        assert!(!archive_suffix("https://h/App%ZZdmg.tar.gz").ends_with(".dmg"));
+        assert!(archive_suffix("https://h/App%ZZdmg.tar.gz").ends_with(".tar.gz"));
     }
 }

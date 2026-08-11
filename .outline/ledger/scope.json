@@ -148,9 +148,9 @@
       "id": "D2-linux-cask-subset",
       "status": "resolved",
       "title": "Linux cask artifact subset",
-      "question": "Which cask artifact kinds (binary, approved appimage) does Linux implement versus refuse?",
-      "default_policy": "constrained-parity: implement the expressible binary/appimage subset, refuse the rest with fixed text",
-      "resolution": "On Linux, implement cask queries and every cask artifact accepted by Homebrew 6.0.16's Linux support predicate: all non-macOS-only artifact classes plus non-manual installers. Refuse casks that require macOS, macOS-only artifacts, and manual installers with fixed Homebrew-compatible text.",
+      "question": "Which cask artifact kinds does Linux implement as reversible link/copy deployment, stage_only, or refuse with fixed text, while preserving macOS pkg and mappings?",
+      "default_policy": "constrained-parity: implement the reversible binary/manpage/appimage/artifact/font/completion subset and stage_only, refuse execution-bearing and macOS-only artifacts",
+      "resolution": "On Linux, implement cask queries and the reversible link/copy artifact subset (binary, manpage, appimage, generic artifact, font, zsh/bash/fish completions) plus stage_only. Permanently refuse, as an outside-architecture no-cask-supplied-execution invariant, casks that require macOS, macOS-only artifact classes, and all cask-supplied-execution artifacts (manual/script installers, preflight/postflight/uninstall_preflight/uninstall_postflight flight blocks, and preflight_steps/postflight_steps/uninstall_preflight_steps/uninstall_postflight_steps serialized install-step lifecycles). Close the artifact schema: target is accepted only by kinds that consume it, pkg refuses allow_untrusted/choices, and uninstall/zap values are shape-checked before effects and in stored records. Use shared Caskroom path, directory, and regular-file no-follow helpers at every create/write/rename/remove/backup/receipt sink, and reject static symlink or non-regular cache .incomplete paths before download writes. Refusals use fixed Homebrew-compatible text and occur before any download, staging, lock, or mutation. macOS behavior, including the fixed /usr/sbin/installer pkg action, is unchanged.",
       "decided_at": "2026-08-11T11:06:16Z"
     },
     {
@@ -956,9 +956,12 @@
         "structural-parse",
         "unit-fixture-io"
       ],
-      "decision_refs": [],
+      "decision_refs": [
+        "D2-linux-cask-subset",
+        "D5-cask-tranche-granularity"
+      ],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-api/src/model.rs:205-237,509-517",
+        "zapbrew": "crates/zapbrew-api/src/model.rs:205-243; crates/zapbrew-api/src/model.rs:517-528",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cask/dsl.rb#L136-L140"
       }
     },
@@ -973,9 +976,11 @@
         "structural-parse",
         "unit-fixture-io"
       ],
-      "decision_refs": [],
+      "decision_refs": [
+        "D2-linux-cask-subset"
+      ],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-api/src/model.rs:269-285,468-504",
+        "zapbrew": "crates/zapbrew-api/src/model.rs:275-290; crates/zapbrew-api/src/model.rs:474-528",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/api.rb#L194-L204"
       }
     },
@@ -1977,7 +1982,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/archive.rs:65-117",
+        "zapbrew": "crates/zapbrew-ops/src/cask/archive.rs:61-114",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/unpack_strategy/dmg.rb#L187-L253"
       }
     },
@@ -1994,7 +1999,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/archive.rs:65-117",
+        "zapbrew": "crates/zapbrew-ops/src/cask/archive.rs:61-114",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/unpack_strategy/dmg.rb#L98-L263"
       }
     },
@@ -2002,7 +2007,7 @@
       "cell_id": "cp.cask-archive.in-process-extract",
       "module": "ops-cask-archive",
       "behavior": "ZIP/TAR/bare formats extract in-process after complete structural preflight",
-      "platform": "macos",
+      "platform": "any",
       "effect": "filesystem-mutation",
       "expected_disposition": "must-match",
       "expected_evidence": [
@@ -2010,16 +2015,18 @@
         "unit-fixture-io",
         "process-integration"
       ],
-      "decision_refs": [],
+      "decision_refs": [
+        "D2-linux-cask-subset"
+      ],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/archive.rs:120-320",
+        "zapbrew": "crates/zapbrew-ops/src/cask/archive.rs:116-350",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/unpack_strategy.rb#L151-L205"
       }
     },
     {
       "cell_id": "cp.cask-archive.preflight",
       "module": "ops-cask-archive",
-      "behavior": "ZIP/TAR preflight rejects unenclosed paths, symlinks, invalid entry types, and file/nested conflicts before extraction",
+      "behavior": "ZIP/TAR preflight rejects unenclosed paths, invalid entry types, and file/nested conflicts before extraction; ZIP symlinks are refused, relative TAR symlinks must remain confined, and absolute TAR symlink payloads are preserved for sink-level no-follow enforcement",
       "platform": "any",
       "effect": "trust",
       "expected_disposition": "must-be-outside-architecture",
@@ -2028,7 +2035,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/archive.rs:120-320",
+        "zapbrew": "crates/zapbrew-ops/src/cask/archive.rs:149-350",
         "homebrew": "outside-architecture: Homebrew 6.0.16 extracts ZIP/TAR by shelling out to unzip/tar (Library/Homebrew/unpack_strategy/zip.rb, tar.rb) with no structural preflight; Zapbrew-only in-process extraction safety gate with no upstream observable counterpart"
       }
     },
@@ -2036,7 +2043,7 @@
       "cell_id": "cp.cask-artifact.apply-rollback",
       "module": "ops-cask-artifact",
       "behavior": "Move/copy/symlink actions record reverse entries before effects; backups are unique and rollback runs in reverse order",
-      "platform": "macos",
+      "platform": "any",
       "effect": "filesystem-mutation",
       "expected_disposition": "must-match",
       "expected_evidence": [
@@ -2044,9 +2051,12 @@
         "unit-fixture-io",
         "process-integration"
       ],
-      "decision_refs": [],
+      "decision_refs": [
+        "D2-linux-cask-subset",
+        "D5-cask-tranche-granularity"
+      ],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/artifact.rs:154-284",
+        "zapbrew": "crates/zapbrew-ops/src/cask/artifact.rs:544-695",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cask/artifact/moved.rb#L60-L180"
       }
     },
@@ -2062,7 +2072,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/artifact.rs:326-478",
+        "zapbrew": "crates/zapbrew-ops/src/cask/artifact.rs:797-844; crates/zapbrew-ops/src/cask/artifact.rs:932-1010",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cask/artifact/relocated.rb#L31-L67"
       }
     },
@@ -2078,7 +2088,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/artifact.rs:199-210",
+        "zapbrew": "crates/zapbrew-ops/src/cask/artifact.rs:592-605",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cask/artifact/pkg.rb#L51-L92"
       }
     },
@@ -2095,32 +2105,33 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/artifact.rs:199-216",
+        "zapbrew": "crates/zapbrew-ops/src/cask/artifact.rs:592-605",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cask/artifact/pkg.rb#L44-L92"
       }
     },
     {
       "cell_id": "cp.cask-artifact.plan",
       "module": "ops-cask-artifact",
-      "behavior": "Plan validates all artifacts and recognizes app, suite, binary, manpage, pkg, explicit artifact, plugin and completion families",
-      "platform": "macos",
+      "behavior": "Plan validates all artifacts, enforces exactly one recognized directive key, and recognizes app, suite, appimage, binary, manpage, pkg, explicit artifact, plugin and completion families, plus stage_only",
+      "platform": "any",
       "effect": "value",
       "expected_disposition": "must-match",
       "expected_evidence": [
         "unit-fixture-io"
       ],
       "decision_refs": [
+        "D2-linux-cask-subset",
         "D5-cask-tranche-granularity"
       ],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/artifact.rs:85-152",
+        "zapbrew": "crates/zapbrew-ops/src/cask/artifact.rs:117-241",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cask/artifact/abstract_artifact.rb#L71-L120"
       }
     },
     {
       "cell_id": "cp.cask-artifact.unsupported",
       "module": "ops-cask-artifact",
-      "behavior": "Preflight refuses unknown artifact directives on every platform and, on Linux, refuses casks requiring macOS, macOS-only artifact classes, and manual installers before download or mutation",
+      "behavior": "Preflight refuses unknown/malformed artifacts (unknown or multiple directive keys, unknown top-level or nested option keys, and non-boolean stage_only) on every platform and, on Linux, refuses casks requiring macOS, macOS-only artifact classes, and all cask-supplied-execution artifacts before download or mutation; accepted Linux plans contain only reversible link/copy actions or stage_only",
       "platform": "any",
       "effect": "refusal",
       "expected_disposition": "must-match",
@@ -2132,7 +2143,7 @@
         "D5-cask-tranche-granularity"
       ],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/artifact.rs:85-152",
+        "zapbrew": "crates/zapbrew-ops/src/cask/artifact.rs:58-87; crates/zapbrew-ops/src/cask/artifact.rs:117-241; crates/zapbrew-ops/src/cask/artifact.rs:248-502; crates/zapbrew-ops/src/cask/artifact.rs:504-542",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/extend/os/linux/cask/installer.rb#L13-L26; https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cask/artifact.rb#L40-L65"
       }
     },
@@ -2140,33 +2151,36 @@
       "cell_id": "cp.cask-install.appdir-default",
       "module": "ops-cask-install",
       "behavior": "Cask install defaults appdir to /Applications and refuses unapproved roots before I/O",
-      "platform": "macos",
+      "platform": "any",
       "effect": "refusal",
       "expected_disposition": "must-match",
       "expected_evidence": [
         "unit-fixture-io"
       ],
-      "decision_refs": [],
+      "decision_refs": [
+        "D2-linux-cask-subset"
+      ],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/install.rs:29-36",
+        "zapbrew": "crates/zapbrew-ops/src/cask/install.rs:35-42",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cask/config.rb#L16-L20"
       }
     },
     {
       "cell_id": "cp.cask-install.resolve-preflight",
       "module": "ops-cask-install",
-      "behavior": "Resolve and canonicalize all tokens, lock them, approve appdir, then preflight every artifact/download before first transaction",
-      "platform": "macos",
+      "behavior": "Resolve and canonicalize all tokens, approve appdir, preflight every artifact and download, then acquire canonical locks before the first transaction",
+      "platform": "any",
       "effect": "value",
       "expected_disposition": "safety-deviation-candidate",
       "expected_evidence": [
         "unit-fixture-io"
       ],
       "decision_refs": [
+        "D2-linux-cask-subset",
         "D5-cask-tranche-granularity"
       ],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/install.rs:17-46",
+        "zapbrew": "crates/zapbrew-ops/src/cask/install.rs:17-91",
         "homebrew": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cmd/install.rb#L215-L238; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cmd/install.rb#L360-L398; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cask/installer.rb#L902-L954; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cask/installer.rb#L1055-L1063"
       }
     },
@@ -2174,7 +2188,7 @@
       "cell_id": "cp.cask-install.transactions",
       "module": "ops-cask-install",
       "behavior": "Prepared casks install one transaction per token under held canonical locks",
-      "platform": "macos",
+      "platform": "any",
       "effect": "filesystem-mutation",
       "expected_disposition": "safety-deviation-candidate",
       "expected_evidence": [
@@ -2183,10 +2197,11 @@
         "process-integration"
       ],
       "decision_refs": [
+        "D2-linux-cask-subset",
         "D5-cask-tranche-granularity"
       ],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/install.rs:48-62",
+        "zapbrew": "crates/zapbrew-ops/src/cask/install.rs:77-109",
         "homebrew": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cmd/install.rb#L421-L439; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cask/installer.rb#L155-L198"
       }
     },
@@ -2212,15 +2227,17 @@
       "cell_id": "cp.cask-list.query-output",
       "module": "ops-cask-list",
       "behavior": "No-name scan and named alias lookup ignore symlink/hidden tokens and versions, sort results, and print columns or versions",
-      "platform": "macos",
+      "platform": "any",
       "effect": "output",
       "expected_disposition": "must-match",
       "expected_evidence": [
         "unit-fixture-io"
       ],
-      "decision_refs": [],
+      "decision_refs": [
+        "D2-linux-cask-subset"
+      ],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/list.rs:18-90",
+        "zapbrew": "crates/zapbrew-ops/src/cask/list.rs:17-89",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cmd/list.rb#L17-L90"
       }
     },
@@ -2236,14 +2253,14 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/mod.rs:121-136",
+        "zapbrew": "crates/zapbrew-ops/src/cask/mod.rs:170-185",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cask/config.rb#L16-L20"
       }
     },
     {
       "cell_id": "cp.cask-root.linux-supported-artifacts",
       "module": "ops-cask-root",
-      "behavior": "On Linux, install every artifact accepted by Homebrew 6.0.16's Linux predicate through a confined transaction: all non-macOS-only artifact classes plus non-manual installers",
+      "behavior": "On Linux, install the reversible link/copy subset (binary, manpage, appimage, artifact, font, zsh/bash/fish completions) and stage_only through a confined transaction; permanently refuse cask-supplied-execution artifacts as outside-architecture",
       "platform": "linux",
       "effect": "filesystem-mutation",
       "expected_disposition": "must-match",
@@ -2255,7 +2272,7 @@
         "D2-linux-cask-subset"
       ],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/mod.rs:23-30",
+        "zapbrew": "crates/zapbrew-ops/src/cask/artifact.rs:117-241; crates/zapbrew-ops/src/cask/install.rs:17-109; crates/zapbrew-ops/src/cask/transaction.rs:235-397",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/extend/os/linux/cask/installer.rb#L13-L26; https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cask/artifact.rb#L42-L63"
       }
     },
@@ -2272,7 +2289,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/mod.rs:39-47",
+        "zapbrew": "crates/zapbrew-ops/src/cask/mod.rs:52-60",
         "homebrew": "outside-architecture: Homebrew 6.0.16 does not lock casks (Library/Homebrew/cask/installer.rb performs no per-token lock acquisition); Zapbrew-only concurrency guard with no upstream observable counterpart"
       }
     },
@@ -2290,14 +2307,14 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/mod.rs:39-47",
+        "zapbrew": "crates/zapbrew-ops/src/cask/mod.rs:52-60",
         "homebrew": "outside-architecture: Homebrew 6.0.16 does not lock casks (Library/Homebrew/cask/installer.rb performs no per-token lock acquisition); Zapbrew-only concurrency guard with no upstream observable counterpart"
       }
     },
     {
       "cell_id": "cp.cask-root.token-confinement",
       "module": "ops-cask-root",
-      "behavior": "Caskroom child accepts exactly one normal relative component; recursive copy/removal does not follow symlinks",
+      "behavior": "Caskroom child accepts exactly one normal relative component; every Caskroom path is inspected with symlink_metadata before create/write/rename/remove/backup/receipt, and symlinked or non-directory ancestors up to the Caskroom root are refused",
       "platform": "any",
       "effect": "trust",
       "expected_disposition": "must-match",
@@ -2306,7 +2323,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/mod.rs:157-216",
+        "zapbrew": "crates/zapbrew-ops/src/cask/mod.rs:205-290",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cask/caskroom.rb#L17-L34"
       }
     },
@@ -2314,7 +2331,7 @@
       "cell_id": "cp.cask-transaction.commit",
       "module": "ops-cask-transaction",
       "behavior": "Install backs up prior targets and metadata, stages record/artifacts/receipt, then commits with one version rename",
-      "platform": "macos",
+      "platform": "any",
       "effect": "filesystem-mutation",
       "expected_disposition": "must-match",
       "expected_evidence": [
@@ -2322,9 +2339,12 @@
         "unit-fixture-io",
         "process-integration"
       ],
-      "decision_refs": [],
+      "decision_refs": [
+        "D2-linux-cask-subset",
+        "D5-cask-tranche-granularity"
+      ],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/transaction.rs:212-303",
+        "zapbrew": "crates/zapbrew-ops/src/cask/transaction.rs:235-360",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cask/installer.rb#L131-L200"
       }
     },
@@ -2340,7 +2360,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/transaction.rs:108-198",
+        "zapbrew": "crates/zapbrew-ops/src/cask/transaction.rs:121-211",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cask/caskroom.rb#L72-L145"
       }
     },
@@ -2348,7 +2368,7 @@
       "cell_id": "cp.cask-transaction.rollback",
       "module": "ops-cask-transaction",
       "behavior": "Failure reverses the journal and reports RollbackIncomplete with every surviving path",
-      "platform": "macos",
+      "platform": "any",
       "effect": "filesystem-mutation",
       "expected_disposition": "must-match",
       "expected_evidence": [
@@ -2356,9 +2376,12 @@
         "unit-fixture-io",
         "process-integration"
       ],
-      "decision_refs": [],
+      "decision_refs": [
+        "D2-linux-cask-subset",
+        "D5-cask-tranche-granularity"
+      ],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/transaction.rs:305-340",
+        "zapbrew": "crates/zapbrew-ops/src/cask/transaction.rs:361-400",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cask/installer.rb#L595-L760"
       }
     },
@@ -2374,7 +2397,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/transaction.rs:397-419",
+        "zapbrew": "crates/zapbrew-ops/src/cask/transaction.rs:497-519",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cask/caskroom.rb#L21-L34"
       }
     },
@@ -2390,7 +2413,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/uninstall.rs:129-141,235-263",
+        "zapbrew": "crates/zapbrew-ops/src/cask/artifact.rs:734-776; crates/zapbrew-ops/src/cask/uninstall.rs:115-158; crates/zapbrew-ops/src/cask/uninstall.rs:160-248",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cmd/uninstall.rb"
       }
     },
@@ -2407,7 +2430,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/uninstall.rs:177-263",
+        "zapbrew": "crates/zapbrew-ops/src/cask/uninstall.rs:160-183; crates/zapbrew-ops/src/cask/uninstall.rs:241-248",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cmd/uninstall.rb"
       }
     },
@@ -2423,7 +2446,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/uninstall.rs:177-193",
+        "zapbrew": "crates/zapbrew-ops/src/cask/uninstall.rs:160-193",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cmd/uninstall.rb"
       }
     },
@@ -2440,7 +2463,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/uninstall.rs:177-193",
+        "zapbrew": "crates/zapbrew-ops/src/cask/uninstall.rs:184-193",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cmd/uninstall.rb"
       }
     },
@@ -2458,7 +2481,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/uninstall.rs:56-108",
+        "zapbrew": "crates/zapbrew-ops/src/cask/uninstall.rs:61-112; crates/zapbrew-ops/src/cask/uninstall.rs:250-271",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cmd/uninstall.rb"
       }
     },
@@ -2474,7 +2497,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/uninstall.rs:21-54",
+        "zapbrew": "crates/zapbrew-ops/src/cask/uninstall.rs:21-55",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cmd/uninstall.rb"
       }
     },

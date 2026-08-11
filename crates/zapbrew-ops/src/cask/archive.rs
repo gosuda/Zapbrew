@@ -24,11 +24,7 @@ pub(super) fn extract(
     url: &str,
     staging: &Utf8Path,
 ) -> Result<(), OpError> {
-    let path = url
-        .split(['?', '#'])
-        .next()
-        .unwrap_or(url)
-        .to_ascii_lowercase();
+    let path = super::archive_suffix(url);
     if path.ends_with(".dmg") {
         return extract_dmg(ctx, artifact, staging);
     }

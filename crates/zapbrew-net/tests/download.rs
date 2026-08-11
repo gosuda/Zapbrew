@@ -5,6 +5,7 @@
 //! `cfg(test)` for integration tests).
 
 use std::collections::HashMap;
+use std::fs;
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -481,6 +482,74 @@ async fn fetch_artifact_reuses_valid_final() {
         .expect("second fetch");
     assert!(second.reused);
     assert_eq!(first.path, second.path);
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn fetch_artifact_refuses_symlinked_incomplete_file() {
+    let server = MockServer::start().await;
+    let url = artifact_url(&server, "linked.zip");
+    Mock::given(method("GET"))
+        .and(path(artifact_path("linked.zip")))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let (dir, env) = test_env();
+    let sha = Checksum::from_str(SHA_HELLO).expect("sha");
+    let first = fetch_artifact(&env, &http(), &url, Some(&sha))
+        .await
+        .expect("first fetch");
+    fs::remove_file(first.path.as_std_path()).expect("remove final");
+    let _ = fs::remove_file(first.alias.as_std_path());
+    let incomplete = Utf8PathBuf::from(format!("{}.incomplete", first.path));
+    let sentinel = dir.path().join("sentinel");
+    fs::write(&sentinel, b"keep").expect("sentinel");
+    std::os::unix::fs::symlink(&sentinel, incomplete.as_std_path()).expect("symlink");
+
+    let error = fetch_artifact(&env, &http(), &url, Some(&sha))
+        .await
+        .expect_err("symlinked incomplete must refuse");
+    assert!(
+        matches!(
+            error,
+            NetError::Io {
+                operation: "validate",
+                ..
+            }
+        ),
+        "unexpected error: {error}"
+    );
+    assert_eq!(fs::read(&sentinel).expect("sentinel survives"), b"keep");
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn fetch_artifact_refuses_symlinked_downloads_ancestor() {
+    let server = MockServer::start().await;
+    let url = artifact_url(&server, "ancestor.zip");
+    let (dir, env) = test_env();
+    fs::create_dir_all(&env.cache).expect("cache");
+    let external = dir.path().join("external-downloads");
+    fs::create_dir_all(&external).expect("external");
+    let sentinel = external.join("sentinel");
+    fs::write(&sentinel, b"keep").expect("sentinel");
+    std::os::unix::fs::symlink(&external, env.cache.join("downloads").as_std_path())
+        .expect("downloads symlink");
+
+    let error = fetch_artifact(&env, &http(), &url, None)
+        .await
+        .expect_err("symlinked cache ancestor must refuse");
+    assert!(
+        matches!(
+            error,
+            NetError::Io {
+                operation: "validate",
+                ..
+            }
+        ),
+        "unexpected error: {error}"
+    );
+    assert_eq!(fs::read(&sentinel).expect("sentinel survives"), b"keep");
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]

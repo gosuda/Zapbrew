@@ -10,9 +10,11 @@ use serde_json::Value;
 use zapbrew_api::Cask;
 use zapbrew_types::Checksum;
 
-use super::archive;
-use super::artifact::{self, Action, Plan, Reverse};
-use super::{path_exists, remove_entry, safe_lexical, unique_stage};
+use super::artifact::{Action, Plan, Reverse};
+use super::{
+    archive, artifact, confined_caskroom_dir, confined_caskroom_file, confined_caskroom_path,
+    one_normal_component, path_exists, remove_entry, unique_stage,
+};
 use crate::{Ctx, OpError};
 
 /// Filename of the typed install record stored inside a Caskroom version tree.
@@ -96,12 +98,17 @@ impl InstallRecord {
 
 /// Write the record into the staged version tree before artifact application;
 /// atomic promotion carries it into `Caskroom/<token>/<version>`.
-pub(super) fn write_record(staging: &Utf8Path, record: &InstallRecord) -> Result<(), OpError> {
+pub(super) fn write_record(
+    ctx: &Ctx,
+    staging: &Utf8Path,
+    record: &InstallRecord,
+) -> Result<(), OpError> {
     let path = staging.join(RECORD_FILE);
     let mut bytes = serde_json::to_vec_pretty(record).map_err(|source| OpError::InvalidState {
         reason: format!("could not serialize cask install record: {source}"),
     })?;
     bytes.push(b'\n');
+    confined_caskroom_file(ctx, &path)?;
     fs::write(&path, bytes).map_err(|source| OpError::io("write", &path, source))
 }
 
@@ -123,6 +130,7 @@ pub(super) fn read_record(
             reason: format!("cask version root {version_dir} is not a real directory"),
         });
     }
+    confined_caskroom_dir(ctx, version_dir)?;
     let path = version_dir.join(RECORD_FILE);
     // Reject a symlinked/non-regular record before opening it so a hostile
     // record path can never be dereferenced (FIFO/device DoS or disclosure).
@@ -140,6 +148,7 @@ pub(super) fn read_record(
             reason: format!("cask install record {path} is not a regular file"),
         });
     }
+    confined_caskroom_path(ctx, &path)?;
     let bytes = fs::read(&path).map_err(|source| OpError::io("read", &path, source))?;
     let text = std::str::from_utf8(&bytes).map_err(|source| OpError::InvalidState {
         reason: format!("cask install record {path} is not UTF-8: {source}"),
@@ -171,6 +180,9 @@ impl InstallRecord {
         if self.schema != 1 {
             return Err(invalid(format!("unsupported schema {}", self.schema)));
         }
+        if !one_normal_component(&self.token) || !one_normal_component(&self.version) {
+            return Err(invalid("unsafe token or version".to_string()));
+        }
         if self.token != token || self.version != version {
             return Err(invalid(format!(
                 "record is for '{} {}', expected '{token} {version}'",
@@ -182,16 +194,17 @@ impl InstallRecord {
             return Err(invalid(format!("unsafe appdir '{appdir}'")));
         }
         for target in self.targets() {
-            if !target.is_absolute() || !safe_lexical(target.as_std_path()) {
-                return Err(invalid(format!("unsafe target path '{target}'")));
-            }
-            let confined = target.starts_with(&ctx.env.home)
-                || target.starts_with(&ctx.env.prefix)
-                || target.starts_with(&appdir);
-            if !confined {
-                return Err(invalid(format!(
-                    "target path '{target}' is outside approved roots"
-                )));
+            artifact::confined_target_physical(ctx, &target, &[&appdir]).map_err(|error| {
+                invalid(format!(
+                    "target path '{target}' is outside approved roots: {error}"
+                ))
+            })?;
+        }
+        for group in self.uninstall.iter().chain(&self.zap) {
+            if !artifact::directives_valid(group) {
+                return Err(invalid(
+                    "uninstall/zap directive has invalid shape".to_owned(),
+                ));
             }
         }
         Ok(())
@@ -209,6 +222,11 @@ pub(super) struct CaskInstall<'a> {
     pub force: bool,
 }
 
+struct WrittenReceipt {
+    path: Utf8PathBuf,
+    created_root: Option<Utf8PathBuf>,
+}
+
 /// Execute one fully preflighted install as a journaled whole-token
 /// transaction. With `force`, every installed version of the token collapses to
 /// the new version: all old records are validated before any mutation, every
@@ -224,7 +242,18 @@ pub(super) async fn install(ctx: &Ctx, request: CaskInstall<'_>) -> Result<(), O
         appdir,
         force,
     } = request;
+    if !one_normal_component(&cask.token) {
+        return Err(OpError::Refusal {
+            message: format!("Cask '{}' has an unsafe token.", cask.token),
+        });
+    }
+    if !one_normal_component(version) {
+        return Err(OpError::Refusal {
+            message: format!("Cask '{}' version '{}' is unsafe.", cask.token, version),
+        });
+    }
     let token_dir = ctx.env.caskroom.join(&cask.token);
+    confined_caskroom_dir(ctx, &token_dir)?;
     let final_dir = token_dir.join(version);
     let installed = installed_version_dirs(&token_dir)?;
     if !force && !installed.is_empty() {
@@ -235,10 +264,11 @@ pub(super) async fn install(ctx: &Ctx, request: CaskInstall<'_>) -> Result<(), O
 
     let cached = zapbrew_net::fetch_artifact(&ctx.env, &ctx.http, url, checksum).await?;
     let staging = unique_stage(ctx, &cask.token)?;
+    confined_caskroom_dir(ctx, &staging)?;
     let mut journal = Vec::<Reverse>::new();
     let mut receipt = None;
     let mut backup_root = None;
-
+    let mut records: Vec<InstallRecord> = Vec::new();
     let result = (|| {
         archive::extract(ctx, &cached.path, url, &staging)?;
 
@@ -246,7 +276,6 @@ pub(super) async fn install(ctx: &Ctx, request: CaskInstall<'_>) -> Result<(), O
             // Whole-token force replacement: load and validate every old record
             // before any mutation, then back up each deployed target once and
             // every old version dir plus its matching metadata receipt tree.
-            let mut records = Vec::new();
             for old_dir in &installed {
                 records.push(read_record(ctx, &cask.token, old_dir)?);
             }
@@ -258,9 +287,18 @@ pub(super) async fn install(ctx: &Ctx, request: CaskInstall<'_>) -> Result<(), O
                 .collect::<BTreeSet<_>>();
             let root = unique_stage(ctx, &format!("{}-replaced", cask.token))?;
             backup_root = Some(root.clone());
+            confined_caskroom_dir(ctx, &root)?;
+            let appdirs_owned: Vec<Utf8PathBuf> = records
+                .iter()
+                .map(InstallRecord::appdir)
+                .chain(std::iter::once(appdir.to_path_buf()))
+                .collect();
+            let appdir_refs: Vec<&Utf8Path> = appdirs_owned.iter().map(|a| a.as_path()).collect();
             artifact::backup_targets(
+                ctx,
                 targets.iter().map(Utf8PathBuf::as_path),
                 &root,
+                &appdir_refs,
                 &mut journal,
             )?;
             for old_dir in &installed {
@@ -268,6 +306,7 @@ pub(super) async fn install(ctx: &Ctx, request: CaskInstall<'_>) -> Result<(), O
                     reason: format!("installed cask version has no basename: {old_dir}"),
                 })?;
                 let backup = root.join(format!("version-{name}"));
+                confined_caskroom_dir(ctx, &backup)?;
                 fs::rename(old_dir, &backup)
                     .map_err(|source| OpError::io("backup", old_dir, source))?;
                 journal.push(Reverse::RestoreDir {
@@ -276,7 +315,9 @@ pub(super) async fn install(ctx: &Ctx, request: CaskInstall<'_>) -> Result<(), O
                 });
                 let metadata = token_dir.join(".metadata").join(name);
                 if path_exists(&metadata) {
+                    confined_caskroom_dir(ctx, &metadata)?;
                     let backup = root.join(format!("metadata-{name}"));
+                    confined_caskroom_dir(ctx, &backup)?;
                     fs::rename(&metadata, &backup)
                         .map_err(|source| OpError::io("backup", &metadata, source))?;
                     journal.push(Reverse::RestoreDir {
@@ -290,11 +331,18 @@ pub(super) async fn install(ctx: &Ctx, request: CaskInstall<'_>) -> Result<(), O
         // Persist the typed record in the staged tree before any artifact
         // application; atomic promotion carries it into the version directory.
         let record = InstallRecord::from_plan(plan, &cask.token, version, appdir);
-        write_record(&staging, &record)?;
-        artifact::apply(ctx, plan, &staging, &final_dir, &mut journal)?;
+        write_record(ctx, &staging, &record)?;
+        artifact::apply(ctx, plan, &staging, &final_dir, appdir, &mut journal)?;
         let written = write_receipt(ctx, cask, version)?;
         receipt = Some(written);
+        if !one_normal_component(&cask.token) || !one_normal_component(version) {
+            return Err(OpError::Refusal {
+                message: format!("Cask '{}' version '{}' is unsafe.", cask.token, version),
+            });
+        }
+        confined_caskroom_dir(ctx, &final_dir)?;
         if let Some(parent) = final_dir.parent() {
+            confined_caskroom_dir(ctx, parent)?;
             fs::create_dir_all(parent).map_err(|source| OpError::io("create", parent, source))?;
         }
         fs::rename(&staging, &final_dir)
@@ -311,13 +359,24 @@ pub(super) async fn install(ctx: &Ctx, request: CaskInstall<'_>) -> Result<(), O
             Ok(())
         }
         Err(original) => {
-            let mut leftovers = artifact::rollback(&journal);
-            if let Some(path) = receipt.as_ref()
-                && remove_entry(path).is_err()
-                && path_exists(path)
-            {
-                leftovers.push(path.to_string());
+            let appdirs: Vec<Utf8PathBuf> = records
+                .iter()
+                .map(InstallRecord::appdir)
+                .chain(std::iter::once(appdir.to_path_buf()))
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            let appdir_refs: Vec<&Utf8Path> = appdirs.iter().map(|a| a.as_path()).collect();
+            let mut leftovers = Vec::new();
+            // Remove the new receipt tree before restoring same-version metadata
+            // from the journal; reversing that order deletes the restored tree.
+            if let Some(receipt) = receipt.as_ref() {
+                let rollback_path = receipt.created_root.as_ref().unwrap_or(&receipt.path);
+                if remove_entry(rollback_path).is_err() && path_exists(rollback_path) {
+                    leftovers.push(rollback_path.to_string());
+                }
             }
+            leftovers.extend(artifact::rollback(ctx, &journal, &appdir_refs));
             if remove_entry(&staging).is_err() && path_exists(&staging) {
                 leftovers.push(staging.to_string());
             }
@@ -340,7 +399,7 @@ pub(super) async fn install(ctx: &Ctx, request: CaskInstall<'_>) -> Result<(), O
     }
 }
 
-fn write_receipt(ctx: &Ctx, cask: &Cask, version: &str) -> Result<Utf8PathBuf, OpError> {
+fn write_receipt(ctx: &Ctx, cask: &Cask, version: &str) -> Result<WrittenReceipt, OpError> {
     let timestamp = Timestamp::now().strftime("%Y%m%d%H%M%S").to_string();
     let path = ctx
         .env
@@ -351,17 +410,53 @@ fn write_receipt(ctx: &Ctx, cask: &Cask, version: &str) -> Result<Utf8PathBuf, O
         .join(timestamp)
         .join("Casks")
         .join(format!("{}.json", cask.token));
+    confined_caskroom_file(ctx, &path)?;
     let parent = path.parent().ok_or_else(|| OpError::InvalidState {
         reason: format!("receipt path has no parent: {path}"),
     })?;
-    fs::create_dir_all(parent).map_err(|source| OpError::io("create", parent, source))?;
+    confined_caskroom_dir(ctx, parent)?;
+    let mut created_root = None;
+    let mut current = parent;
+    while current != ctx.env.caskroom {
+        match fs::symlink_metadata(current) {
+            Ok(_) => break,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => {
+                created_root = Some(current.to_path_buf());
+                current = current.parent().ok_or_else(|| OpError::InvalidState {
+                    reason: format!("receipt path has no Caskroom ancestor: {path}"),
+                })?;
+            }
+            Err(source) => return Err(OpError::io("inspect", current, source)),
+        }
+    }
+    if path_exists(&path) {
+        return Err(OpError::InvalidState {
+            reason: format!("cask receipt already exists: {path}"),
+        });
+    }
     let mut bytes =
         serde_json::to_vec_pretty(&cask.raw).map_err(|source| OpError::InvalidState {
             reason: format!("could not serialize cask receipt: {source}"),
         })?;
     bytes.push(b'\n');
-    fs::write(&path, bytes).map_err(|source| OpError::io("write", &path, source))?;
-    Ok(path)
+    let result = (|| {
+        fs::create_dir_all(parent).map_err(|source| OpError::io("create", parent, source))?;
+        confined_caskroom_file(ctx, &path)?;
+        fs::write(&path, bytes).map_err(|source| OpError::io("write", &path, source))
+    })();
+    match result {
+        Ok(()) => Ok(WrittenReceipt { path, created_root }),
+        Err(original) => {
+            let rollback_path = created_root.as_ref().unwrap_or(&path);
+            if remove_entry(rollback_path).is_err() && path_exists(rollback_path) {
+                return Err(OpError::RollbackIncomplete {
+                    original: Box::new(original),
+                    leftovers: rollback_path.to_string(),
+                });
+            }
+            Err(original)
+        }
+    }
 }
 
 pub(super) fn validate_download(
@@ -374,6 +469,11 @@ pub(super) fn validate_download(
         .ok_or_else(|| OpError::Refusal {
             message: format!("Cask '{}' has no version.", cask.token),
         })?;
+    if !one_normal_component(&version) {
+        return Err(OpError::Refusal {
+            message: format!("Cask '{}' version '{}' is unsafe.", cask.token, version),
+        });
+    }
     let url = cask
         .url
         .clone()
