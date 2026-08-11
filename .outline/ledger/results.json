@@ -2036,7 +2036,9 @@
       "cell": "ops.journal.commit-success.linux",
       "achieved_evidence": [],
       "failure_evidence": null,
-      "perf_refs": [],
+      "perf_refs": [
+        "ops.journal.commit-success.fixed.linux"
+      ],
       "deviation": null,
       "finding": "none"
     },
@@ -3570,6 +3572,77 @@
     }
   ],
   "deviations": [],
-  "workloads": [],
-  "perf_units": []
+  "workloads": [
+    {
+      "id": "w2-journal-disabled-probe-linux-x86_64",
+      "fixture_digest": "5f4c0d16e3e3f2180df48cd21b0c27b5c450dffb7aac82b0b2cfc3623af75967",
+      "source_digest": "a9746d8da580870dc2509739d60bfe940fed80f1d50309634dd6b83efde6278b",
+      "platform": "linux",
+      "arch": "x86_64",
+      "filesystem_stage": "tmpfs-recorded-root-v1",
+      "filesystem_stage_digest": "6ae441cf65b1587834b54719462a98999b3498b79dd6eba40ff652e59bfd97f0",
+      "toolchain_digest": "ce1e068fdb6f1a46e17b4ccf7781576f64e0e01d43b67fb889e6ef454b621466",
+      "build_digest": "99c278eed69d2697c3bc9620de1d977179f29aaa2c2a953c7d8e1597122d4bd0",
+      "warmups": 3,
+      "samples": [2.35035610108, 2.37502221508, 2.41695446008, 2.2154510800800002, 2.3658144880800003, 2.23467268708, 2.18987075808, 2.35298838808, 2.55746996408, 2.38687078908],
+      "install_loop_samples": [2.12225723, 2.168630387, 2.210812154, 2.02805898, 2.167526401, 2.037557769, 1.996750292, 2.147422651, 2.328687089, 2.177673367],
+      "sample_artifact_digest": "4e021b6cb45d707246b2f88e1f6935a395f9ba7bd072f23216442d94d27b1a21"
+    },
+    {
+      "id": "w2-journal-post-linux-x86_64",
+      "fixture_digest": "5f4c0d16e3e3f2180df48cd21b0c27b5c450dffb7aac82b0b2cfc3623af75967",
+      "source_digest": "a9746d8da580870dc2509739d60bfe940fed80f1d50309634dd6b83efde6278b",
+      "platform": "linux",
+      "arch": "x86_64",
+      "filesystem_stage": "tmpfs-recorded-root-v1",
+      "filesystem_stage_digest": "6ae441cf65b1587834b54719462a98999b3498b79dd6eba40ff652e59bfd97f0",
+      "toolchain_digest": "ce1e068fdb6f1a46e17b4ccf7781576f64e0e01d43b67fb889e6ef454b621466",
+      "build_digest": "a54a167cb4d37dd55e9c56db581edb52c5cbd9e23bc7e309a22fdccc5abcc5a5",
+      "warmups": 3,
+      "samples": [2.3517291685, 2.3825219135, 2.3403264445, 2.3443018245, 2.3209546145, 2.2764398345, 2.2891588805, 2.2653996165, 2.3289225965, 2.3703589905],
+      "install_loop_samples": [2.149720609, 2.186298734, 2.15773443, 2.144824213, 2.124446649, 2.078456356, 2.085795102, 2.0691242, 2.090616491, 2.168064438],
+      "sample_artifact_digest": "3da86320425a71d9755af33501d397f3069e0128e58a021757469bd052185adf"
+    },
+    {
+      "id": "w2-journal-pre-linux-x86_64",
+      "fixture_digest": "5f4c0d16e3e3f2180df48cd21b0c27b5c450dffb7aac82b0b2cfc3623af75967",
+      "source_digest": "a9746d8da580870dc2509739d60bfe940fed80f1d50309634dd6b83efde6278b",
+      "platform": "linux",
+      "arch": "x86_64",
+      "filesystem_stage": "tmpfs-recorded-root-v1",
+      "filesystem_stage_digest": "6ae441cf65b1587834b54719462a98999b3498b79dd6eba40ff652e59bfd97f0",
+      "toolchain_digest": "ce1e068fdb6f1a46e17b4ccf7781576f64e0e01d43b67fb889e6ef454b621466",
+      "build_digest": "fb76482c155fdc36b9eb5c535c8efa66d5e0fc3ee54f5e1c1767bfb0afc25845",
+      "warmups": 3,
+      "samples": [2.43072725034, 2.2718253433399997, 2.34648681234, 2.53004498334, 2.32520338434, 2.4501854863399997, 2.27870491434, 2.3327367523399998, 2.3286074153399996, 2.37348861534],
+      "install_loop_samples": [2.224904596, 2.070375873, 2.129024939, 2.293036234, 2.137501049, 2.217971704, 2.072694856, 2.117467471, 2.129665941, 2.166108936],
+      "sample_artifact_digest": "efdc2ac6f7964f6eda5715919207fefb2596bfcc82d2c03ca683e3ad245cd957"
+    }
+  ],
+  "perf_units": [
+    {
+      "id": "ops.journal.commit-success.fixed.linux",
+      "workload": "w2-journal-post-linux-x86_64",
+      "samples": [],
+      "floor": null,
+      "experiment": null,
+      "input_scaling": [],
+      "cell_refs": [
+        "ops.journal.commit-success.linux"
+      ],
+      "classification": {
+        "grade": "fixed",
+        "basis": "stage-disabled",
+        "baseline_workload": "w2-journal-post-linux-x86_64",
+        "probe_workload": "w2-journal-disabled-probe-linux-x86_64",
+        "probe_source_digest": "165e1dffb15ee11733a13e7d7f83961b4810d36ffeee42a75d14e03025457040",
+        "signed_median_delta_seconds": -0.02477691757999967,
+        "baseline_over_probe_ratio": 0.9894986426726253,
+        "review_evidence": {
+          "anchor": ".outline/sdd/task-journal-performance-report.md#W3 classification",
+          "digest": "26ac05c07997f7172aaabbb5bb31136439b8cdb6937f5aa9df88dc1fadf88e15"
+        }
+      }
+    }
+  ]
 }

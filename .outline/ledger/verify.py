@@ -154,13 +154,17 @@ FAILURE_FIELDS = {"status", "evidence_refs"}
 WORKLOAD_FIELDS = {
     "id",
     "fixture_digest",
+    "source_digest",
     "platform",
     "arch",
     "filesystem_stage",
+    "filesystem_stage_digest",
     "toolchain_digest",
     "build_digest",
     "warmups",
     "samples",
+    "install_loop_samples",
+    "sample_artifact_digest",
 }
 PERF_FIELDS = {
     "id",
@@ -170,10 +174,26 @@ PERF_FIELDS = {
     "experiment",
     "input_scaling",
     "cell_refs",
+    "classification",
 }
 FLOOR_FIELDS = {"expression", "variables", "dimension"}
 EXPERIMENT_FIELDS = {"pre_samples", "post_samples", "action"}
 SCALING_FIELDS = {"input_size", "fixture_digest", "samples"}
+CLASSIFICATION_FIXED_FIELDS = {
+    "grade",
+    "basis",
+    "baseline_workload",
+    "probe_workload",
+    "probe_source_digest",
+    "signed_median_delta_seconds",
+    "baseline_over_probe_ratio",
+    "review_evidence",
+}
+CLASSIFICATION_ATFLOOR_FIELDS = {"grade"}
+CLASSIFICATION_HOT_FIELDS = {"grade"}
+CLASSIFICATION_GRADES = {"fixed", "at-floor", "hot"}
+FIXED_BASES = {"stage-disabled", "unit-attribution"}
+REVIEW_EVIDENCE_FIELDS = {"anchor", "digest"}
 APPROVAL_FIELDS = {
     "event_id",
     "kind",
@@ -812,7 +832,14 @@ def validate_workloads(rows: Any, report: Report) -> dict[str, Any]:
         if set(workload) != WORKLOAD_FIELDS:
             report.integrity.append(f"workload {workload_id} has non-canonical fields")
             continue
-        for key in ("fixture_digest", "toolchain_digest", "build_digest"):
+        for key in (
+            "fixture_digest",
+            "source_digest",
+            "filesystem_stage_digest",
+            "toolchain_digest",
+            "build_digest",
+            "sample_artifact_digest",
+        ):
             if not valid_sha256(workload.get(key)):
                 report.integrity.append(f"workload {workload_id}.{key} must be sha256")
         if workload.get("platform") not in {"linux", "macos"}:
@@ -825,6 +852,18 @@ def validate_workloads(rows: Any, report: Report) -> dict[str, Any]:
             report.integrity.append(f"workload {workload_id}.warmups must be >=3")
         samples = numeric_samples(workload.get("samples"), f"workload {workload_id}.samples", report)
         trusted_samples(samples, f"workload {workload_id}.samples", report, minimum_median=1.0)
+        loop = numeric_samples(
+            workload.get("install_loop_samples"),
+            f"workload {workload_id}.install_loop_samples",
+            report,
+        )
+        trusted_samples(loop, f"workload {workload_id}.install_loop_samples", report)
+        if len(loop) != len(samples):
+            report.integrity.append(
+                f"workload {workload_id}.install_loop_samples not aligned to wall samples"
+            )
+        if samples and loop and statistics.median(loop) < 0.90 * statistics.median(samples):
+            report.integrity.append(f"workload {workload_id} install loop below 90% of wall time")
     return workloads
 
 
@@ -915,49 +954,31 @@ def validate_perf_units(
         else:
             workload_platform = workload.get("platform") if workload is not None else None
             for ref in cell_refs:
-                cell = cells[ref]
-                cell_platform = cell.get("platform")
+                cell_platform = cells[ref].get("platform")
                 if workload_platform is not None and cell_platform not in {"any", workload_platform}:
                     report.integrity.append(
                         f"performance unit {unit_id} workload platform {workload_platform} "
                         f"cannot attribute to {cell_platform} cell {ref}"
                     )
-        samples = numeric_samples(unit.get("samples"), f"performance unit {unit_id}.samples", report)
-        trusted_samples(samples, f"performance unit {unit_id}.samples", report)
-        if workload is not None and isinstance(workload.get("samples"), list) and len(samples) != len(workload["samples"]):
-            report.integrity.append(f"performance unit {unit_id} samples are not aligned to workload runs")
 
-        floor = unit.get("floor")
-        floor_value = None
-        if not isinstance(floor, dict) or set(floor) != FLOOR_FIELDS:
-            report.integrity.append(f"performance unit {unit_id}.floor has non-canonical fields")
-        else:
-            if not isinstance(floor.get("dimension"), str) or not floor["dimension"]:
-                report.integrity.append(f"performance unit {unit_id}.floor.dimension must be non-empty")
-            floor_value = validate_floor_expression(
-                floor.get("expression"), floor.get("variables"), f"performance unit {unit_id}.floor", report
+        classification = unit.get("classification")
+        if not isinstance(classification, dict):
+            report.integrity.append(f"performance unit {unit_id}.classification must be an object")
+            continue
+        grade = classification.get("grade")
+        expected_classification_fields = {
+            "fixed": CLASSIFICATION_FIXED_FIELDS,
+            "at-floor": CLASSIFICATION_ATFLOOR_FIELDS,
+            "hot": CLASSIFICATION_HOT_FIELDS,
+        }.get(grade)
+        if grade not in CLASSIFICATION_GRADES:
+            report.integrity.append(f"performance unit {unit_id} has invalid classification grade")
+            continue
+        if set(classification) != expected_classification_fields:
+            report.integrity.append(
+                f"performance unit {unit_id}.classification has non-canonical fields for {grade}"
             )
-
-        experiment = unit.get("experiment")
-        pre: list[float] = []
-        post: list[float] = []
-        action = None
-        if not isinstance(experiment, dict) or set(experiment) != EXPERIMENT_FIELDS:
-            report.integrity.append(f"performance unit {unit_id}.experiment has non-canonical fields")
-        else:
-            pre = numeric_samples(experiment.get("pre_samples"), f"performance unit {unit_id}.experiment.pre", report)
-            post = numeric_samples(experiment.get("post_samples"), f"performance unit {unit_id}.experiment.post", report)
-            trusted_samples(pre, f"performance unit {unit_id}.experiment.pre", report)
-            trusted_samples(post, f"performance unit {unit_id}.experiment.post", report)
-            action = experiment.get("action")
-            if action not in {"keep", "revert"}:
-                report.integrity.append(f"performance unit {unit_id}.experiment.action is invalid")
-            if pre and post:
-                win = statistics.median(pre) / statistics.median(post)
-                if action == "keep" and win < 1.05:
-                    report.integrity.append(
-                        f"performance unit {unit_id} keeps a {win:.6g}x change below the 1.05x gate"
-                    )
+            continue
 
         scaling = unit.get("input_scaling")
         scaling_hot = False
@@ -991,12 +1012,187 @@ def validate_perf_units(
             if len(sizes) >= 2 and sizes[-1][0] > sizes[0][0] and sizes[-1][1] > sizes[0][1] * 1.05:
                 scaling_hot = True
 
+        if grade == "fixed":
+            basis = classification.get("basis")
+            if basis not in FIXED_BASES:
+                report.integrity.append(f"performance unit {unit_id} has invalid fixed basis")
+            if unit.get("floor") is not None:
+                report.integrity.append(f"fixed unit {unit_id} carries a floor")
+            if unit.get("experiment") is not None:
+                report.integrity.append(f"fixed unit {unit_id} carries an optimization experiment")
+            if scaling:
+                report.integrity.append(f"fixed unit {unit_id} carries a scaling claim")
+
+            direct_samples = numeric_samples(
+                unit.get("samples"), f"performance unit {unit_id}.samples", report
+            )
+            if basis == "stage-disabled" and direct_samples:
+                report.integrity.append(f"fixed unit {unit_id} carries direct unit samples")
+            if basis == "unit-attribution":
+                trusted_samples(direct_samples, f"performance unit {unit_id}.samples", report)
+                if not direct_samples:
+                    report.integrity.append(f"fixed unit {unit_id} lacks direct unit samples")
+                if (
+                    workload is not None
+                    and isinstance(workload.get("samples"), list)
+                    and len(direct_samples) != len(workload["samples"])
+                ):
+                    report.integrity.append(
+                        f"performance unit {unit_id} samples are not aligned to workload runs"
+                    )
+                if direct_samples and workload is not None and workload.get("samples"):
+                    baseline_median = statistics.median(float(x) for x in workload["samples"])
+                    if statistics.median(direct_samples) / baseline_median >= 0.05:
+                        report.integrity.append(
+                            f"fixed grade rejected: direct attribution is >=5% of wall time"
+                        )
+
+            baseline_id = classification.get("baseline_workload")
+            probe_id = classification.get("probe_workload")
+            baseline = workloads.get(baseline_id)
+            probe = workloads.get(probe_id)
+            if baseline is None:
+                report.integrity.append(
+                    f"fixed unit {unit_id} references unknown baseline workload {baseline_id}"
+                )
+            if probe is None:
+                report.integrity.append(f"fixed unit {unit_id} references unknown probe workload {probe_id}")
+            if baseline_id != workload_id:
+                report.integrity.append(f"fixed baseline workload must equal unit workload for {unit_id}")
+            if baseline_id == probe_id:
+                report.integrity.append(f"fixed probe must differ from baseline for {unit_id}")
+
+            probe_source_digest = classification.get("probe_source_digest")
+            if not valid_sha256(probe_source_digest):
+                report.integrity.append(f"fixed unit {unit_id}.probe_source_digest must be sha256")
+            if baseline is not None and probe_source_digest == baseline.get("build_digest"):
+                report.integrity.append(f"fixed unit {unit_id} overloads baseline build digest as probe source")
+            review_evidence = classification.get("review_evidence")
+            if not isinstance(review_evidence, dict) or set(review_evidence) != REVIEW_EVIDENCE_FIELDS:
+                report.integrity.append(f"fixed unit {unit_id}.review_evidence has non-canonical fields")
+            else:
+                if not isinstance(review_evidence.get("anchor"), str) or not review_evidence["anchor"]:
+                    report.integrity.append(f"fixed unit {unit_id}.review_evidence.anchor must be non-empty")
+                if not valid_sha256(review_evidence.get("digest")):
+                    report.integrity.append(f"fixed unit {unit_id}.review_evidence.digest must be sha256")
+
+            if baseline is not None and probe is not None:
+                if basis == "stage-disabled":
+                    for key in (
+                        "platform",
+                        "arch",
+                        "fixture_digest",
+                        "source_digest",
+                        "filesystem_stage",
+                        "filesystem_stage_digest",
+                        "toolchain_digest",
+                        "warmups",
+                    ):
+                        if baseline.get(key) != probe.get(key):
+                            report.integrity.append(
+                                f"stage-disabled probe for {unit_id} is not aligned on {key}"
+                            )
+                    if len(baseline.get("samples", [])) != len(probe.get("samples", [])):
+                        report.integrity.append(
+                            f"stage-disabled probe for {unit_id} is not aligned on sample count"
+                        )
+                    if baseline.get("build_digest") == probe.get("build_digest"):
+                        report.integrity.append(
+                            "stage-disabled probe is the same build as baseline"
+                        )
+                baseline_samples = numeric_samples(
+                    baseline.get("samples"), f"fixed unit {unit_id}.baseline samples", report
+                )
+                probe_samples = numeric_samples(
+                    probe.get("samples"), f"fixed unit {unit_id}.probe samples", report
+                )
+                if baseline_samples and probe_samples:
+                    baseline_median = statistics.median(baseline_samples)
+                    probe_median = statistics.median(probe_samples)
+                    measured_delta = baseline_median - probe_median
+                    signed_delta = classification.get("signed_median_delta_seconds")
+                    if (
+                        isinstance(signed_delta, bool)
+                        or not isinstance(signed_delta, (int, float))
+                        or not math.isfinite(float(signed_delta))
+                        or not math.isclose(
+                            float(signed_delta), measured_delta, rel_tol=1e-9, abs_tol=1e-12
+                        )
+                    ):
+                        report.integrity.append(
+                            f"fixed signed delta does not match measured medians for {unit_id}"
+                        )
+                    measured_ratio = baseline_median / probe_median
+                    ratio = classification.get("baseline_over_probe_ratio")
+                    if (
+                        isinstance(ratio, bool)
+                        or not isinstance(ratio, (int, float))
+                        or not math.isfinite(float(ratio))
+                        or not math.isclose(float(ratio), measured_ratio, rel_tol=1e-9)
+                    ):
+                        report.integrity.append(f"fixed ratio mismatch for {unit_id}")
+                    if basis == "stage-disabled":
+                        speedup = measured_delta / baseline_median
+                        if speedup >= 0.05:
+                            report.integrity.append(
+                                "fixed grade rejected: disabling the stage saves >=5% (hot cost)"
+                            )
+            continue
+
+        samples = numeric_samples(unit.get("samples"), f"performance unit {unit_id}.samples", report)
+        trusted_samples(samples, f"performance unit {unit_id}.samples", report)
+        if workload is not None and isinstance(workload.get("samples"), list) and len(samples) != len(workload["samples"]):
+            report.integrity.append(f"performance unit {unit_id} samples are not aligned to workload runs")
+
+        floor = unit.get("floor")
+        floor_value = None
+        if not isinstance(floor, dict) or set(floor) != FLOOR_FIELDS:
+            report.integrity.append(f"performance unit {unit_id}.floor has non-canonical fields")
+        else:
+            if not isinstance(floor.get("dimension"), str) or not floor["dimension"]:
+                report.integrity.append(f"performance unit {unit_id}.floor.dimension must be non-empty")
+            floor_value = validate_floor_expression(
+                floor.get("expression"), floor.get("variables"), f"performance unit {unit_id}.floor", report
+            )
+
+        experiment = unit.get("experiment")
+        pre: list[float] = []
+        post: list[float] = []
+        action = None
+        if grade == "at-floor":
+            if experiment is not None:
+                report.integrity.append(f"at-floor unit {unit_id} carries an optimization experiment")
+        elif not isinstance(experiment, dict) or set(experiment) != EXPERIMENT_FIELDS:
+            report.integrity.append(f"performance unit {unit_id}.experiment has non-canonical fields")
+        else:
+            pre = numeric_samples(experiment.get("pre_samples"), f"performance unit {unit_id}.experiment.pre", report)
+            post = numeric_samples(experiment.get("post_samples"), f"performance unit {unit_id}.experiment.post", report)
+            trusted_samples(pre, f"performance unit {unit_id}.experiment.pre", report)
+            trusted_samples(post, f"performance unit {unit_id}.experiment.post", report)
+            action = experiment.get("action")
+            if action not in {"keep", "revert"}:
+                report.integrity.append(f"performance unit {unit_id}.experiment.action is invalid")
+            if pre and post:
+                win = statistics.median(pre) / statistics.median(post)
+                if action == "keep" and win < 1.05:
+                    report.integrity.append(
+                        f"performance unit {unit_id} keeps a {win:.6g}x change below the 1.05x gate"
+                    )
+
         if samples and workload is not None and workload.get("samples") and floor_value is not None:
             workload_median = statistics.median(float(x) for x in workload["samples"])
             unit_median = statistics.median(samples)
-            hot = unit_median / workload_median >= 0.05 or scaling_hot
-            if hot:
-                multiple = unit_median / floor_value
+            measured_hot = unit_median / workload_median >= 0.05 or scaling_hot
+            multiple = unit_median / floor_value
+            if grade == "at-floor" and (not measured_hot or multiple > 2):
+                report.integrity.append(
+                    f"at-floor grade contradicts measurement for performance unit {unit_id}"
+                )
+            if grade == "hot" and not measured_hot:
+                report.integrity.append(
+                    f"hot grade contradicts a measured cold unit {unit_id}"
+                )
+            if measured_hot:
                 hot_markers[unit_id] = {
                     "multiple": multiple,
                     "action": action,
@@ -1283,9 +1479,16 @@ def subject_digest(
     if kind == "safety-deviation" and subject_id in deviations:
         return deviations[subject_id].get("proof_digest")
     if kind == "performance-floor" and subject_id in perf_units:
-        return digest(perf_units[subject_id].get("floor"))
+        unit = perf_units[subject_id]
+        classification = unit.get("classification")
+        if not isinstance(classification, dict) or classification.get("grade") not in {"at-floor", "hot"}:
+            return None
+        return digest(unit.get("floor"))
     if kind == "hot-reclassification" and subject_id in perf_units:
         unit = perf_units[subject_id]
+        classification = unit.get("classification")
+        if not isinstance(classification, dict) or classification.get("grade") != "hot":
+            return None
         workload_id = unit.get("workload")
         workload = workloads.get(workload_id)
         if workload is None:
@@ -1986,6 +2189,21 @@ def make_temp_ledger(source: Path, temp_parent: Path) -> Path:
         target = repo / row["path"]
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("// self-test fixture\n")
+    results = json.loads((ledger / "results.json").read_text())
+    for row in results["results"]:
+        row.update(
+            achieved_evidence=[],
+            failure_evidence=None,
+            perf_refs=[],
+            deviation=None,
+            finding="none",
+        )
+    results["deviations"] = []
+    results["workloads"] = []
+    results["perf_units"] = []
+    write_json(ledger / "results.json", results)
+    (ledger / "approvals.jsonl").write_text("")
+    (ledger / "tranches.jsonl").write_text("")
     return ledger
 
 
@@ -2351,15 +2569,19 @@ def run_self_tests(source: Path) -> tuple[bool, list[str]]:
         scope = json.loads((ledger / "scope.json").read_text())
         data = json.loads((ledger / "results.json").read_text())
         data["workloads"] = [{
-            "id":"w1","fixture_digest":"a"*64,"platform":"linux","arch":"x86_64",
-            "filesystem_stage":"warm","toolchain_digest":"b"*64,"build_digest":"c"*64,
+            "id":"w1","fixture_digest":"a"*64,"source_digest":"d"*64,
+            "platform":"linux","arch":"x86_64",
+            "filesystem_stage":"warm","filesystem_stage_digest":"e"*64,
+            "toolchain_digest":"b"*64,"build_digest":"c"*64,
             "warmups":3,"samples":[2.0]*10,
+            "install_loop_samples":[2.0]*10,"sample_artifact_digest":"f"*64,
         }]
         data["perf_units"] = [{
             "id":"p1","workload":"w1","samples":[0.5]*10,
             "floor":{"expression":"calls * cost","variables":{"calls":1,"cost":0.1},"dimension":"seconds"},
             "experiment":{"pre_samples":[2.0]*10,"post_samples":[1.99]*10,"action":"revert"},
             "input_scaling":[],"cell_refs":[next(cell for cell in scope["cells"] if cell["platform"] == "macos")["cell_id"]],
+            "classification":{"grade":"hot"},
         }]
         write_json(ledger / "results.json", data)
         result = verify(ledger, offline=True)
@@ -2368,9 +2590,61 @@ def run_self_tests(source: Path) -> tuple[bool, list[str]]:
     def add_workload(ledger: Path, samples: list[float], warmups: int = 3) -> dict[str, Any]:
         data = json.loads((ledger / "results.json").read_text())
         data["workloads"] = [{
-            "id":"w1","fixture_digest":"a"*64,"platform":"linux","arch":"x86_64",
-            "filesystem_stage":"warm","toolchain_digest":"b"*64,"build_digest":"c"*64,
+            "id":"w1","fixture_digest":"a"*64,"source_digest":"d"*64,
+            "platform":"linux","arch":"x86_64",
+            "filesystem_stage":"warm","filesystem_stage_digest":"e"*64,
+            "toolchain_digest":"b"*64,"build_digest":"c"*64,
             "warmups":warmups,"samples":samples,
+            "install_loop_samples":samples,"sample_artifact_digest":"f"*64,
+        }]
+        return data
+
+    def build_fixed_unit(
+        data: dict[str, Any],
+        baseline_samples: list[float],
+        probe_samples: list[float],
+        signed_delta: float,
+        ratio: float,
+        *,
+        cell_refs: list[str] | None = None,
+        basis: str = "stage-disabled",
+        probe_source_digest: str = "9"*64,
+        review_anchor: str = "W3 review",
+        review_digest: str = "8"*64,
+    ) -> dict[str, Any]:
+        baseline = {
+            "id":"w2-journal-post","fixture_digest":"a"*64,"source_digest":"d"*64,
+            "platform":"linux","arch":"x86_64",
+            "filesystem_stage":"warm","filesystem_stage_digest":"e"*64,
+            "toolchain_digest":"b"*64,"build_digest":"c"*64,
+            "warmups":3,"samples":baseline_samples,
+            "install_loop_samples":baseline_samples,"sample_artifact_digest":"f"*64,
+        }
+        probe = {
+            "id":"w2-journal-disabled","fixture_digest":"a"*64,"source_digest":"d"*64,
+            "platform":"linux","arch":"x86_64",
+            "filesystem_stage":"warm","filesystem_stage_digest":"e"*64,
+            "toolchain_digest":"b"*64,"build_digest":"d"*64,
+            "warmups":3,"samples":probe_samples,
+            "install_loop_samples":probe_samples,"sample_artifact_digest":"7"*64,
+        }
+        data["workloads"] = [baseline, probe]
+        data["perf_units"] = [{
+            "id":"p1","workload":"w2-journal-post","samples":[],
+            "floor":None,
+            "experiment":None,
+            "input_scaling":[],
+            "cell_refs":cell_refs or [],
+            "classification":{
+                "grade":"fixed",
+                "basis":basis,
+                "baseline_workload":"w2-journal-post",
+                "probe_workload":"w2-journal-disabled",
+                "probe_source_digest":probe_source_digest,
+                "signed_median_delta_seconds":signed_delta,
+                "baseline_over_probe_ratio":ratio,
+                "review_evidence":{"anchor":review_anchor,"digest":review_digest},
+            },
         }]
         return data
 
@@ -2407,6 +2681,7 @@ def run_self_tests(source: Path) -> tuple[bool, list[str]]:
             "floor":{"expression":"calls * cost","variables":{"calls":1,"cost":0.1},"dimension":"seconds"},
             "experiment":{"pre_samples":[2.0]*10,"post_samples":[1.99]*10,"action":"revert"},
             "input_scaling":[],"cell_refs":[scope["cells"][0]["cell_id"]],
+            "classification":{"grade":"hot"},
         }]
         write_json(ledger / "results.json", data)
         result = verify(ledger, offline=True)
@@ -2423,8 +2698,9 @@ def run_self_tests(source: Path) -> tuple[bool, list[str]]:
         data["perf_units"] = [{
             "id":"p1","workload":"w1","samples":[0.5]*10,
             "floor":{"expression":"calls * cost","variables":{"calls":1,"cost":0.4},"dimension":"seconds"},
-            "experiment":{"pre_samples":[2.0]*10,"post_samples":[1.8]*10,"action":"keep"},
+            "experiment":None,
             "input_scaling":[],"cell_refs":[scope["cells"][0]["cell_id"]],
+            "classification":{"grade":"at-floor"},
         }]
         write_json(ledger / "results.json", data)
         result = verify(ledger, offline=True)
@@ -2442,8 +2718,9 @@ def run_self_tests(source: Path) -> tuple[bool, list[str]]:
         data["perf_units"] = [{
             "id":"p1","workload":"w1","samples":[0.5]*10,
             "floor":{"expression":"calls * cost","variables":{"calls":1,"cost":0.4},"dimension":"seconds"},
-            "experiment":{"pre_samples":[2.0]*10,"post_samples":[1.8]*10,"action":"keep"},
+            "experiment":None,
             "input_scaling":[],"cell_refs":[scope["cells"][0]["cell_id"]],
+            "classification":{"grade":"at-floor"},
         }]
         write_json(ledger / "results.json", data)
         without_approval = verify(ledger, offline=True)
@@ -2479,6 +2756,7 @@ def run_self_tests(source: Path) -> tuple[bool, list[str]]:
             "floor":{"expression":"calls * cost","variables":{"calls":1,"cost":0.1},"dimension":"seconds"},
             "experiment":{"pre_samples":[2.0]*10,"post_samples":[1.99]*10,"action":"revert"},
             "input_scaling":[],"cell_refs":[scope["cells"][0]["cell_id"]],
+            "classification":{"grade":"hot"},
         }]
         write_json(ledger / "results.json", data)
         perf_digest = digest(
@@ -2523,6 +2801,7 @@ def run_self_tests(source: Path) -> tuple[bool, list[str]]:
             "floor":{"expression":"calls * cost","variables":{"calls":1,"cost":0.1},"dimension":"seconds"},
             "experiment":{"pre_samples":[2.0]*10,"post_samples":[1.99]*10,"action":"revert"},
             "input_scaling":[],"cell_refs":[scope["cells"][0]["cell_id"]],
+            "classification":{"grade":"hot"},
         }]
         write_json(ledger / "results.json", data)
         reclassification_digest = digest({
@@ -2544,6 +2823,7 @@ def run_self_tests(source: Path) -> tuple[bool, list[str]]:
             return {"user":{"login":"maintainer"},"body":body,"created_at":"2026-01-01T00:00:00Z"}, "admin"
         current = verify(ledger, offline=False, fetcher=fetcher)
         data["workloads"][0]["samples"] = [2.1] * 10
+        data["workloads"][0]["install_loop_samples"] = [2.1] * 10
         write_json(ledger / "results.json", data)
         stale = verify(ledger, offline=False, fetcher=fetcher)
         return (
@@ -2564,10 +2844,256 @@ def run_self_tests(source: Path) -> tuple[bool, list[str]]:
             "floor":{"expression":"calls * cost","variables":{"calls":1,"cost":0.1},"dimension":"seconds"},
             "experiment":{"pre_samples":[2.0]*10,"post_samples":[1.99]*10,"action":"revert"},
             "input_scaling":[],"cell_refs":[scope["cells"][0]["cell_id"]],
+            "classification":{"grade":"hot"},
         }]
         write_json(ledger / "results.json", data)
         result = verify(ledger, offline=True)
         return result.code == 1 and any("hot above-floor unit p1 remains incomplete after no-win revert" in x for x in result.incomplete), result.render()
+
+    @case("fixed unit valid shape stays incomplete not invalid -> exit 1")
+    def fixed_valid_shape(ledger: Path) -> tuple[bool, str]:
+        scope = json.loads((ledger / "scope.json").read_text())
+        data = json.loads((ledger / "results.json").read_text())
+        data = build_fixed_unit(
+            data,
+            [2.33579] * 10,
+            [2.36056691758] * 10,
+            -0.02477691758,
+            0.989503827493524,
+            cell_refs=[scope["cells"][0]["cell_id"]],
+        )
+        write_json(ledger / "results.json", data)
+        result = verify(ledger, offline=True)
+        return (
+            result.code == 1
+            and not result.integrity
+            and not any("hot performance unit p1" in x for x in result.incomplete)
+            and not any("hot above-floor unit p1" in x for x in result.incomplete)
+        ), result.render()
+
+    @case("fixed unit with direct samples -> exit 2")
+    def fixed_direct_samples(ledger: Path) -> tuple[bool, str]:
+        scope = json.loads((ledger / "scope.json").read_text())
+        data = json.loads((ledger / "results.json").read_text())
+        data = build_fixed_unit(
+            data, [2.33579] * 10, [2.36056691758] * 10, -0.02477691758, 0.989503827493524,
+            cell_refs=[scope["cells"][0]["cell_id"]],
+        )
+        data["perf_units"][0]["samples"] = [0.1] * 10
+        write_json(ledger / "results.json", data)
+        result = verify(ledger, offline=True)
+        return result.code == 2 and any("fixed unit p1 carries direct unit samples" in x for x in result.integrity), result.render()
+
+    @case("fixed unit with non-null floor -> exit 2")
+    def fixed_nonnull_floor(ledger: Path) -> tuple[bool, str]:
+        scope = json.loads((ledger / "scope.json").read_text())
+        data = json.loads((ledger / "results.json").read_text())
+        data = build_fixed_unit(
+            data, [2.33579] * 10, [2.36056691758] * 10, -0.02477691758, 0.989503827493524,
+            cell_refs=[scope["cells"][0]["cell_id"]],
+        )
+        data["perf_units"][0]["floor"] = {"expression":"calls * cost","variables":{"calls":1,"cost":0.1},"dimension":"seconds"}
+        write_json(ledger / "results.json", data)
+        result = verify(ledger, offline=True)
+        return result.code == 2 and any("fixed unit p1 carries a floor" in x for x in result.integrity), result.render()
+
+    @case("fixed unit with experiment -> exit 2")
+    def fixed_experiment(ledger: Path) -> tuple[bool, str]:
+        scope = json.loads((ledger / "scope.json").read_text())
+        data = json.loads((ledger / "results.json").read_text())
+        data = build_fixed_unit(
+            data, [2.33579] * 10, [2.36056691758] * 10, -0.02477691758, 0.989503827493524,
+            cell_refs=[scope["cells"][0]["cell_id"]],
+        )
+        data["perf_units"][0]["experiment"] = {"pre_samples":[2.0]*10,"post_samples":[1.99]*10,"action":"revert"}
+        write_json(ledger / "results.json", data)
+        result = verify(ledger, offline=True)
+        return result.code == 2 and any("fixed unit p1 carries an optimization experiment" in x for x in result.integrity), result.render()
+
+    @case("fixed unit with scaling claim -> exit 2")
+    def fixed_scaling(ledger: Path) -> tuple[bool, str]:
+        scope = json.loads((ledger / "scope.json").read_text())
+        data = json.loads((ledger / "results.json").read_text())
+        data = build_fixed_unit(
+            data, [2.33579] * 10, [2.36056691758] * 10, -0.02477691758, 0.989503827493524,
+            cell_refs=[scope["cells"][0]["cell_id"]],
+        )
+        data["perf_units"][0]["input_scaling"] = [{"input_size":1,"fixture_digest":"h"*64,"samples":[1.0]*10}, {"input_size":2,"fixture_digest":"i"*64,"samples":[2.1]*10}]
+        write_json(ledger / "results.json", data)
+        result = verify(ledger, offline=True)
+        return result.code == 2 and any("fixed unit p1 carries a scaling claim" in x for x in result.integrity), result.render()
+
+    @case("fixed signed delta mismatch -> exit 2")
+    def fixed_delta_mismatch(ledger: Path) -> tuple[bool, str]:
+        scope = json.loads((ledger / "scope.json").read_text())
+        data = json.loads((ledger / "results.json").read_text())
+        data = build_fixed_unit(
+            data, [2.33579] * 10, [2.36056691758] * 10, 0.0, 0.989503827493524,
+            cell_refs=[scope["cells"][0]["cell_id"]],
+        )
+        write_json(ledger / "results.json", data)
+        result = verify(ledger, offline=True)
+        return result.code == 2 and any("fixed signed delta does not match measured medians" in x for x in result.integrity), result.render()
+
+    @case("fixed ratio mismatch -> exit 2")
+    def fixed_ratio_mismatch(ledger: Path) -> tuple[bool, str]:
+        scope = json.loads((ledger / "scope.json").read_text())
+        data = json.loads((ledger / "results.json").read_text())
+        data = build_fixed_unit(
+            data, [2.33579] * 10, [2.36056691758] * 10, -0.02477691758, 1.0,
+            cell_refs=[scope["cells"][0]["cell_id"]],
+        )
+        write_json(ledger / "results.json", data)
+        result = verify(ledger, offline=True)
+        return result.code == 2 and any("fixed ratio mismatch" in x for x in result.integrity), result.render()
+
+    @case("fixed grade with >=5pct disable speedup -> exit 2")
+    def fixed_hot_disable(ledger: Path) -> tuple[bool, str]:
+        scope = json.loads((ledger / "scope.json").read_text())
+        data = json.loads((ledger / "results.json").read_text())
+        data = build_fixed_unit(
+            data, [2.0] * 10, [1.8] * 10, 0.2, 1.1111111111111112,
+            cell_refs=[scope["cells"][0]["cell_id"]],
+        )
+        write_json(ledger / "results.json", data)
+        result = verify(ledger, offline=True)
+        return result.code == 2 and any("fixed grade rejected: disabling the stage saves >=5%" in x for x in result.integrity), result.render()
+
+    @case("fixed stage-disabled probe same build -> exit 2")
+    def fixed_same_build(ledger: Path) -> tuple[bool, str]:
+        scope = json.loads((ledger / "scope.json").read_text())
+        data = json.loads((ledger / "results.json").read_text())
+        data = build_fixed_unit(
+            data, [2.33579] * 10, [2.36056691758] * 10, -0.02477691758, 0.989503827493524,
+            cell_refs=[scope["cells"][0]["cell_id"]],
+        )
+        data["workloads"][1]["build_digest"] = "c" * 64
+        write_json(ledger / "results.json", data)
+        result = verify(ledger, offline=True)
+        return result.code == 2 and any("stage-disabled probe is the same build as baseline" in x for x in result.integrity), result.render()
+
+    @case("fixed stage-disabled probe alignment break -> exit 2")
+    def fixed_alignment_break(ledger: Path) -> tuple[bool, str]:
+        scope = json.loads((ledger / "scope.json").read_text())
+        data = json.loads((ledger / "results.json").read_text())
+        data = build_fixed_unit(
+            data, [2.33579] * 10, [2.36056691758] * 10, -0.02477691758, 0.989503827493524,
+            cell_refs=[scope["cells"][0]["cell_id"]],
+        )
+        data["workloads"][1]["toolchain_digest"] = "x" * 64
+        write_json(ledger / "results.json", data)
+        result = verify(ledger, offline=True)
+        return result.code == 2 and any("stage-disabled probe for p1 is not aligned" in x for x in result.integrity), result.render()
+
+    @case("fixed review evidence bad digest -> exit 2")
+    def fixed_review_evidence_bad_digest(ledger: Path) -> tuple[bool, str]:
+        scope = json.loads((ledger / "scope.json").read_text())
+        data = json.loads((ledger / "results.json").read_text())
+        data = build_fixed_unit(
+            data, [2.33579] * 10, [2.36056691758] * 10, -0.02477691758, 0.989503827493524,
+            cell_refs=[scope["cells"][0]["cell_id"]],
+            review_digest="not-a-digest",
+        )
+        write_json(ledger / "results.json", data)
+        result = verify(ledger, offline=True)
+        return result.code == 2 and any("fixed unit p1.review_evidence.digest must be sha256" in x for x in result.integrity), result.render()
+
+    @case("workload install loop below 90pct wall -> exit 2")
+    def workload_loop_below_wall(ledger: Path) -> tuple[bool, str]:
+        data = add_workload(ledger, [2.0] * 10)
+        data["workloads"][0]["install_loop_samples"] = [1.5] * 10
+        write_json(ledger / "results.json", data)
+        result = verify(ledger, offline=True)
+        return result.code == 2 and any("install loop below 90% of wall time" in x for x in result.integrity), result.render()
+
+    @case("at-floor grade contradicts cold measurement -> exit 2")
+    def atfloor_cold_contradiction(ledger: Path) -> tuple[bool, str]:
+        scope = json.loads((ledger / "scope.json").read_text())
+        data = add_workload(ledger, [2.0] * 10)
+        data["perf_units"] = [{
+            "id":"p1","workload":"w1","samples":[0.05]*10,
+            "floor":{"expression":"calls * cost","variables":{"calls":1,"cost":0.1},"dimension":"seconds"},
+            "experiment":None,
+            "input_scaling":[],"cell_refs":[scope["cells"][0]["cell_id"]],
+            "classification":{"grade":"at-floor"},
+        }]
+        write_json(ledger / "results.json", data)
+        result = verify(ledger, offline=True)
+        return result.code == 2 and any("at-floor grade contradicts measurement" in x for x in result.integrity), result.render()
+
+    @case("hot grade contradicts cold measurement -> exit 2")
+    def hot_cold_contradiction(ledger: Path) -> tuple[bool, str]:
+        scope = json.loads((ledger / "scope.json").read_text())
+        data = add_workload(ledger, [2.0] * 10)
+        data["perf_units"] = [{
+            "id":"p1","workload":"w1","samples":[0.05]*10,
+            "floor":{"expression":"calls * cost","variables":{"calls":1,"cost":0.1},"dimension":"seconds"},
+            "experiment":{"pre_samples":[2.0]*10,"post_samples":[1.99]*10,"action":"revert"},
+            "input_scaling":[],"cell_refs":[scope["cells"][0]["cell_id"]],
+            "classification":{"grade":"hot"},
+        }]
+        write_json(ledger / "results.json", data)
+        result = verify(ledger, offline=True)
+        return result.code == 2 and any("hot grade contradicts a measured cold unit" in x for x in result.integrity), result.render()
+
+    @case("performance-floor approval on fixed unit -> exit 2")
+    def fixed_floor_approval_rejected(ledger: Path) -> tuple[bool, str]:
+        scope = json.loads((ledger / "scope.json").read_text())
+        data = json.loads((ledger / "results.json").read_text())
+        data = build_fixed_unit(
+            data, [2.33579] * 10, [2.36056691758] * 10, -0.02477691758, 0.989503827493524,
+            cell_refs=[scope["cells"][0]["cell_id"]],
+        )
+        write_json(ledger / "results.json", data)
+        floor_digest = digest({"expression":"calls * cost","variables":{"calls":1,"cost":0.1},"dimension":"seconds"})
+        body = canonical_approval_line("performance-floor", "p1", floor_digest)
+        event = {
+            "event_id":"approval-1","kind":"performance-floor","subject_id":"p1",
+            "subject_digest":floor_digest,"homebrew_commit":HOMEBREW_COMMIT,"repository":REPOSITORY,
+            "actor":"maintainer",
+            "object_url":f"https://api.github.com/repos/{REPOSITORY}/issues/comments/1",
+            "object_body_digest":text_digest(body),"event_time":"2026-01-01T00:01:00Z",
+        }
+        (ledger / "approvals.jsonl").write_text(json.dumps(event)+"\n")
+        def fetcher(url: str, actor: str, token: str) -> tuple[dict[str, Any], str]:
+            return {"user":{"login":"maintainer"},"body":body,"created_at":"2026-01-01T00:00:00Z"}, "admin"
+        result = verify(ledger, offline=False, fetcher=fetcher)
+        return (
+            result.code == 2
+            and "approvals.jsonl event 1 references unknown or mismatched subject" in result.integrity
+        ), result.render()
+
+    @case("hot-reclassification approval on fixed unit -> exit 2")
+    def fixed_reclass_approval_rejected(ledger: Path) -> tuple[bool, str]:
+        scope = json.loads((ledger / "scope.json").read_text())
+        data = json.loads((ledger / "results.json").read_text())
+        data = build_fixed_unit(
+            data, [2.33579] * 10, [2.36056691758] * 10, -0.02477691758, 0.989503827493524,
+            cell_refs=[scope["cells"][0]["cell_id"]],
+        )
+        write_json(ledger / "results.json", data)
+        perf_digest = digest({
+            "workload": data["perf_units"][0]["workload"],
+            "workload_record": data["workloads"][0],
+            "samples": data["perf_units"][0]["samples"],
+            "input_scaling": data["perf_units"][0]["input_scaling"],
+        })
+        body = canonical_approval_line("hot-reclassification", "p1", perf_digest)
+        event = {
+            "event_id":"approval-1","kind":"hot-reclassification","subject_id":"p1",
+            "subject_digest":perf_digest,"homebrew_commit":HOMEBREW_COMMIT,"repository":REPOSITORY,
+            "actor":"maintainer",
+            "object_url":f"https://api.github.com/repos/{REPOSITORY}/issues/comments/1",
+            "object_body_digest":text_digest(body),"event_time":"2026-01-01T00:01:00Z",
+        }
+        (ledger / "approvals.jsonl").write_text(json.dumps(event)+"\n")
+        def fetcher(url: str, actor: str, token: str) -> tuple[dict[str, Any], str]:
+            return {"user":{"login":"maintainer"},"body":body,"created_at":"2026-01-01T00:00:00Z"}, "admin"
+        result = verify(ledger, offline=False, fetcher=fetcher)
+        return (
+            result.code == 2
+            and "approvals.jsonl event 1 references unknown or mismatched subject" in result.integrity
+        ), result.render()
 
     @case("platform-any single-host native proof stays incomplete -> exit 1")
     def single_host_native_incomplete(ledger: Path) -> tuple[bool, str]:
@@ -2747,7 +3273,31 @@ def run_self_tests(source: Path) -> tuple[bool, list[str]]:
                     fixture["results"][next(iter(fixture["states"]["tranche-1"].cells))]["deviation"] = f"{target}-1"
                 elif target == "perf_units":
                     collection[f"{target}-1"]["workload"] = "perf-workload-1"
-                    fixture["workloads"]["perf-workload-1"] = {"id": "perf-workload-1"}
+                    fixture["workloads"]["perf-workload-1"] = {
+                        "id": "perf-workload-1",
+                        "fixture_digest": "a" * 64,
+                        "source_digest": "d" * 64,
+                        "platform": "linux",
+                        "arch": "x86_64",
+                        "filesystem_stage": "warm",
+                        "filesystem_stage_digest": "e" * 64,
+                        "toolchain_digest": "b" * 64,
+                        "build_digest": "c" * 64,
+                        "warmups": 3,
+                        "samples": [2.0] * 10,
+                        "install_loop_samples": [2.0] * 10,
+                        "sample_artifact_digest": "f" * 64,
+                    }
+                    collection[f"{target}-1"] = {
+                        "id": f"{target}-1",
+                        "workload": "perf-workload-1",
+                        "samples": [0.5] * 10,
+                        "floor": {"expression": "calls * cost", "variables": {"calls": 1, "cost": 0.1}, "dimension": "seconds"},
+                        "experiment": {"pre_samples": [2.0] * 10, "post_samples": [1.99] * 10, "action": "revert"},
+                        "input_scaling": [],
+                        "cell_refs": [next(iter(fixture["states"]["tranche-1"].cells))],
+                        "classification": {"grade": "hot"},
+                    }
                     fixture["results"][next(iter(fixture["states"]["tranche-1"].cells))]["perf_refs"] = [f"{target}-1"]
                 elif target == "workloads":
                     fixture["states"]["tranche-1"].context_workloads.add(f"{target}-1")
@@ -2763,11 +3313,31 @@ def run_self_tests(source: Path) -> tuple[bool, list[str]]:
         fixture = tranche_review_fixture(ledger)
         unrelated_cell = fixture["scope"]["cells"][1]["cell_id"]
         fixture["decisions"]["D-unrelated"] = {"id": "D-unrelated", "status": "pending"}
-        fixture["workloads"]["W-unrelated"] = {"id": "W-unrelated"}
+        fixture["workloads"]["W-unrelated"] = {
+            "id": "W-unrelated",
+            "fixture_digest": "a" * 64,
+            "source_digest": "d" * 64,
+            "platform": "linux",
+            "arch": "x86_64",
+            "filesystem_stage": "warm",
+            "filesystem_stage_digest": "e" * 64,
+            "toolchain_digest": "b" * 64,
+            "build_digest": "c" * 64,
+            "warmups": 3,
+            "samples": [2.0] * 10,
+            "install_loop_samples": [2.0] * 10,
+            "sample_artifact_digest": "f" * 64,
+        }
         fixture["deviations"]["DEV-unrelated"] = {"id": "DEV-unrelated"}
         fixture["perf_units"]["PERF-unrelated"] = {
             "id": "PERF-unrelated",
             "workload": "W-unrelated",
+            "samples": [0.5] * 10,
+            "floor": {"expression": "calls * cost", "variables": {"calls": 1, "cost": 0.1}, "dimension": "seconds"},
+            "experiment": {"pre_samples": [2.0] * 10, "post_samples": [1.99] * 10, "action": "revert"},
+            "input_scaling": [],
+            "cell_refs": [unrelated_cell],
+            "classification": {"grade": "hot"},
         }
         unrelated_events = [
             {"event_id":"u1","tranche_id":"tranche-2","from":"proposed","to":"scoped","event_time":"2026-01-01T00:00:00Z","cells":[unrelated_cell]},
