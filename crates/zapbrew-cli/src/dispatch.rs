@@ -193,14 +193,17 @@ pub fn plan(command: Commands, globals: &GlobalArgs, width: usize) -> Result<Pla
                 }
             }
         }
-        Commands::Info(args) => Plan {
-            needs_formula: true,
-            needs_cask: true,
-            kind: OpKind::Info(info::Args {
-                names: args.names,
-                json_v2: args.json.is_some(),
-            }),
-        },
+        Commands::Info(args) => {
+            let needs_catalog = !args.names.is_empty() || args.json.is_some();
+            Plan {
+                needs_formula: needs_catalog,
+                needs_cask: needs_catalog,
+                kind: OpKind::Info(info::Args {
+                    names: args.names,
+                    json_v2: args.json.is_some(),
+                }),
+            }
+        }
         Commands::Deps(args) => Plan {
             needs_formula: true,
             needs_cask: false,
@@ -755,6 +758,57 @@ mod tests {
                 names: vec!["wget".to_owned()],
                 json_v2: true,
             })
+        );
+    }
+
+    #[test]
+    fn info_no_name_text_is_offline_and_named_or_json_loads_catalogs() {
+        // Bare text info scans the Cellar without catalogs.
+        assert_eq!(
+            planned(&["zapbrew", "info"]),
+            Plan {
+                needs_formula: false,
+                needs_cask: false,
+                kind: OpKind::Info(zapbrew_ops::info::Args {
+                    names: Vec::new(),
+                    json_v2: false,
+                }),
+            }
+        );
+
+        // Any names or --json forces catalog load.
+        assert_eq!(
+            planned(&["zapbrew", "info", "wget"]),
+            Plan {
+                needs_formula: true,
+                needs_cask: true,
+                kind: OpKind::Info(zapbrew_ops::info::Args {
+                    names: vec!["wget".to_owned()],
+                    json_v2: false,
+                }),
+            }
+        );
+        assert_eq!(
+            planned(&["zapbrew", "info", "--json=v2"]),
+            Plan {
+                needs_formula: true,
+                needs_cask: true,
+                kind: OpKind::Info(zapbrew_ops::info::Args {
+                    names: Vec::new(),
+                    json_v2: true,
+                }),
+            }
+        );
+        assert_eq!(
+            planned(&["zapbrew", "info", "wget", "--json=v2"]),
+            Plan {
+                needs_formula: true,
+                needs_cask: true,
+                kind: OpKind::Info(zapbrew_ops::info::Args {
+                    names: vec!["wget".to_owned()],
+                    json_v2: true,
+                }),
+            }
         );
     }
 

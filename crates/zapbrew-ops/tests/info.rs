@@ -165,14 +165,24 @@ fn context_flags(
 }
 
 fn keg(env: &Env, version: &str, installed_on_request: bool, bytes: &[u8]) -> Keg {
+    keg_named(env, "sample", version, installed_on_request, bytes)
+}
+
+fn keg_named(
+    env: &Env,
+    name: &str,
+    version: &str,
+    installed_on_request: bool,
+    bytes: &[u8],
+) -> Keg {
     let keg = Keg::new(
         &env.cellar,
-        FormulaName::from_str("sample").expect("formula name"),
+        FormulaName::from_str(name).expect("formula name"),
         PkgVersion::from_str(version).expect("pkg version"),
     )
     .expect("keg");
     std::fs::create_dir_all(keg.path().join("bin")).expect("keg bin");
-    std::fs::write(keg.path().join("bin/sample"), bytes).expect("keg file");
+    std::fs::write(keg.path().join("bin").join(name), bytes).expect("keg file");
     Tab {
         installed_on_request,
         ..Tab::default()
@@ -180,6 +190,43 @@ fn keg(env: &Env, version: &str, installed_on_request: bool, bytes: &[u8]) -> Ke
     .write(keg.receipt_path())
     .expect("tab");
     keg
+}
+
+fn raw_rack(cellar: &Utf8Path, name: &str, version: &str, files: &[(&str, &[u8])]) {
+    let keg = cellar.join(name).join(version);
+    for (relative, bytes) in files {
+        let path = keg.join(relative);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("raw rack parent");
+        }
+        std::fs::write(&path, bytes).expect("raw rack file");
+    }
+}
+
+fn assert_statistics(reporter: &RecordingReporter, racks: usize, files: usize) {
+    let output = reporter.take();
+    assert_eq!(output.len(), 1);
+    let output = output[0].strip_prefix("print:").expect("print event");
+    let noun = if racks == 1 { "keg" } else { "kegs" };
+    assert!(
+        output.starts_with(&format!("{racks} {noun}, ")),
+        "unexpected rack count: {output}"
+    );
+    if files > 1 {
+        assert!(
+            output.contains(&format!(", {files} files, ")),
+            "unexpected file count: {output}"
+        );
+    } else {
+        assert!(
+            !output.contains(" files, "),
+            "unexpected file count: {output}"
+        );
+    }
+    assert!(
+        output.ends_with('B'),
+        "statistics must end with a byte unit: {output}"
+    );
 }
 
 fn link_keg(environment: &Env, keg: &Keg) {
@@ -652,18 +699,217 @@ async fn json_v2_preserves_merged_raw_objects_and_catalog_order() {
 }
 
 #[tokio::test]
-async fn text_without_names_refuses_and_missing_name_is_typed() {
+async fn text_info_without_names_absent_cellar_prints_nothing() {
     let temp = TempDir::new().expect("temp");
     let (ctx, reporter) = context(env(&temp), &formulae());
-
-    let unspecified = info::run(&ctx, Args::default())
+    info::run(&ctx, Args::default())
         .await
-        .expect_err("unspecified text info");
-    assert!(matches!(unspecified, zapbrew_ops::OpError::Refusal { .. }));
-    assert_eq!(
-        unspecified.to_string(),
-        "this command requires a formula or cask argument"
+        .expect("absent cellar");
+    assert!(reporter.take().is_empty());
+}
+
+#[tokio::test]
+async fn text_info_without_names_empty_cellar_reports_no_kegs() {
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    std::fs::create_dir_all(&environment.cellar).expect("empty cellar");
+    let (ctx, reporter) = context(environment, &formulae());
+    info::run(&ctx, Args::default())
+        .await
+        .expect("empty cellar");
+    assert_statistics(&reporter, 0, 0);
+}
+
+#[tokio::test]
+async fn text_info_without_names_uses_decimal_disk_units() {
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    let version = environment.cellar.join("sample").join("1.0");
+    std::fs::create_dir_all(&version).expect("version");
+    std::fs::File::create(version.join("payload"))
+        .expect("payload")
+        .set_len(1_100_000)
+        .expect("payload size");
+
+    let (ctx, reporter) = context(environment, &formulae());
+    info::run(&ctx, Args::default())
+        .await
+        .expect("decimal disk units");
+    assert_eq!(reporter.take(), ["print:1 keg, 1.1MB"]);
+}
+
+#[tokio::test]
+async fn text_info_without_names_groups_large_file_counts() {
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    let version = environment.cellar.join("sample").join("1.0");
+    std::fs::create_dir_all(&version).expect("version");
+    for index in 0..1_000 {
+        std::fs::File::create(version.join(index.to_string())).expect("payload");
+    }
+
+    let (ctx, reporter) = context(environment, &formulae());
+    info::run(&ctx, Args::default())
+        .await
+        .expect("grouped file count");
+    let output = reporter.take();
+    assert_eq!(output.len(), 1);
+    assert!(
+        output[0].starts_with("print:1 keg, 1,000 files, "),
+        "unexpected grouped count: {}",
+        output[0]
     );
+}
+
+#[tokio::test]
+async fn text_info_without_names_ignores_hidden_and_symlinked_racks() {
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    keg_named(&environment, ".hidden", "1.0", false, b"hidden");
+    let outside =
+        Utf8PathBuf::from_path_buf(temp.path().join("outside-rack")).expect("UTF-8 temp path");
+    std::fs::create_dir_all(outside.join("1.0")).expect("outside version");
+    symlink(&outside, environment.cellar.join("linked")).expect("symlinked rack");
+
+    let (ctx, reporter) = context(environment, &formulae());
+    info::run(&ctx, Args::default())
+        .await
+        .expect("ignored non-racks");
+    assert_statistics(&reporter, 0, 2);
+}
+
+#[tokio::test]
+async fn text_info_without_names_one_rack_uses_singular() {
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    keg_named(&environment, "other", "1.0", false, b"abc");
+    let (ctx, reporter) = context(environment, &formulae());
+    info::run(&ctx, Args::default()).await.expect("one rack");
+    assert_statistics(&reporter, 1, 2);
+}
+
+#[tokio::test]
+async fn text_info_without_names_plural_racks_and_versions_sums_kegs() {
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    keg_named(&environment, "sample", "1.0", false, b"abc");
+    keg_named(&environment, "sample", "2.0_2", false, b"abcd");
+    keg_named(&environment, "other", "1.0", false, b"ab");
+    let (ctx, reporter) = context(environment, &formulae());
+    info::run(&ctx, Args::default())
+        .await
+        .expect("plural racks");
+    assert_statistics(&reporter, 2, 6);
+}
+
+#[tokio::test]
+async fn text_info_without_names_ignores_caskroom() {
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    keg_named(&environment, "sample", "1.0", false, b"abc");
+    std::fs::create_dir_all(environment.caskroom.join("ignored").join("1.0"))
+        .expect("caskroom entry");
+    let (ctx, reporter) = context(environment, &formulae());
+    info::run(&ctx, Args::default())
+        .await
+        .expect("caskroom ignored");
+    assert_statistics(&reporter, 1, 2);
+}
+
+#[tokio::test]
+async fn text_info_without_names_real_rack_needs_no_receipt() {
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    raw_rack(&environment.cellar, "plain", "2.1", &[("lib/x", b"xyz")]);
+    let receipt = environment
+        .cellar
+        .join("plain")
+        .join("2.1")
+        .join("INSTALL_RECEIPT.json");
+    assert!(!receipt.exists());
+
+    let (ctx, reporter) = context(environment, &formulae());
+    info::run(&ctx, Args::default())
+        .await
+        .expect("no receipt needed");
+    assert_statistics(&reporter, 1, 1);
+}
+
+#[tokio::test]
+async fn text_info_without_names_ignores_empty_rack() {
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    std::fs::create_dir_all(environment.cellar.join("empty-rack")).expect("empty rack");
+    std::fs::write(environment.cellar.join("empty-rack").join("orphan"), b"x")
+        .expect("orphan file");
+    let (ctx, reporter) = context(environment, &formulae());
+    info::run(&ctx, Args::default())
+        .await
+        .expect("empty rack ignored");
+    assert_statistics(&reporter, 0, 1);
+}
+
+#[tokio::test]
+async fn text_info_without_names_excludes_ds_store_from_count() {
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    raw_rack(
+        &environment.cellar,
+        "sample",
+        "1.0",
+        &[(".DS_Store", b"junk"), ("f", b"g"), ("g", b"h")],
+    );
+    let version = environment.cellar.join("sample").join("1.0");
+    assert_eq!(
+        std::fs::read_dir(version.as_std_path())
+            .expect("read raw version")
+            .count(),
+        3
+    );
+    let (ctx, reporter) = context(environment, &formulae());
+    info::run(&ctx, Args::default()).await.expect("ds store");
+    assert_statistics(&reporter, 1, 2);
+}
+
+#[tokio::test]
+async fn text_info_without_names_symlink_file_counts_own_size() {
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    let keg = environment.cellar.join("sample").join("1.0");
+    std::fs::create_dir_all(keg.join("bin")).expect("keg bin");
+    std::fs::write(keg.join("bin").join("sample"), b"abc").expect("real file");
+    symlink(
+        keg.join("bin").join("sample").as_std_path(),
+        keg.join("bin").join("link").as_std_path(),
+    )
+    .expect("symlink file");
+
+    let (ctx, reporter) = context(environment, &formulae());
+    info::run(&ctx, Args::default())
+        .await
+        .expect("symlink file");
+    assert_statistics(&reporter, 1, 2);
+}
+
+#[tokio::test]
+async fn text_info_without_names_dedups_hardlinks() {
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    let keg = environment.cellar.join("sample").join("1.0");
+    std::fs::create_dir_all(keg.join("bin")).expect("keg bin");
+    let original = keg.join("bin").join("sample");
+    std::fs::write(&original, b"abc").expect("real file");
+    std::fs::hard_link(&original, keg.join("bin").join("alias")).expect("hard link");
+
+    let (ctx, reporter) = context(environment, &formulae());
+    info::run(&ctx, Args::default()).await.expect("hardlink");
+    assert_statistics(&reporter, 1, 2);
+}
+
+#[tokio::test]
+async fn missing_name_is_typed() {
+    let temp = TempDir::new().expect("temp");
+    let (ctx, reporter) = context(env(&temp), &formulae());
 
     let missing = info::run(
         &ctx,

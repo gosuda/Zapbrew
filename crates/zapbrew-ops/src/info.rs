@@ -1,4 +1,7 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
+use std::fs;
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::MetadataExt;
 use std::str::FromStr;
 
 use serde::Serialize;
@@ -7,6 +10,7 @@ use zapbrew_api::{Cask, Dependency, DependencyTag, Formula};
 use zapbrew_types::FormulaName;
 
 use crate::install::{format_size, substitute_prefixes};
+use crate::size::disk_usage_readable;
 use crate::state::{InstalledCask, InstalledFormula, InstalledKeg, scan_casks, scan_selected};
 use crate::{Ctx, OpError};
 
@@ -49,9 +53,23 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
     }
 
     if args.names.is_empty() {
-        return Err(OpError::Refusal {
-            message: "this command requires a formula or cask argument".to_owned(),
-        });
+        if !ctx.env.cellar.exists() {
+            return Ok(());
+        }
+
+        let (rack_count, file_count, size) = cellar_statistics(&ctx.env.cellar)?;
+        let abv = if file_count > 1 {
+            format!(
+                "{} files, {}",
+                number_readable(file_count),
+                disk_usage_readable(size)
+            )
+        } else {
+            disk_usage_readable(size)
+        };
+        let keg = if rack_count == 1 { "keg" } else { "kegs" };
+        ctx.reporter.print(&format!("{rack_count} {keg}, {abv}"));
+        return Ok(());
     }
 
     let mut targets = Vec::new();
@@ -86,6 +104,269 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
         }
     }
     Ok(())
+}
+
+fn number_readable(number: usize) -> String {
+    let digits = number.to_string();
+    let separators = digits.len().saturating_sub(1) / 3;
+    let mut formatted = String::with_capacity(digits.len() + separators);
+    for (index, digit) in digits.bytes().enumerate() {
+        if index != 0 && (digits.len() - index).is_multiple_of(3) {
+            formatted.push(',');
+        }
+        formatted.push(char::from(digit));
+    }
+    formatted
+}
+
+fn cellar_statistics(cellar: &camino::Utf8Path) -> Result<(usize, usize, u64), OpError> {
+    let root = cellar.as_std_path();
+
+    let mut rack_count = 0_usize;
+    if fs::metadata(root).is_ok_and(|metadata| metadata.is_dir()) {
+        let racks = fs::read_dir(root)
+            .map_err(|source| OpError::io("read", cellar.to_path_buf(), source))?;
+        for rack in racks {
+            let rack = rack.map_err(|source| OpError::io("read", cellar.to_path_buf(), source))?;
+            if rack.file_name().as_bytes().starts_with(b".") {
+                continue;
+            }
+            let rack_path = rack.path();
+            let metadata = fs::symlink_metadata(&rack_path)
+                .map_err(|source| OpError::io("inspect", cellar.to_path_buf(), source))?;
+            if !metadata.is_dir() {
+                continue;
+            }
+            let versions = fs::read_dir(&rack_path)
+                .map_err(|source| OpError::io("read", cellar.to_path_buf(), source))?;
+            for version in versions {
+                let version =
+                    version.map_err(|source| OpError::io("read", cellar.to_path_buf(), source))?;
+                match fs::metadata(version.path()) {
+                    Ok(metadata) if metadata.is_dir() => {
+                        rack_count = rack_count.saturating_add(1);
+                        break;
+                    }
+                    Ok(_) | Err(_) => {}
+                }
+            }
+        }
+    }
+
+    let usage_root = match fs::symlink_metadata(root) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            let target = fs::read_link(root)
+                .map_err(|source| OpError::io("read symlink", cellar.to_path_buf(), source))?;
+            if target.is_absolute() {
+                target
+            } else {
+                match root.parent() {
+                    Some(parent) => parent.join(target),
+                    None => target,
+                }
+            }
+        }
+        Ok(_) => root.to_path_buf(),
+        Err(source) => return Err(OpError::io("inspect", cellar.to_path_buf(), source)),
+    };
+
+    let usage_metadata = fs::metadata(&usage_root)
+        .map_err(|source| OpError::io("inspect", cellar.to_path_buf(), source))?;
+    if !usage_metadata.is_dir() {
+        let metadata = fs::symlink_metadata(&usage_root)
+            .map_err(|source| OpError::io("inspect", cellar.to_path_buf(), source))?;
+        return Ok((rack_count, 1, metadata.len()));
+    }
+
+    let mut file_count = 0_usize;
+    let mut size = 0_u64;
+    let mut seen_files = HashSet::new();
+    let mut pending = vec![usage_root];
+    while let Some(directory) = pending.pop() {
+        let metadata = fs::symlink_metadata(&directory)
+            .map_err(|source| OpError::io("inspect", cellar.to_path_buf(), source))?;
+        size = size.saturating_add(metadata.len());
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+
+        let entries = fs::read_dir(&directory)
+            .map_err(|source| OpError::io("read", cellar.to_path_buf(), source))?;
+        for entry in entries {
+            let entry =
+                entry.map_err(|source| OpError::io("read", cellar.to_path_buf(), source))?;
+            let metadata = fs::symlink_metadata(entry.path())
+                .map_err(|source| OpError::io("inspect", cellar.to_path_buf(), source))?;
+            if metadata.is_dir() {
+                pending.push(entry.path());
+                continue;
+            }
+            if metadata.file_type().is_symlink()
+                && fs::metadata(entry.path()).is_ok_and(|target| target.is_dir())
+            {
+                size = size.saturating_add(metadata.len());
+                continue;
+            }
+
+            if entry.file_name() != ".DS_Store" {
+                file_count = file_count.saturating_add(1);
+            }
+            if seen_files.insert((metadata.dev(), metadata.ino())) {
+                size = size.saturating_add(metadata.len());
+            }
+        }
+    }
+
+    Ok((rack_count, file_count, size))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::fs::symlink;
+
+    use camino::Utf8PathBuf;
+    use tempfile::TempDir;
+
+    use super::cellar_statistics;
+
+    #[test]
+    fn cellar_statistics_use_lstat_and_deduplicate_hardlink_bytes() {
+        let temp = TempDir::new().expect("temp");
+        let cellar =
+            Utf8PathBuf::from_path_buf(temp.path().join("Cellar")).expect("UTF-8 temp path");
+        let rack = cellar.join("sample");
+        let version = rack.join("1.0");
+        let bin = version.join("bin");
+        std::fs::create_dir_all(&bin).expect("bin");
+        let original = bin.join("sample");
+        std::fs::write(&original, b"abc").expect("original");
+        std::fs::hard_link(&original, bin.join("alias")).expect("hardlink");
+        let link = bin.join("link");
+        symlink(&original, &link).expect("symlink");
+        let ds_store = bin.join(".DS_Store");
+        std::fs::write(&ds_store, b"junk").expect("DS_Store");
+
+        let directory_bytes = [&cellar, &rack, &version, &bin]
+            .into_iter()
+            .map(|path| {
+                std::fs::symlink_metadata(path)
+                    .expect("directory metadata")
+                    .len()
+            })
+            .sum::<u64>();
+        let expected_bytes = directory_bytes
+            + std::fs::symlink_metadata(&original)
+                .expect("original metadata")
+                .len()
+            + std::fs::symlink_metadata(&link)
+                .expect("link metadata")
+                .len()
+            + std::fs::symlink_metadata(&ds_store)
+                .expect("DS_Store metadata")
+                .len();
+
+        assert_eq!(
+            cellar_statistics(&cellar).expect("statistics"),
+            (1, 3, expected_bytes)
+        );
+    }
+
+    #[test]
+    fn cellar_statistics_resolve_root_and_follow_version_for_rack_count() {
+        let temp = TempDir::new().expect("temp");
+        let root =
+            Utf8PathBuf::from_path_buf(temp.path().join("real-cellar")).expect("UTF-8 temp path");
+        let rack = root.join("sample");
+        let outside =
+            Utf8PathBuf::from_path_buf(temp.path().join("outside-version")).expect("UTF-8 path");
+        std::fs::create_dir_all(&rack).expect("rack");
+        std::fs::create_dir_all(&outside).expect("outside version");
+        let version_link = rack.join("1.0");
+        symlink(&outside, &version_link).expect("version symlink");
+        let cellar =
+            Utf8PathBuf::from_path_buf(temp.path().join("Cellar")).expect("UTF-8 temp path");
+        symlink(&root, &cellar).expect("Cellar symlink");
+
+        let expected_bytes = [&root, &rack]
+            .into_iter()
+            .map(|path| {
+                std::fs::symlink_metadata(path)
+                    .expect("directory metadata")
+                    .len()
+            })
+            .sum::<u64>()
+            + std::fs::symlink_metadata(&version_link)
+                .expect("version link metadata")
+                .len();
+
+        assert_eq!(
+            cellar_statistics(&cellar).expect("statistics"),
+            (1, 0, expected_bytes)
+        );
+    }
+
+    #[test]
+    fn cellar_statistics_resolve_one_root_symlink_hop() {
+        let temp = TempDir::new().expect("temp");
+        let root =
+            Utf8PathBuf::from_path_buf(temp.path().join("real-cellar")).expect("UTF-8 temp path");
+        std::fs::create_dir_all(root.join("sample").join("1.0")).expect("version");
+        let alias =
+            Utf8PathBuf::from_path_buf(temp.path().join("cellar-alias")).expect("UTF-8 temp path");
+        symlink(&root, &alias).expect("alias symlink");
+        let cellar =
+            Utf8PathBuf::from_path_buf(temp.path().join("Cellar")).expect("UTF-8 temp path");
+        symlink("cellar-alias", &cellar).expect("Cellar symlink");
+
+        let alias_bytes = std::fs::symlink_metadata(&alias)
+            .expect("alias metadata")
+            .len();
+        assert_eq!(
+            cellar_statistics(&cellar).expect("statistics"),
+            (1, 0, alias_bytes)
+        );
+    }
+
+    #[test]
+    fn cellar_statistics_support_non_directory_root_target() {
+        let temp = TempDir::new().expect("temp");
+        let target =
+            Utf8PathBuf::from_path_buf(temp.path().join("cellar-file")).expect("UTF-8 temp path");
+        std::fs::write(&target, b"cellar").expect("target");
+        let cellar =
+            Utf8PathBuf::from_path_buf(temp.path().join("Cellar")).expect("UTF-8 temp path");
+        symlink(&target, &cellar).expect("Cellar symlink");
+
+        assert_eq!(cellar_statistics(&cellar).expect("statistics"), (0, 1, 6));
+    }
+
+    #[test]
+    fn cellar_statistics_ignore_cyclic_version_symlink_for_rack_count() {
+        let temp = TempDir::new().expect("temp");
+        let cellar =
+            Utf8PathBuf::from_path_buf(temp.path().join("Cellar")).expect("UTF-8 temp path");
+        let rack = cellar.join("sample");
+        std::fs::create_dir_all(&rack).expect("rack");
+        let version_link = rack.join("1.0");
+        symlink("1.0", &version_link).expect("cyclic version symlink");
+
+        let expected_bytes = [&cellar, &rack]
+            .into_iter()
+            .map(|path| {
+                std::fs::symlink_metadata(path)
+                    .expect("directory metadata")
+                    .len()
+            })
+            .sum::<u64>()
+            + std::fs::symlink_metadata(&version_link)
+                .expect("version link metadata")
+                .len();
+
+        assert_eq!(
+            cellar_statistics(&cellar).expect("statistics"),
+            (0, 1, expected_bytes)
+        );
+    }
 }
 
 fn render_formula(ctx: &Ctx, formula: &Formula, installed: Option<&InstalledFormula>) {
