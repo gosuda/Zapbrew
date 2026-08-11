@@ -50,12 +50,11 @@ prefix — see the sandbox recipe in the
 | `HOMEBREW_API_AUTO_UPDATE_SECS` | `450` | Minimum seconds between automatic catalog refreshes |
 | `HOMEBREW_NO_AUTO_UPDATE` | unset | Disables the automatic refresh |
 | `HOMEBREW_DOWNLOAD_CONCURRENCY` | `auto` | `auto` means `available_parallelism * 2`. An integer is clamped to at least 1; an unparseable value becomes 1 |
-| `HOMEBREW_GITHUB_PACKAGES_TOKEN` | unset | Bearer token for the bottle registry |
-| `HOMEBREW_DOCKER_REGISTRY_TOKEN` | unset | Bearer token for a Docker-style registry |
+| `HOMEBREW_BOTTLE_DOMAIN` | `https://ghcr.io/v2/homebrew/core` | Preferred bottle mirror. Exact HTTPS or `docker://` GHCR roots use OCI blob paths; other roots use bottle filenames. A failed custom mirror falls back to the catalog URL |
+| `HOMEBREW_DOCKER_REGISTRY_TOKEN` | unset | Bearer token sent only to HTTPS GHCR artifact URLs |
+| `HOMEBREW_DOCKER_REGISTRY_BASIC_AUTH_TOKEN` | unset | Base64 basic-auth token used when the bearer token is unset. `none` suppresses the authorization header |
 | `http_proxy`, `https_proxy`, `all_proxy`, `ftp_proxy`, `no_proxy` | unset | Read into `Env` (lowercase and uppercase spellings both accepted) and passed through to reqwest's system-proxy detection. `no_proxy` takes a comma-separated exclusion list; proxy URLs may carry credentials. Zapbrew's own config layer does not interpret these — `Env::proxy` is parsed and unused, and resolution is reqwest's standard environment handling |
 
-`HOMEBREW_BOTTLE_DOMAIN` is parsed but not honored — see
-[Accepted but not honored](#accepted-but-not-honored).
 
 ### The custom API domain has a public fallback
 
@@ -83,6 +82,11 @@ mirror preference, not a boundary.
 | `HOMEBREW_NO_AUTOREMOVE` | unset | Skip automatic autoremove after `uninstall` |
 | `HOMEBREW_CLEANUP_MAX_AGE_DAYS` | `120` | Age threshold for stale cache entries |
 | `HOMEBREW_NO_CLEANUP_FORMULAE` | empty | Protect matching installed kegs; cache scope is narrower |
+| `HOMEBREW_NO_INSTALL_UPGRADE` | unset | When `install` names an already-linked outdated formula, leave it installed and print the explicit `upgrade` command. This does not change `upgrade` or cask installation |
+| `HOMEBREW_FORBIDDEN_FORMULAE` | empty | Refuse requested formulae or dependencies whose short or full name appears in the list, before prefix mutation or download |
+| `HOMEBREW_ALLOWED_TAPS` | empty | When non-empty, permit non-official formula taps and `tap` operations only when the tap name, owner (or `owner/*`), or evaluated remote matches an entry. Official taps at their default remote remain allowed. Formula installs evaluate the default remote; `tap` evaluates its supplied remote |
+| `HOMEBREW_FORBIDDEN_TAPS` | empty | Refuse matching tap names, user names, or remote URLs |
+| `HOMEBREW_FORBIDDEN_OWNER` | `you` | Name used in formula and tap policy refusal messages |
 
 `HOMEBREW_NO_CLEANUP_FORMULAE` always excludes matching installed kegs from
 `cleanup`. When you explicitly name a formula, it also excludes that formula's
@@ -90,8 +94,6 @@ cached bottles from `--scrub`. A bare cleanup does not use the list for cache
 pruning. The list does not protect age-expired or incomplete downloads, prefix
 cleanup, stale lock files, or formulae removed by `autoremove`.
 
-`HOMEBREW_NO_INSTALL_UPGRADE` is parsed but not honored — see
-[Accepted but not honored](#accepted-but-not-honored).
 
 ## Accepted but not honored
 
@@ -100,22 +102,16 @@ production code path reads them. Setting them currently has no effect.
 
 | Variable | Parsed as | Current consequence |
 |---|---|---|
-| `HOMEBREW_BOTTLE_DOMAIN` | `Env::bottle_domain` | Downloads use the catalog's `BottleFile::url` directly, so an internal mirror is ignored; installs contact the URL the catalog names (typically `ghcr.io`) regardless of this setting |
-| `HOMEBREW_NO_INSTALL_UPGRADE` | `Env::no_install_upgrade` | `install` skips only an already-current linked version; an installed formula that is behind its catalog version is still upgraded |
+| `HOMEBREW_GITHUB_PACKAGES_TOKEN` | `Env::github_packages_token` | Parsed for compatibility. GitHub Packages authorization follows `HOMEBREW_DOCKER_REGISTRY_TOKEN`, then `HOMEBREW_DOCKER_REGISTRY_BASIC_AUTH_TOKEN`, then the anonymous `Bearer QQ==` token |
 | `HOMEBREW_NO_EMOJI` | `Env::no_emoji` | The install badge (`HOMEBREW_INSTALL_BADGE`) is always printed after a successful pour; this variable does not suppress it |
 | `HOMEBREW_NO_ENV_HINTS` | `Env::no_env_hints` | `link` still prints path hints for keg-only formulae |
-| `HOMEBREW_FORBIDDEN_FORMULAE` | `Env::forbidden_formulae` | `install` checks only catalog `disabled`/`deprecated` flags; this list is not consulted |
-| `HOMEBREW_FORBIDDEN_TAPS` | `Env::forbidden_taps` | `tap` never consults tap policy; this list is not enforced |
 | `HOMEBREW_FORBIDDEN_LICENSES` | `Env::forbidden_licenses` | No license check runs at install time; this list is not consulted |
-| `HOMEBREW_ALLOWED_TAPS` | `Env::allowed_taps` | `tap` never consults tap policy; this allow-list is not enforced |
-| `HOMEBREW_FORBIDDEN_OWNER` | `Env::forbidden_owner` | No refusal message references this value; it is unused |
 | `HOMEBREW_DEBUG` | `Env::debug` | Merged from the variable and `--debug` in `main.rs:49`, then never read. No operation or reporter changes its output; there is no diagnostic mode |
 | `HOMEBREW_LOGS` | `Env::logs` | Zapbrew writes no log files. The value is resolved during environment detection and never read again; the directory is not even created |
 | `HOMEBREW_TEMP` | `Env::temp` | Not used for staging. Formula staging happens inside the Cellar rack, cask staging inside the Caskroom, and downloads inside the cache, so temporary I/O follows `HOMEBREW_CELLAR` and `HOMEBREW_CACHE` instead |
 
-The policy rows are **not** an enforcement or compliance control. Do not rely on
-them to restrict what Zapbrew will install or tap. The remaining rows are inert
-preferences: setting one is accepted and changes nothing.
+Do not treat the accepted-but-unhonored rows as enforcement or compliance
+controls. Zapbrew accepts these variables, but they do not change its behavior.
 
 ## Output
 
