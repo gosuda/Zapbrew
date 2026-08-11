@@ -1,0 +1,3575 @@
+{
+  "results": [
+    {
+      "cell": "api-net-api-error-contract",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-cache-atomic-publish.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-cache-atomic-publish.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-cache-checksum",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-cache-path-layout",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-cache-path-validation",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-catalog-cask-index",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-catalog-force-refresh",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-catalog-formula-index",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-catalog-migration-hint",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-download-bounded-concurrency",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-download-checksum-failure",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-download-ghcr-auth",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-download-resume",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-download-retry",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-env-domain-contract",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-error-checksum-mismatch",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-error-invalid-path-segment",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-error-no-bottle",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-jws-ps512-unencoded",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-jws-signature-scoring",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-jws-signing-input",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-jws-trust-anchor",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-model-cask-artifact-kinds",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-model-cask-parse",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-model-formula-parse",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-progress-display",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-select-bottle-exact",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-select-bottle-macos-older",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-select-bottle-universal",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-transport-atomic-cache-write.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-transport-atomic-cache-write.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-transport-cache-fallback",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-transport-cache-freshness",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "api-net-transport-domain-fallback",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-aliases-extra",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-aliases-matched",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-autoremove-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-cleanup-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-completions-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-config-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-deps-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-desc-formula-cask-conflict",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-desc-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-doctor-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-fetch-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-global-flags",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-info-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-install-cask-formula-conflict",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-install-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-leaves-filter-conflict",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-leaves-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-link-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-list-cask-formula-conflict",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-list-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-outdated-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-pin-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-postinstall-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-quiet-verbose-conflict",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-reinstall-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-search-formula-cask-conflict",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-search-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-services-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-shellenv-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-shim-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-tap-info-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-tap-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-uninstall-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-uninstall-zap-requires-cask",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-unlink-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-unpin-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-untap-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-update-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-upgrade-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-uses-surface",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cli-version-string",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "completions-bad-shell-refusal",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "completions-generate",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "completions-shell-bash",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "completions-shell-fish",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "completions-shell-zsh",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-archive.dispatch",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-archive.dmg-command",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-archive.dmg-native",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-archive.in-process-extract",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-archive.preflight",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-artifact.apply-rollback",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-artifact.path-trust",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-artifact.pkg-command",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-artifact.pkg-native",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-artifact.plan",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-artifact.unsupported",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-install.appdir-default",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-install.resolve-preflight",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-install.transactions",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-list.linux-refusal",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-list.query-output",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-root.appdir-trust",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-root.linux-refusal",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-root.locks-linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-root.locks-macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-root.token-confinement",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-transaction.commit",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-transaction.record-trust",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-transaction.rollback",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-transaction.version-query",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-uninstall.directive-trust",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-uninstall.launchctl-native",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-uninstall.native-command",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-uninstall.pkgutil-native",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-uninstall.preflight-remove",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-uninstall.resolve",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.export.production",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.export.test-forwarders",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.platform.command-builders",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.platform.run-checked",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.dispatch",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.launchd-command",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.launchd-render",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.linux-active-query",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.linux-cleanup-files",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.linux-cleanup-native",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.linux-restart-native",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.linux-run-files",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.linux-run-native",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.linux-start-files",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.linux-start-native",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.linux-stop-native",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.macos-active-query",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.macos-cleanup-files",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.macos-restart-native",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.macos-rollback-native",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.macos-run-files",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.macos-run-native",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.macos-start-files",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.macos-start-native",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.macos-stop-native",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.systemd-command",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.systemd-render",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.services.universal-refusal",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.shim.hint",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.shim.install-linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.shim.install-macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.shim.remove-linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.shim.remove-macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.shim.root-trust",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.tap-info.discovery",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.tap-info.git-command",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.tap-info.git-native-query",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.tap-info.presentation",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.tap.clone-command",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.tap.clone-native",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.tap.identity-layout",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.tap.list-measure",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.untap.dependent-refusal",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.untap.lock-preflight",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.untap.remove-linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.untap.remove-macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "dispatch-cask-appdir-utf8",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "dispatch-cask-unsupported-flags",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "dispatch-catalog-gating",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "dispatch-doctor-problems-silent",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "dispatch-execute-exhaustive",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "dispatch-plan-exhaustive",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "dispatch-report-error-once",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "dispatch-services-subcommand-map",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "dispatch-shim-subcommand-map",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "dispatch-sigint-exit",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "dispatch-suggestion-suffix",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "dispatch-width-forwarding",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "fastpath-cache",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "fastpath-cache-formula",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "fastpath-caskroom",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "fastpath-cellar",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "fastpath-multiple",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "fastpath-prefix",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "fastpath-repository",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "fastpath-taps",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "main-argv0-shim-hint",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "main-env-detect-failure",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "main-env-globals-merge",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "main-fastpath-vs-dispatch",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "main-intercept-completions",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "main-no-command-help",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "main-runtime-sigint",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "main-unknown-command-exit",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "main-version-exit",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.autoremove.dry-run",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.autoremove.remove-fixpoint.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.autoremove.remove-fixpoint.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.autoremove.strict-receipts-fixpoint",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.cleanup.apply-order-and-aggregate.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.cleanup.apply-order-and-aggregate.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.cleanup.bare-catalog-required",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.cleanup.confined-candidate-planning",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.cleanup.flag-dry-run",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.cleanup.flag-prune",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.cleanup.flag-prune-prefix",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.cleanup.flag-scrub",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.config.credential-redaction",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.config.stable-lines",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.context.ctx-dependency-injection",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.context.reporter-output-seam",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.dependency.bottletag-all-host-rejected",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.dependency.closed-cycle-error",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.dependency.edgefilter-query-disjunction",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.dependency.expand-postorder-tagmerge",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.dependency.inverse-reachability",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.dependency.tree-render",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.dependency.uses-from-macos.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.dependency.uses-from-macos.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.deps.empty-success",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.deps.flags-filter-wiring",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.deps.tree-vs-flat-output",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.desc.named-order",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.desc.search-selectors",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.doctor.aggregate-output",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.doctor.missing-selective-flags",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.doctor.nonzero-on-findings",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.doctor.root-usability-no-follow",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.error.doctor-problems-status",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.error.installstep-payload",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.error.rollback-vs-cleanup-semantics",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.error.structured-io-command-context",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.error.transparent-lower-sources",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.fetch.cask-surface-missing",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.fetch.download-no-install",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.fetch.flag-deps",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.formula-txn.apply-ordering.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.formula-txn.apply-ordering.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.formula-txn.postcommit-cleanup.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.formula-txn.postcommit-cleanup.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.formula-txn.rollback-restore.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.formula-txn.rollback-restore.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.info.cask-and-statistics-gap",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.info.intent-keg-selection",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.info.json-v2-raw-objects",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.info.text-requires-name",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.install-steps.base-confinement",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.install-steps.execute-order.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.install-steps.execute-order.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.install-steps.guard-on.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.install-steps.guard-on.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.install-steps.parse-preflight",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.install-steps.stepkind-coverage",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.install.download-all-before-commit",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.install.flag-dry-run",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.install.flag-force",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.install.flag-include-test",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.install.flag-only-dependencies",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.install.preflight-before-lock-network",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.install.refuse-build-from-source",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.install.refuse-head",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.install.refuse-interactive",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.journal.commit-success.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.journal.commit-success.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.journal.per-formula-isolation.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.journal.per-formula-isolation.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.journal.postcommit-cleanup-failure.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.journal.postcommit-cleanup-failure.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.journal.postinstall-lifecycle.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.journal.postinstall-lifecycle.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.journal.precommit-failure.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.journal.precommit-failure.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.leaves.dependent-definition",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.leaves.output",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.leaves.request-filters",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.link.apply-family-links.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.link.apply-family-links.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.link.flag-dry-run",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.link.flag-force",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.link.flag-overwrite",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.link.macos-shadow-refusal",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.link.semantic-keg-family-selection",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.list.empty-installed-mode",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.list.named-current-keg",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.list.oneline-width-output",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.list.wider-filter-gap",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.lock-order.dry-run-no-lock",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.lock-order.old-keg-cleanup-warn.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.lock-order.old-keg-cleanup-warn.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.lock-order.sorted-formula-locks",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.outdated.cask-greedy-gap",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.outdated.named-missing-refusal",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.outdated.verbose-vs-json",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.outdated.version-scheme-predicate",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.pin.cask-gap",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.pin.semantic-selected-keg",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.pin.write-pin.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.pin.write-pin.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.postinstall.no-formula-lock",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.postinstall.selection-order",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.reinstall.cask-gap",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.reinstall.download-all-before-install",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.reinstall.plan-selection",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.removal-txn.commit-ordering.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.removal-txn.commit-ordering.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.removal-txn.postcommit-cleanup.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.removal-txn.postcommit-cleanup.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.removal-txn.rollback-restore.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.removal-txn.rollback-restore.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.render.column-layout",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.search.formula-cask-selectors",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.search.multi-term-gap",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.search.query-regex-vs-simplified",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.search.sorted-column-output",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.shellenv.exports-output",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.shellenv.selection-precedence",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.size.decimal-units",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.state.dependents-of-matching",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.state.immutable-snapshot",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.state.keg-inventory",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.state.missing-cellar-empty",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.state.symlink-escape-rejected",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.uninstall.flag-force",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.uninstall.flag-ignore-dependencies",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.uninstall.lock-union-preflight",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.uninstall.remove-formulae.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.uninstall.remove-formulae.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.unlink.alias-confinement",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.unlink.flag-dry-run",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.unlink.remove-links.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.unlink.remove-links.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.unpin.cask-gap",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.unpin.missing-and-stale-reporting",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.unpin.remove-pin.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.unpin.remove-pin.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.update.force-catalog-refresh",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.update.no-self-update",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.update.tap-git-trust-boundary",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.update.warn-and-continue",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.upgrade.cask-and-flag-gap",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.upgrade.download-all-before-commit",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.upgrade.flag-dry-run",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.upgrade.named-vs-all-pinned",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.uses.cask-gap",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.uses.columns-output",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.uses.filter-wiring",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "output-color-gating",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "output-error",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "output-exit-failure",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "output-exit-success",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "output-hint-program",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "output-oh1",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "output-ohai",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "output-quiet-headline",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "output-sigint-exit-code",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "output-warning",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "output-width-truncation",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.archive.extract_failure",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.archive.extract_success",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.archive.gzip_magic",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.archive.preflight_links",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.archive.preflight_paths",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.archive.reject_devices_fifos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.archive.symlink_parent_guard",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.link.ancestor_preflight",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.link.apply",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.link.apply_failure",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.link.conflicts",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.link.dry_run",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.link.force",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.link.frameworks.skip",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.link.keg_only_records",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.link.make_symlink.non_unix",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.link.opt_record",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.link.overwrite_backup",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.link.plan",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.link.plan_unlink",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.link.prune",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.link.relative_targets",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.link.unlink.command",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.link.unlink.failure",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.link.var.omitted",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.relocate.codesign",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.relocate.codesign_failure",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.relocate.elf_failure",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.relocate.elf_interp",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.relocate.elf_runpath",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.relocate.generic_binary",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.relocate.hardlink_groups",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.relocate.hardlink_relink",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.relocate.macho_cellar_to_opt",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.relocate.macho_dylib_rpath",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.relocate.macho_failure",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.relocate.relativeize_symlinks",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.relocate.replace_symlink",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.relocate.skip.linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.relocate.skip.macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.relocate.text_success",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "pour.relocate.write_atomic",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:api-domain",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:auth-tokens",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:boolean-flags",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:color-flags",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:default-cache-linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:default-cache-macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:default-logs-linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:default-logs-macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:default-prefix",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:default-temp-linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:default-temp-macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:inert-allowed-taps",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:inert-bottle-domain",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:inert-forbidden-formulae",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:inert-forbidden-licenses",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:inert-forbidden-owner",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:inert-forbidden-taps",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:inert-logs",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:inert-no-cleanup-formulae",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:inert-no-emoji",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:inert-no-env-hints",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:inert-no-install-upgrade",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:inert-temp",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:install-badge",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:macos-product-version",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:numeric-tokens",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:path-overrides",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:proxy",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:shellenv",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/ld:preferred-gcc-linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/ld:symlink-ld-so-linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/path:is-pinned",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/path:keg",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/path:linked-opt",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/path:lockguard",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/path:pin",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/path:prefix-accessors",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/path:rack",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/path:unpin",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/tab:built-on",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/tab:compiler-linux",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/tab:compiler-macos",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/tab:load",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/tab:runtime-dependency",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/tab:schema",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/tab:source",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/tab:write",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-types/bottle:arch",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-types/bottle:file",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-types/bottle:macos-version",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-types/bottle:tag",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-types/checksum:parse",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-types/name:formula-name",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-types/version:pkg-version-revision",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-types/version:total-order",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    }
+  ],
+  "deviations": [],
+  "workloads": [],
+  "perf_units": []
+}

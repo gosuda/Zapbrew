@@ -11,7 +11,7 @@
 - Until J1 commits the journal change, no other task may stage `crates/zapbrew-ops/src/`, `crates/zapbrew-ops/tests/transaction.rs`, or the J0 report.
 - Never mark a behavior complete from cross-compilation, command construction, or a fixture when its ledger cell requires a native side effect.
 - The ledger, not an agent summary, decides campaign completion.
-
+- L2b schema-v2 sub-task binds `verify.py` tranche-review deltas as one atomic unit: `schema_version`: 2 in `scope.json`, `enums.approval_kinds` includes `tranche-review`, and adversarial checks expand to the full tranche-review and verifier matrix (72 self-tests total).
 ## Completed architecture leg
 
 ### J0: Deepen install-step journal ownership
@@ -80,7 +80,17 @@ One fresh implementer creates:
 
 The implementer merges the six fragments, records the exact 84-file bijection, seeds one unresolved result for every cell, and implements every gate from Issue 9. Python uses the standard library only. Exit codes are 0 complete, 1 valid but incomplete, and 2 malformed or contradictory.
 
-Required adversarial checks:
+Under L2b (schema-v2 tranche-review binding):
+- `schema_version` is set to 2 and `enums.approval_kinds` includes `tranche-review`.
+- `evidence-pending -> review-pending` transition requires `repository_commit` (40-hex or 64-hex Git commit OID).
+- `review-pending -> approved` transition requires `review_ref` naming an authenticated `tranche-review` approval event ID (`approvals.jsonl` event of kind `tranche-review`).
+- The `tranche-review` approval object is a fetched GitHub PR review (`https://api.github.com/repos/gosuda/Zapbrew/pulls/{pull_number}/reviews/{review_id}`) authenticated against the checkpoint commit (`repository_commit`) and subject transitive closure digest (`sha256(canonical_bytes(preimage))`).
+- Reviewer must be independent (PR author != reviewer) with repository `maintain` or `admin` permission.
+- PR base branch must be `main` (`base.ref == "main"`) and `head.sha == repository_commit`.
+- Landed snapshot validation verifies that landed checkpoints reach `main` and match their reviewed transitive closure digest; it rejects structural contradictions (exit 2) but permits unrelated globally pending decisions/cells in the committed snapshot, while exact reviewed transitive closure digest equality and live global completion checks remain binding.
+- Safety cells still also require their separate `safety-deviation` maintainer approval.
+
+Required adversarial checks (72 total tests):
 
 - remove one file row;
 - duplicate one result row;
@@ -90,10 +100,9 @@ Required adversarial checks:
 - use an unrelated GitHub approval object;
 - change a digest-bound proof;
 - accept noisy or undersized performance samples;
-- mark a hot above-floor unit complete after a no-win revert.
-
+- mark a hot above-floor unit complete after a no-win revert;
+- full tranche-review and verifier matrix cases covering PR base/head mismatch, strict `maintain` or `admin` permission, closure mutation classes (scope, results, deviations, perf_units, workloads, decisions), unrelated tranche+records invariance, retry/replacement ownership, event uniqueness/chronology, and landed snapshot/reachability failures.
 Each injection must make the verifier reject the intended defect. Restore the exact files after every injection.
-
 ### L3: Review and bind the scope
 
 Dependencies: L2 green.
@@ -159,7 +168,7 @@ Other W4 hot units become later ranked targets. They cannot enter this tranche.
 
 Dependencies: L3, W2, W3.
 
-Record the five cells from Issue 10: commit success, pre-commit rollback, post-commit cleanup failure, postinstall lifecycle, and per-formula isolation. Replay legal tranche events through review. A fresh reviewer verifies every evidence anchor, and the `review-pending→approved` tranche event references that review. No `approvals.jsonl` event is created unless the evidence contains a safety deviation, floor binding, or another approval kind defined by Issue 9.
+Record the five cells from Issue 10: commit success, pre-commit rollback, post-commit cleanup failure, postinstall lifecycle, and per-formula isolation. Homebrew does not expose Zapbrew's journal ownership, inverse replay, or incomplete-cleanup error contract, so all five cells are `safety-deviation-candidate`. Each result requires the complete 13-field deviation proof from Issue 9 and a current repository-maintainer `safety-deviation` approval bound to that exact proof digest. Replay legal tranche events through review. A fresh reviewer verifies every evidence anchor and proof field, and the `review-pending→approved` tranche event references that review. No agent creates or substitutes the maintainer approvals.
 
 The macOS mirror cells remain unresolved. A later native macOS tranche must run file-system process integration; cross-compilation does not complete them.
 
@@ -191,8 +200,7 @@ Create one task per coherent behavior cell group, not per source file. Initial o
 5. cask dry-run and other shared flag contracts;
 6. list, doctor, update, services, completions, alias, and output cells.
 
-Each task follows red test or reproduction, implementation, and targeted proof, then remains at `evidence-pending` while P3 supplies performance evidence. After P3, a fresh review, ledger evidence, repository gates, and one atomic commit move the tranche through approval to landed. Do not carry a compatibility shim.
-
+Each task follows red test or reproduction, implementation, and targeted proof, then remains at `evidence-pending` while P3 supplies performance evidence. After P3, a fresh review, ledger evidence, repository gates, and one atomic commit move the tranche through approval to landed. Each tranche's landing requires an authenticated `tranche-review` of its exact `repository_commit` and transitive closure digest. A `changes-requested` retry invalidates prior approvals and requires a new checkpoint and new `tranche-review` approval. Do not carry a compatibility shim.
 ### P3: Run all performance targets
 
 Dependencies: L3 and an implemented P2 tranche at `evidence-pending`.
@@ -209,7 +217,7 @@ If either host is unavailable, the affected cells remain unresolved and the veri
 
 After all reachable tasks:
 
-1. run the ledger verifier online;
+1. run the ledger verifier online (`verify.py`), requiring every landed owning tranche to carry a current authenticated `tranche-review` binding its exact transitive-closure digest and landed snapshot reachability on `main` (landed snapshot validation rejects structural contradictions but may contain unrelated globally pending decisions/cells; exact reviewed transitive closure and current completion checks remain binding);
 2. run `cargo build --workspace`;
 3. run `cargo test --workspace`;
 4. run clippy with warnings denied;
@@ -220,4 +228,4 @@ After all reachable tasks:
 9. run the required macOS cross-compile tier;
 10. run a final independent reviewer and the required alt-reviewer gate.
 
-The campaign is complete only when the ledger exits 0. Missing native hosts, pending product decisions, missing cells, defects, stale approvals, or hot above-floor units keep it incomplete.
+The campaign is complete only when the ledger exits 0. Missing native hosts, pending product decisions, missing cells, defects, stale approvals, unauthenticated tranche reviews, or hot above-floor units keep it incomplete.
