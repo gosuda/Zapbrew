@@ -16,6 +16,8 @@ use zapbrew_ops::install::{self, Args};
 use zapbrew_ops::{Ctx, Reporter};
 use zapbrew_prefix::{CommandOutput, CommandRunner, CommandSpec, Env, EnvDetectInput, Tab};
 
+mod support;
+
 const SIGNED_MIGRATIONS: &str = r#"{"payload":"{\"android-ndk\":\"homebrew/cask\",\"android-platform-tools\":\"homebrew/cask\",\"app-engine-go-32\":\"homebrew/cask/google-cloud-sdk\",\"app-engine-go-64\":\"homebrew/cask/google-cloud-sdk\",\"avidemux\":\"homebrew/cask\",\"chromedriver\":\"homebrew/cask\",\"cockatrice\":\"homebrew/cask\",\"codex\":\"homebrew/cask\",\"consul\":\"homebrew/cask\",\"copilot-language-server\":\"homebrew/cask\",\"corelocationcli\":\"homebrew/cask\",\"geany\":\"homebrew/cask\",\"gearboy\":\"homebrew/cask\",\"gearsystem\":\"homebrew/cask\",\"gimp\":\"homebrew/cask\",\"grads\":\"homebrew/cask\",\"gtkwave\":\"homebrew/cask\",\"inkscape\":\"homebrew/cask\",\"joplin\":\"homebrew/cask\",\"keybase\":\"homebrew/cask\",\"luanti\":\"homebrew/cask\",\"meld\":\"homebrew/cask\",\"minetest\":\"homebrew/cask/luanti\",\"mitmproxy\":\"homebrew/cask\",\"openrct2\":\"homebrew/cask\",\"openttd\":\"homebrew/cask\",\"osxfuse\":\"homebrew/cask\",\"quassel\":\"homebrew/cask\",\"schismtracker\":\"homebrew/cask/schism-tracker\",\"transmission-remote-gtk\":\"homebrew/cask/transmission-remote-gui\",\"truetree\":\"homebrew/cask\",\"wesnoth\":\"homebrew/cask/the-battle-for-wesnoth\"}","signatures":[{"protected":"eyJhbGciOiJQUzUxMiIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il19","header":{"kid":"homebrew-1"},"signature":"l89BOBTAX2oo91_KlSCxmHHXt8jDj2dx0AssxCgC1wT-RBc8rL4alNd9XIUR8hJ5Yw7WLlWIgj40ktanmdBEUG_HYi_ll7FLX_99tRXky8Rhvzdl7XDjX9ixE3ICvN-7sIVB7qZ809g4GTawj01g6yozQvr0OGyuo_haqWYunGPqbuamOB-W0L4h-uyUySLH8nsrxI9PT-mOquTcnopyKAVqoQ_SOZ1_f6l0Djoph40UumxpSSGD04lQHT5xtYvkkNeudlPB6kc3wHzl1iBFRDCpWOnoR6-qTgqJzOhyDFUapLgAbUSF3bEmOoVuYaxZ5U5s1Hr5lUl7sHXJsL1A0xlwIOFJFutyAnPHhgG5urJviJcmVmBxaak1g_FwDF6yopvEJFdSWYOgmPPP8Fiwp4-Z9izNFBTBLmYcfj491LpOwifvxt0ZdWcsY8hllSBkKcyD3TO02Bz7IjlOHLqoDTfMae94qZUObTlknbM5Z7w3fHxl91MVqmFUxSeaRkZlm-BDf_wCcvbetxWlfbMfKijnWHoOub8lRH4-ywTLBPYaTWnJWwGwUSBN5nUkFtaXFDVQqfRPZnWQO9wjBu8iv67VcT7WnpfN9MvO-dvptEoMx_NYfPxXCbk90Tpmlrpoq5QZOEmUz9UK_3-ur3CRdUwUsVNVcGiLwJ-8kNn72JU"},{"protected":"eyJhbGciOiJQUzUxMiIsImI2NCI6ZmFsc2V9","header":{"kid":"zapbrew-test"},"signature":"iuTpZBrHtAfRmSiKGiC3C4Otw8uFRRsxj3fFz76iY0LarfdIQi1baatHAj4f48FE3kGxWRzMYdaSSXkkQiwh0uG5VdY1ZcIZ6ZyX80-GpcQ1jdano8YkTIXZnRVVADpaM-bCF80Abl1_ZsvnaLFQkYHEUv-1M1hcNpmyiPqj0T4LIM926PLefrfPaMhmDhhyusB179or0S_1nvL59FZiyHejVnjna2dyu0wQ7Gymqya-CQP02_rw2I7fUVtdzG7WYrqLL1KcKxXpMA06Y3CCRziftEZnmsxVjYezEcMcl_FBB_zjn1QAbR1VKuD5UDnp1NcLTYUYKgRR5oGPE6P5DA"}]}"#;
 
 struct PanicRunner;
@@ -185,6 +187,19 @@ fn args(name: &str) -> Args {
         names: vec![name.to_owned()],
         ..Args::default()
     }
+}
+
+fn seed_prefix(env: &Env) {
+    std::fs::create_dir_all(&env.home).expect("home");
+    std::fs::write(env.home.join(".profile"), b"profile").expect("home file");
+    std::fs::create_dir_all(env.prefix.join("bin")).expect("bin");
+    std::fs::write(env.prefix.join("bin/existing"), b"existing").expect("bin file");
+    std::fs::create_dir_all(env.cellar.join("existing/1.0")).expect("existing keg");
+    std::fs::write(env.cellar.join("existing/1.0/INSTALL_RECEIPT.json"), b"{}").expect("receipt");
+    std::fs::create_dir_all(&env.cache).expect("cache");
+    std::fs::write(env.cache.join("prior"), b"prior").expect("cache file");
+    std::fs::create_dir_all(&env.temp).expect("temp");
+    std::fs::write(env.temp.join("stamp"), b"stamp").expect("temp file");
 }
 
 #[tokio::test]
@@ -661,6 +676,282 @@ async fn missing_formula_has_exact_typed_message() {
     assert_eq!(
         error.to_string(),
         "No available formula with the name \"never-was\"."
+    );
+}
+
+#[tokio::test]
+async fn forbidden_formula_refuses_before_fetch() {
+    let server = MockServer::start().await;
+    let tarball = bottle("root", "1.0", &[("bin/root", b"root")]);
+    let sha = digest(&tarball);
+    mount_blob(&server, "/root", &tarball, 0).await;
+    let temp = TempDir::new().expect("temp");
+    let mut env = scratch_env(&temp);
+    env.forbidden_formulae = vec!["root".to_owned()];
+    let (ctx, _) = context(
+        env,
+        vec![formula(
+            "root",
+            "1.0",
+            &format!("{}/root", server.uri()),
+            &sha,
+        )],
+    );
+
+    let error = install::run(&ctx, args("root"))
+        .await
+        .expect_err("forbidden formula");
+
+    assert_eq!(
+        error.to_string(),
+        "The installation of root is forbidden by you in `$HOMEBREW_FORBIDDEN_FORMULAE`: root"
+    );
+}
+
+#[tokio::test]
+async fn allowed_taps_refuses_unlisted_tap_before_fetch() {
+    let server = MockServer::start().await;
+    let tarball = bottle("foo", "1.0", &[("bin/foo", b"foo")]);
+    let sha = digest(&tarball);
+    mount_blob(&server, "/foo", &tarball, 0).await;
+    let temp = TempDir::new().expect("temp");
+    let mut env = scratch_env(&temp);
+    env.allowed_taps = vec!["homebrew/core".to_owned()];
+    let mut f = formula_with_tap(
+        "foo",
+        "1.0",
+        &format!("{}/foo", server.uri()),
+        &sha,
+        "acme/tools",
+    );
+    f["full_name"] = json!("acme/tools/foo");
+    let (ctx, _) = context(env, vec![f]);
+
+    let error = install::run(&ctx, args("foo"))
+        .await
+        .expect_err("tap not allowed");
+
+    assert!(
+        error
+            .to_string()
+            .contains("has not allowed this tap in `$HOMEBREW_ALLOWED_TAPS`")
+    );
+}
+
+#[tokio::test]
+async fn forbidden_tap_refuses_before_fetch() {
+    let server = MockServer::start().await;
+    let tarball = bottle("foo", "1.0", &[("bin/foo", b"foo")]);
+    let sha = digest(&tarball);
+    mount_blob(&server, "/foo", &tarball, 0).await;
+    let temp = TempDir::new().expect("temp");
+    let mut env = scratch_env(&temp);
+    env.forbidden_taps = vec!["acme/tools".to_owned()];
+    let mut f = formula_with_tap(
+        "foo",
+        "1.0",
+        &format!("{}/foo", server.uri()),
+        &sha,
+        "acme/tools",
+    );
+    f["full_name"] = json!("acme/tools/foo");
+    let (ctx, _) = context(env, vec![f]);
+
+    let error = install::run(&ctx, args("foo"))
+        .await
+        .expect_err("forbidden tap");
+
+    assert!(
+        error
+            .to_string()
+            .contains("has forbidden this tap in `$HOMEBREW_FORBIDDEN_TAPS`")
+    );
+}
+
+#[tokio::test]
+async fn forbidden_formula_refusal_preserves_complete_scratch_prefix_and_zero_http() {
+    let server = MockServer::start().await;
+    let tarball = bottle("root", "1.0", &[("bin/root", b"root")]);
+    let sha = digest(&tarball);
+    mount_blob(&server, "/root", &tarball, 0).await;
+    let temp = TempDir::new().expect("temp");
+    let mut env = scratch_env(&temp);
+    seed_prefix(&env);
+    env.forbidden_formulae = vec!["root".to_owned()];
+    let (ctx, _) = context(
+        env,
+        vec![formula(
+            "root",
+            "1.0",
+            &format!("{}/root", server.uri()),
+            &sha,
+        )],
+    );
+    let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).expect("utf8 temp");
+    let before = support::fingerprint(&root);
+
+    let error = install::run(&ctx, args("root"))
+        .await
+        .expect_err("forbidden formula");
+
+    assert_eq!(
+        error.to_string(),
+        "The installation of root is forbidden by you in `$HOMEBREW_FORBIDDEN_FORMULAE`: root"
+    );
+    assert_eq!(
+        support::fingerprint(&root),
+        before,
+        "scratch prefix must be byte-identical"
+    );
+    assert!(
+        server
+            .received_requests()
+            .await
+            .is_none_or(|requests| requests.is_empty()),
+        "no HTTP request may be made"
+    );
+    assert!(!ctx.env.locks.exists(), "lock tree must not be created");
+}
+
+#[tokio::test]
+async fn forbidden_tap_refusal_preserves_complete_scratch_prefix_and_zero_http() {
+    let server = MockServer::start().await;
+    let tarball = bottle("foo", "1.0", &[("bin/foo", b"foo")]);
+    let sha = digest(&tarball);
+    mount_blob(&server, "/foo", &tarball, 0).await;
+    let temp = TempDir::new().expect("temp");
+    let mut env = scratch_env(&temp);
+    seed_prefix(&env);
+    env.forbidden_taps = vec!["acme/tools".to_owned()];
+    let mut f = formula_with_tap(
+        "foo",
+        "1.0",
+        &format!("{}/foo", server.uri()),
+        &sha,
+        "acme/tools",
+    );
+    f["full_name"] = json!("acme/tools/foo");
+    let (ctx, _) = context(env, vec![f]);
+
+    let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).expect("utf8 temp");
+    let before = support::fingerprint(&root);
+
+    let error = install::run(&ctx, args("foo"))
+        .await
+        .expect_err("forbidden tap");
+
+    assert!(
+        error
+            .to_string()
+            .contains("has forbidden this tap in `$HOMEBREW_FORBIDDEN_TAPS`")
+    );
+    assert_eq!(
+        support::fingerprint(&root),
+        before,
+        "scratch prefix must be byte-identical"
+    );
+    assert!(
+        server
+            .received_requests()
+            .await
+            .is_none_or(|requests| requests.is_empty()),
+        "no HTTP request may be made"
+    );
+    assert!(!ctx.env.locks.exists(), "lock tree must not be created");
+}
+
+#[tokio::test]
+async fn no_install_upgrade_skips_linked_outdated_formula() {
+    let server = MockServer::start().await;
+    let old_bottle = bottle("root", "0.9", &[("bin/root", b"old")]);
+    let old_sha = digest(&old_bottle);
+    mount_blob(&server, "/old", &old_bottle, 1).await;
+
+    let new_bottle = bottle("root", "1.0", &[("bin/root", b"new")]);
+    let new_sha = digest(&new_bottle);
+
+    let temp = TempDir::new().expect("temp");
+    let environment = scratch_env(&temp);
+    let (old_ctx, _) = context(
+        environment.clone(),
+        vec![formula(
+            "root",
+            "0.9",
+            &format!("{}/old", server.uri()),
+            &old_sha,
+        )],
+    );
+    install::run(&old_ctx, args("root"))
+        .await
+        .expect("old install");
+
+    mount_blob(&server, "/new", &new_bottle, 0).await;
+    let mut environment = environment.clone();
+    environment.no_install_upgrade = true;
+    let (ctx, reporter) = context(
+        environment,
+        vec![formula(
+            "root",
+            "1.0",
+            &format!("{}/new", server.uri()),
+            &new_sha,
+        )],
+    );
+
+    install::run(&ctx, args("root")).await.expect("no upgrade");
+    assert!(
+        reporter
+            .take()
+            .iter()
+            .any(|m| m.contains("is already installed but outdated")),
+        "expected skip warning"
+    );
+    assert!(
+        !ctx.env.cellar.join("root/1.0").exists(),
+        "new keg must not be poured"
+    );
+}
+
+#[tokio::test]
+async fn no_install_upgrade_unset_still_upgrades() {
+    let server = MockServer::start().await;
+    let old_bottle = bottle("root", "0.9", &[("bin/root", b"old")]);
+    let old_sha = digest(&old_bottle);
+    mount_blob(&server, "/old", &old_bottle, 1).await;
+
+    let new_bottle = bottle("root", "1.0", &[("bin/root", b"new")]);
+    let new_sha = digest(&new_bottle);
+    mount_blob(&server, "/new", &new_bottle, 1).await;
+
+    let temp = TempDir::new().expect("temp");
+    let environment = scratch_env(&temp);
+    let (old_ctx, _) = context(
+        environment.clone(),
+        vec![formula(
+            "root",
+            "0.9",
+            &format!("{}/old", server.uri()),
+            &old_sha,
+        )],
+    );
+    install::run(&old_ctx, args("root"))
+        .await
+        .expect("old install");
+
+    let (ctx, _) = context(
+        environment,
+        vec![formula(
+            "root",
+            "1.0",
+            &format!("{}/new", server.uri()),
+            &new_sha,
+        )],
+    );
+
+    install::run(&ctx, args("root")).await.expect("upgrade");
+    assert!(
+        ctx.env.cellar.join("root/1.0").exists(),
+        "new keg must be poured"
     );
 }
 

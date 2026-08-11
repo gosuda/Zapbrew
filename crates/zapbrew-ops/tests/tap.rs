@@ -94,6 +94,19 @@ impl CommandRunner for CloneRunner {
     }
 }
 
+fn seed_prefix(env: &zapbrew_prefix::Env) {
+    std::fs::create_dir_all(&env.home).expect("home");
+    std::fs::write(env.home.join(".profile"), b"profile").expect("home file");
+    std::fs::create_dir_all(env.prefix.join("bin")).expect("bin");
+    std::fs::write(env.prefix.join("bin/existing"), b"existing").expect("bin file");
+    std::fs::create_dir_all(env.cellar.join("existing/1.0")).expect("existing keg");
+    std::fs::write(env.cellar.join("existing/1.0/INSTALL_RECEIPT.json"), b"{}").expect("receipt");
+    std::fs::create_dir_all(&env.cache).expect("cache");
+    std::fs::write(env.cache.join("prior"), b"prior").expect("cache file");
+    std::fs::create_dir_all(&env.temp).expect("temp");
+    std::fs::write(env.temp.join("stamp"), b"stamp").expect("temp file");
+}
+
 #[tokio::test]
 async fn no_name_lists_only_real_taps_in_sorted_order() {
     let fixture = Fixture::new();
@@ -148,6 +161,136 @@ async fn core_and_cask_require_force_before_any_output_or_git_call() {
     }
     assert!(reporter.take().is_empty());
     assert!(runner.calls().is_empty());
+}
+
+#[tokio::test]
+async fn allowed_taps_refuses_unlisted_tap_before_clone() {
+    let mut fixture = Fixture::new();
+    fixture.env.allowed_taps = vec!["homebrew/core".to_owned()];
+    let (ctx, _reporter) = fixture.context(Vec::new());
+    let runner = Arc::new(CloneRunner::new(ResultKind::Clone(Vec::new())));
+    let mut ctx = ctx;
+    ctx.commands = runner.clone();
+
+    let error = tap::run(
+        &ctx,
+        Args {
+            name: Some("acme/tools".to_owned()),
+            url: None,
+            force: true,
+        },
+    )
+    .await
+    .expect_err("tap not allowed");
+
+    assert!(
+        error
+            .to_string()
+            .contains("has not allowed this tap in `$HOMEBREW_ALLOWED_TAPS`")
+    );
+    assert!(
+        runner.calls().is_empty(),
+        "clone must not run for disallowed tap"
+    );
+    assert!(
+        !fixture.env.library.join("Taps/acme").exists(),
+        "tap parent must not be created"
+    );
+}
+
+#[tokio::test]
+async fn forbidden_tap_refuses_before_clone() {
+    let mut fixture = Fixture::new();
+    fixture.env.forbidden_taps = vec!["acme/tools".to_owned()];
+    let (ctx, _reporter) = fixture.context(Vec::new());
+    let runner = Arc::new(CloneRunner::new(ResultKind::Clone(Vec::new())));
+    let mut ctx = ctx;
+    ctx.commands = runner.clone();
+
+    let error = tap::run(
+        &ctx,
+        Args {
+            name: Some("acme/tools".to_owned()),
+            url: None,
+            force: true,
+        },
+    )
+    .await
+    .expect_err("forbidden tap");
+
+    assert!(
+        error
+            .to_string()
+            .contains("has forbidden this tap in `$HOMEBREW_FORBIDDEN_TAPS`")
+    );
+    assert!(
+        runner.calls().is_empty(),
+        "clone must not run for forbidden tap"
+    );
+}
+
+#[tokio::test]
+async fn forbidden_tap_refusal_preserves_complete_scratch_prefix_and_zero_commands() {
+    let mut fixture = Fixture::new();
+    seed_prefix(&fixture.env);
+    fixture.env.forbidden_taps = vec!["acme/tools".to_owned()];
+    let (ctx, _reporter) = fixture.context(Vec::new());
+    let runner = Arc::new(CloneRunner::new(ResultKind::Clone(Vec::new())));
+    let mut ctx = ctx;
+    ctx.commands = runner.clone();
+
+    let root = fixture.env.prefix.parent().expect("scratch root");
+    let before = support::fingerprint(root);
+
+    let error = tap::run(
+        &ctx,
+        Args {
+            name: Some("acme/tools".to_owned()),
+            url: None,
+            force: true,
+        },
+    )
+    .await
+    .expect_err("forbidden tap");
+
+    assert!(
+        error
+            .to_string()
+            .contains("has forbidden this tap in `$HOMEBREW_FORBIDDEN_TAPS`")
+    );
+    assert!(runner.calls().is_empty(), "no command may run");
+    assert_eq!(
+        support::fingerprint(root),
+        before,
+        "scratch prefix must be byte-identical"
+    );
+    assert!(!fixture.env.locks.exists(), "lock tree must not be created");
+}
+
+#[tokio::test]
+async fn allowed_taps_empty_and_forbidden_empty_clones_normally() {
+    let fixture = Fixture::new();
+    let (ctx, _reporter) = fixture.context(Vec::new());
+    let runner = Arc::new(CloneRunner::new(ResultKind::Clone(Vec::new())));
+    let mut ctx = ctx;
+    ctx.commands = runner.clone();
+
+    tap::run(
+        &ctx,
+        Args {
+            name: Some("acme/tools".to_owned()),
+            url: None,
+            force: true,
+        },
+    )
+    .await
+    .expect("tap allowed");
+
+    assert_eq!(
+        runner.calls().len(),
+        1,
+        "clone must run when no policy is set"
+    );
 }
 
 #[tokio::test]

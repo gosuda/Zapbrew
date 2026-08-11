@@ -92,17 +92,173 @@ impl TapName {
             .join(format!("homebrew-{}", self.repository))
     }
 
-    fn default_remote(&self) -> String {
+    pub(crate) fn default_remote(&self) -> String {
         format!(
             "https://github.com/{}/homebrew-{}",
             self.user, self.repository
         )
     }
 
-    fn is_api_tap(&self) -> bool {
+    pub(crate) fn is_api_tap(&self) -> bool {
         matches!(self.user.as_str(), "Homebrew" | "Linuxbrew")
             && (self.repository == "core" || (self.user == "Homebrew" && self.repository == "cask"))
     }
+}
+
+impl TapName {
+    pub(crate) fn is_official(&self) -> bool {
+        matches!(self.user.as_str(), "Homebrew" | "Linuxbrew")
+            && (self.repository == "core" || (self.user == "Homebrew" && self.repository == "cask"))
+    }
+}
+
+/// Evaluate `$HOMEBREW_ALLOWED_TAPS` and `$HOMEBREW_FORBIDDEN_TAPS` for `tap`
+/// using `remote`. Returns `(allowed, forbidden)`.
+pub(crate) fn evaluate_tap_policy(env: &Env, tap: &TapName, remote: &str) -> (bool, bool) {
+    let allowed = tap_allowed(env, tap, remote);
+    let forbidden = tap_forbidden(env, tap, remote);
+    (allowed, forbidden)
+}
+
+fn tap_allowed(env: &Env, tap: &TapName, remote: &str) -> bool {
+    if env.allowed_taps.is_empty() {
+        return true;
+    }
+    if is_implicitly_trusted(tap, remote) {
+        return true;
+    }
+    for reference in &env.allowed_taps {
+        if matches_tap_reference(reference, tap, remote) {
+            return true;
+        }
+    }
+    false
+}
+
+fn tap_forbidden(env: &Env, tap: &TapName, remote: &str) -> bool {
+    for reference in &env.forbidden_taps {
+        if matches_tap_reference(reference, tap, remote) {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_implicitly_trusted(tap: &TapName, remote: &str) -> bool {
+    tap.is_official() && normalize_remote(&tap.default_remote()) == normalize_remote(remote)
+}
+
+fn matches_tap_reference(reference: &str, tap: &TapName, remote: &str) -> bool {
+    if is_remote_reference(reference) {
+        return normalize_remote(reference) == normalize_remote(remote);
+    }
+
+    let reference = reference.to_ascii_lowercase();
+    let user = tap.user().to_ascii_lowercase();
+    if reference == user || reference == format!("{user}/*") {
+        return true;
+    }
+
+    if let Ok(ref_tap) = TapName::parse(&reference) {
+        return ref_tap.name() == tap.name();
+    }
+
+    false
+}
+
+fn is_remote_reference(reference: &str) -> bool {
+    reference.contains("://")
+        || reference.starts_with(['/', '.', '~'])
+        || reference.split_once(':').is_some_and(|(before, after)| {
+            !before.is_empty() && !before.contains('/') && !after.is_empty()
+        })
+}
+
+fn normalize_remote(remote: &str) -> String {
+    let mut s = remote.trim().to_lowercase();
+
+    if let Some(rest) = s.strip_prefix("git+")
+        && let Some((scheme, rest)) = rest.split_once("://")
+    {
+        s = format!("{scheme}://{rest}");
+    }
+
+    if let Some(path) = extract_github_path(&s) {
+        return normalize_github_path(path);
+    }
+
+    if let Some(host) = remote_host(&s)
+        && matches!(host.as_str(), "github.com" | "gitlab.com")
+    {
+        while s.ends_with('/') {
+            s.pop();
+        }
+        if let Some(prefix) = s.strip_suffix(".git") {
+            s = prefix.to_owned();
+        }
+    }
+
+    s
+}
+
+fn extract_github_path(remote: &str) -> Option<&str> {
+    for prefix in ["https://", "http://", "ssh://", "git://"] {
+        if let Some(rest) = remote.strip_prefix(prefix) {
+            let rest = strip_userinfo(rest);
+            return rest.strip_prefix("github.com/");
+        }
+    }
+
+    if let Some((before, after)) = remote.split_once('@')
+        && !before.contains('/')
+        && after.starts_with("github.com:")
+    {
+        return Some(&after["github.com:".len()..]);
+    }
+
+    if let Some((before, after)) = remote.split_once(':')
+        && before == "github.com"
+        && !after.starts_with('/')
+        && !after.is_empty()
+    {
+        return Some(after);
+    }
+
+    None
+}
+
+fn strip_userinfo(s: &str) -> &str {
+    if let Some(at) = s.find('@') {
+        &s[at + 1..]
+    } else {
+        s
+    }
+}
+
+fn normalize_github_path(path: &str) -> String {
+    let mut result = format!("https://github.com/{path}");
+    while result.ends_with('/') {
+        result.pop();
+    }
+    if let Some(prefix) = result.strip_suffix(".git") {
+        result = prefix.to_owned();
+    }
+    result
+}
+
+fn remote_host(remote: &str) -> Option<String> {
+    let s = remote.trim();
+    let s = if let Some((_, rest)) = s.split_once("://") {
+        rest
+    } else {
+        s
+    };
+    let s = if let Some(at) = s.find('@') {
+        &s[at + 1..]
+    } else {
+        s
+    };
+    s.split(['/', ':']).next().map(String::from)
 }
 
 impl TapStats {
@@ -178,6 +334,27 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
         });
     }
 
+    let remote = args.url.unwrap_or_else(|| tap.default_remote());
+    let (allowed, forbidden) = evaluate_tap_policy(&ctx.env, &tap, &remote);
+    if !allowed || forbidden {
+        let owner = &ctx.env.forbidden_owner;
+        let mut message = format!(
+            "The installation of the {} was requested but {}\n",
+            tap.name(),
+            owner
+        );
+        if !allowed {
+            message.push_str("has not allowed this tap in `$HOMEBREW_ALLOWED_TAPS`");
+        }
+        if !allowed && forbidden {
+            message.push_str(" and\n");
+        }
+        if forbidden {
+            message.push_str("has forbidden this tap in `$HOMEBREW_FORBIDDEN_TAPS`");
+        }
+        return Err(OpError::Refusal { message });
+    }
+
     // Acquire an exclusive tap lock so a concurrent untap cannot remove the
     // tap directory while we are cloning into it. Held until function exit.
     let _tap_lock = acquire_exclusive_tap_locks(&ctx.env, std::slice::from_ref(&tap))?;
@@ -187,9 +364,8 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
             message: format!("Tap {} already tapped.", tap.name()),
         });
     }
-    prepare_parent(&ctx.env, &tap)?;
 
-    let remote = args.url.unwrap_or_else(|| tap.default_remote());
+    prepare_parent(&ctx.env, &tap)?;
     ctx.reporter.ohai(&format!("Tapping {}", tap.name()));
     if let Err(error) = run_checked(ctx.commands.as_ref(), &git_clone(&remote, &destination)) {
         if let Err(cleanup_error) = rollback_clone(&ctx.env, &tap, &destination) {
@@ -472,5 +648,92 @@ mod repository_path_tests {
     fn invalid_tap_name_is_refused() {
         let env = scratch_env();
         assert!(repository_path(&env, "no-slash").is_err());
+    }
+}
+
+#[cfg(test)]
+mod tap_policy_tests {
+    use std::collections::HashMap;
+
+    use zapbrew_prefix::{Env, EnvDetectInput, SystemCommandRunner};
+
+    use super::{TapName, evaluate_tap_policy};
+
+    fn env_with(lists: HashMap<String, String>) -> Env {
+        let vars: HashMap<String, String> = lists
+            .into_iter()
+            .chain([("HOMEBREW_PREFIX".to_owned(), "/opt/zapbrew".to_owned())])
+            .collect();
+        Env::detect_from(
+            &EnvDetectInput {
+                os: "linux".to_owned(),
+                arch: "x86_64".to_owned(),
+                home: "/home/test".into(),
+                xdg_cache_home: None,
+                vars,
+                available_parallelism: 2,
+            },
+            &SystemCommandRunner,
+        )
+        .expect("scratch env")
+    }
+
+    #[test]
+    fn wildcard_allows_any_repo_for_owner() {
+        let env = env_with(HashMap::from([(
+            "HOMEBREW_ALLOWED_TAPS".to_owned(),
+            "acme/*".to_owned(),
+        )]));
+        let tap = TapName::parse("acme/tools").expect("tap");
+        let (allowed, forbidden) = evaluate_tap_policy(&env, &tap, &tap.default_remote());
+        assert!(allowed);
+        assert!(!forbidden);
+    }
+
+    #[test]
+    fn owner_only_reference_allows_owner() {
+        let env = env_with(HashMap::from([(
+            "HOMEBREW_ALLOWED_TAPS".to_owned(),
+            "acme".to_owned(),
+        )]));
+        let tap = TapName::parse("acme/tools").expect("tap");
+        let (allowed, forbidden) = evaluate_tap_policy(&env, &tap, &tap.default_remote());
+        assert!(allowed);
+        assert!(!forbidden);
+    }
+
+    #[test]
+    fn owner_only_reference_forbids_owner() {
+        let env = env_with(HashMap::from([(
+            "HOMEBREW_FORBIDDEN_TAPS".to_owned(),
+            "acme".to_owned(),
+        )]));
+        let tap = TapName::parse("acme/tools").expect("tap");
+        let (_, forbidden) = evaluate_tap_policy(&env, &tap, &tap.default_remote());
+        assert!(forbidden);
+    }
+
+    #[test]
+    fn exact_unlisted_tap_is_not_allowed() {
+        let env = env_with(HashMap::from([(
+            "HOMEBREW_ALLOWED_TAPS".to_owned(),
+            "homebrew/core".to_owned(),
+        )]));
+        let tap = TapName::parse("acme/tools").expect("tap");
+        let (allowed, forbidden) = evaluate_tap_policy(&env, &tap, &tap.default_remote());
+        assert!(!allowed);
+        assert!(!forbidden);
+    }
+
+    #[test]
+    fn official_tap_allowed_despite_allowed_list() {
+        let env = env_with(HashMap::from([(
+            "HOMEBREW_ALLOWED_TAPS".to_owned(),
+            "acme/*".to_owned(),
+        )]));
+        let tap = TapName::parse("homebrew/core").expect("tap");
+        let (allowed, forbidden) = evaluate_tap_policy(&env, &tap, &tap.default_remote());
+        assert!(allowed);
+        assert!(!forbidden);
     }
 }

@@ -10,7 +10,7 @@ use zapbrew_types::{Arch, BottleTag, FormulaName};
 use crate::dependency::{DependencyMode, DependencyOptions, EdgeFilter, expand};
 use crate::install_steps::InstallSteps;
 use crate::state::{InstalledFormula, InstalledKeg, InstalledState, scan_selected};
-use crate::tap::formula_taps;
+use crate::tap::{TapName, evaluate_tap_policy, formula_taps};
 use crate::transaction::{
     InstallInput, Replacement, acquire_formula_locks, acquire_shared_tap_locks,
     install as install_transaction,
@@ -58,31 +58,14 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
         validate_formula(ctx, candidate.formula)?;
     }
 
+    check_install_policy(ctx, &candidates)?;
     let affected = affected_names(ctx, &candidates);
     let taps = formula_taps(candidates.iter().map(|c| c.formula))?;
-    let state;
-    let _tap_locks;
-    let _locks;
-    if args.dry_run {
-        state = scan_selected(&ctx.env, &affected)?;
-    } else {
-        // brew's perform_preinstall_checks: refresh `<prefix>/lib/ld.so` so a
-        // fresh Linux prefix can run relocated bottles whose interpreter
-        // points there. Never mutates under `--dry-run`.
-        zapbrew_prefix::symlink_ld_so(&ctx.env)?;
-        zapbrew_prefix::setup_preferred_gcc_libs(&ctx.env)?;
-        // Acquire shared tap locks before formula locks to prevent lock-order
-        // inversion with untap's exclusive tap locks. Held through receipt
-        // commit (end of function).
-        _tap_locks = acquire_shared_tap_locks(&ctx.env, &taps)?;
-        _locks = acquire_formula_locks(&ctx.env, &affected)?;
-        state = scan_selected(&ctx.env, &affected)?;
-    }
-
-    let selected = select_unmet(ctx, candidates, &state, args.force)?;
-    check_conflicts(ctx, &selected, &state, args.force)?;
 
     if args.dry_run {
+        let state = scan_selected(&ctx.env, &affected)?;
+        let selected = select_unmet(ctx, candidates, &state, args.force)?;
+        check_conflicts(ctx, &selected, &state, args.force)?;
         if !selected.is_empty() {
             ctx.reporter.ohai("Would install");
             ctx.reporter.print(
@@ -95,6 +78,21 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
         }
         return Ok(());
     }
+
+    // brew's perform_preinstall_checks: refresh `<prefix>/lib/ld.so` so a
+    // fresh Linux prefix can run relocated bottles whose interpreter
+    // points there.
+    zapbrew_prefix::symlink_ld_so(&ctx.env)?;
+    zapbrew_prefix::setup_preferred_gcc_libs(&ctx.env)?;
+    // Acquire shared tap locks before formula locks to prevent lock-order
+    // inversion with untap's exclusive tap locks. Held through receipt
+    // commit (end of function).
+    let _tap_locks = acquire_shared_tap_locks(&ctx.env, &taps)?;
+    let _locks = acquire_formula_locks(&ctx.env, &affected)?;
+    let state = scan_selected(&ctx.env, &affected)?;
+    let selected = select_unmet(ctx, candidates, &state, args.force)?;
+    check_conflicts(ctx, &selected, &state, args.force)?;
+
     let bottles = bottle_requests(ctx, selected)?;
 
     for (_, _, request) in &bottles {
@@ -456,6 +454,75 @@ fn validate_formula(ctx: &Ctx, formula: &Formula) -> Result<(), OpError> {
     Ok(())
 }
 
+fn check_install_policy(ctx: &Ctx, selected: &[Candidate<'_>]) -> Result<(), OpError> {
+    check_forbidden_formulae(ctx, selected)?;
+    check_tap_policy(ctx, selected)?;
+    Ok(())
+}
+
+fn check_forbidden_formulae(ctx: &Ctx, selected: &[Candidate<'_>]) -> Result<(), OpError> {
+    if ctx.env.forbidden_formulae.is_empty() {
+        return Ok(());
+    }
+
+    for candidate in selected {
+        let formula = candidate.formula;
+        let forbidden_name = ctx
+            .env
+            .forbidden_formulae
+            .iter()
+            .find(|name| name.as_str() == formula.name || name.as_str() == formula.full_name);
+        if let Some(name) = forbidden_name {
+            return Err(OpError::Refusal {
+                message: format!(
+                    "The installation of {} is forbidden by {} in `$HOMEBREW_FORBIDDEN_FORMULAE`: {name}",
+                    formula.full_name, ctx.env.forbidden_owner
+                ),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn check_tap_policy(ctx: &Ctx, selected: &[Candidate<'_>]) -> Result<(), OpError> {
+    if ctx.env.allowed_taps.is_empty() && ctx.env.forbidden_taps.is_empty() {
+        return Ok(());
+    }
+
+    for candidate in selected {
+        let Some(raw_tap) = &candidate.formula.tap else {
+            continue;
+        };
+        let tap = TapName::parse(raw_tap)?;
+        let remote = tap.default_remote();
+        let (allowed, forbidden) = evaluate_tap_policy(&ctx.env, &tap, &remote);
+        if allowed && !forbidden {
+            continue;
+        }
+
+        let owner = &ctx.env.forbidden_owner;
+        let mut message = format!(
+            "The installation of {} has the tap {}\nbut {} ",
+            candidate.formula.full_name,
+            tap.name(),
+            owner
+        );
+        if !allowed {
+            message.push_str("has not allowed this tap in `$HOMEBREW_ALLOWED_TAPS`");
+        }
+        if !allowed && forbidden {
+            message.push_str(" and\n");
+        }
+        if forbidden {
+            message.push_str("has forbidden this tap in `$HOMEBREW_FORBIDDEN_TAPS`");
+        }
+        return Err(OpError::Refusal { message });
+    }
+
+    Ok(())
+}
+
 fn affected_names(ctx: &Ctx, candidates: &[Candidate<'_>]) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     for candidate in candidates {
@@ -509,6 +576,21 @@ fn select_unmet<'a>(
                     candidate.formula.name
                 ));
             }
+            continue;
+        }
+        if let Some(linked) = installed.and_then(InstalledFormula::linked)
+            && linked.version() != &candidate.formula.pkg_version
+            && candidate.requested
+            && ctx.env.no_install_upgrade
+        {
+            ctx.reporter.opoo(&format!(
+                "{} {} is already installed but outdated.\nTo upgrade to {}, run:\n  {} upgrade {}",
+                candidate.formula.name,
+                linked.version(),
+                candidate.formula.pkg_version,
+                ctx.reporter.hint_program(),
+                candidate.formula.name
+            ));
             continue;
         }
         selected.push(candidate);
