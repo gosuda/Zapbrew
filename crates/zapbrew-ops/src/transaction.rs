@@ -19,14 +19,14 @@ use crate::{Ctx, OpError};
 static TRANSACTION_ID: AtomicU64 = AtomicU64::new(1);
 static TEST_HOOKS: Mutex<TestHooks> = Mutex::new(TestHooks {
     stage: None,
-    cleanup_failure_formula: None,
+    cleanup_failure_formulae: BTreeSet::new(),
     install_failure_after_unlink: None,
     removal_failure_after: None,
 });
 
 struct TestHooks {
     stage: Option<(Utf8PathBuf, u64)>,
-    cleanup_failure_formula: Option<String>,
+    cleanup_failure_formulae: BTreeSet<String>,
     install_failure_after_unlink: Option<String>,
     removal_failure_after: Option<(String, usize)>,
 }
@@ -669,12 +669,7 @@ fn inject_cleanup_failure(path: &Utf8Path) -> Result<(), OpError> {
             .parent()
             .and_then(Utf8Path::file_name)
             .unwrap_or_default();
-        if hooks.cleanup_failure_formula.as_deref() == Some(formula) {
-            hooks.cleanup_failure_formula = None;
-            true
-        } else {
-            false
-        }
+        hooks.cleanup_failure_formulae.remove(formula)
     };
     if !should_fail {
         return Ok(());
@@ -712,7 +707,8 @@ pub(crate) fn arm_cleanup_failure(formula: String) -> Result<(), OpError> {
         .map_err(|_| OpError::InvalidState {
             reason: "transaction test-hook lock is poisoned".to_owned(),
         })?
-        .cleanup_failure_formula = Some(formula);
+        .cleanup_failure_formulae
+        .insert(formula);
     Ok(())
 }
 
