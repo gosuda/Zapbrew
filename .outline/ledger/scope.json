@@ -146,52 +146,66 @@
   "decisions": [
     {
       "id": "D2-linux-cask-subset",
-      "status": "pending",
+      "status": "resolved",
       "title": "Linux cask artifact subset",
       "question": "Which cask artifact kinds (binary, approved appimage) does Linux implement versus refuse?",
-      "default_policy": "constrained-parity: implement the expressible binary/appimage subset, refuse the rest with fixed text"
+      "default_policy": "constrained-parity: implement the expressible binary/appimage subset, refuse the rest with fixed text",
+      "resolution": "On Linux, implement cask queries and every cask artifact accepted by Homebrew 6.0.16's Linux support predicate: all non-macOS-only artifact classes plus non-manual installers. Refuse casks that require macOS, macOS-only artifacts, and manual installers with fixed Homebrew-compatible text.",
+      "decided_at": "2026-08-11T11:06:16Z"
     },
     {
       "id": "D3-linux-service-registration",
-      "status": "pending",
+      "status": "resolved",
       "title": "Linux service start persistence",
       "question": "Does `services start` register a persistent systemd --user unit or run transiently?",
-      "default_policy": "constrained-parity: document current transient start as the settled surface"
+      "default_policy": "constrained-parity: document current transient start as the settled surface",
+      "resolution": "`services start` persistently registers/enables and then starts the systemd user service; `services run` remains transient. `services restart` preserves the prior registration mode: persistent services remain enabled and transient run services remain unenabled.",
+      "decided_at": "2026-08-11T11:06:16Z"
     },
     {
       "id": "D4-env-contracts",
-      "status": "pending",
+      "status": "resolved",
       "title": "Accepted-but-inert environment contracts",
       "question": "Which parsed-but-unread HOMEBREW_* variables and mirror domains are honored versus documented inert?",
-      "default_policy": "constrained-parity: keep accepted-but-inert, documented, no silent behavior change"
+      "default_policy": "constrained-parity: keep accepted-but-inert, documented, no silent behavior change",
+      "resolution": "Preserve HOMEBREW_API_DOMAIN fallback; for GitHub Packages artifact downloads use docker registry bearer auth first, then docker registry basic auth (with `none` meaning no header), then `Bearer QQ==`; honor every architecture-applicable tracked HOMEBREW_* variable at its actual sink and remove accepted-but-inert documentation only as each sink lands. Remove dead Env.proxy parsing while preserving and separately proving standard process proxy/no-proxy transport behavior.",
+      "decided_at": "2026-08-11T11:06:16Z"
     },
     {
       "id": "D5-cask-tranche-granularity",
-      "status": "pending",
+      "status": "resolved",
       "title": "Cask behavior tranche granularity",
       "question": "How are cask query and mutation behaviors grouped into coherent parity tranches?",
-      "default_policy": "constrained-parity: group by coherent observable behavior, queries before mutations"
+      "default_policy": "constrained-parity: group by coherent observable behavior, queries before mutations",
+      "resolution": "Order cask work by observable dependency: schema/model; separately reviewable read-only selection/query commands; CLI/refusal boundaries; download/archive preparation; install; uninstall/zap; reinstall; upgrade; pin/unpin. Combine cells only when effect class, rollback boundary, and review proof match.",
+      "decided_at": "2026-08-11T11:06:16Z"
     },
     {
       "id": "D6-completions-surface",
-      "status": "pending",
+      "status": "resolved",
       "title": "Shell completions surface",
       "question": "What completions surface reaches expressible parity across supported shells?",
-      "default_policy": "constrained-parity: implement expressible completions parity by default"
+      "default_policy": "constrained-parity: implement expressible completions parity by default",
+      "resolution": "Match Homebrew 6.0.16 completion state/query and link/unlink semantics with shipped static bash, zsh, and fish assets; deterministically refuse unsupported operations or shell assets and handle the surface before runtime or network. Zapbrew script generation may remain extra but does not satisfy parity.",
+      "decided_at": "2026-08-11T11:06:16Z"
     },
     {
       "id": "D7-output-parity-bars",
-      "status": "pending",
+      "status": "resolved",
       "title": "Output formatting parity bars",
       "question": "Which output formatting behaviors must match brew byte-for-byte versus best-effort?",
-      "default_policy": "constrained-parity: match expressible output, keep architecture exclusions explicit"
+      "default_policy": "constrained-parity: match expressible output, keep architecture exclusions explicit",
+      "resolution": "For fixed observable inputs, byte-match deterministic machine/protocol output, ordering, decorators, exit status, and fixed-width rendering. Binary identity and Ruby/git-derived output unavailable to the zero-Ruby architecture are explicit outside-architecture contracts; Zapbrew consistently uses its actual argv0 identity.",
+      "decided_at": "2026-08-11T11:06:16Z"
     },
     {
       "id": "D8-shared-flag-contracts",
-      "status": "pending",
+      "status": "resolved",
       "title": "Shared install flag contracts",
       "question": "How are cask dry-run and other shared install flags accepted or refused across paths?",
-      "default_policy": "constrained-parity: refuse unsupported flags by table rather than silently drop"
+      "default_policy": "constrained-parity: refuse unsupported flags by table rather than silently drop",
+      "resolution": "Never silently drop a shared flag: implement every expressible formula/cask semantic, and deterministically refuse only source-, Ruby-, or git-dependent semantics before any ops call. Existing table-driven refusals are safe interim behavior, not parity; --appdir applies only to cask mode and formula mode rejects it.",
+      "decided_at": "2026-08-11T11:06:16Z"
     }
   ],
   "files": [
@@ -743,10 +757,10 @@
     {
       "cell_id": "api-net-download-ghcr-auth",
       "module": "zapbrew-net-download",
-      "behavior": "GHCR bottle request sends an Authorization: Bearer header with token precedence docker_registry_token > github_packages_token > QQ==",
+      "behavior": "GitHub Packages artifact requests send Authorization only to the artifact domain, with precedence Bearer docker_registry_token, Basic docker_registry_basic_auth_token (`none` removes the header), then Bearer QQ==",
       "platform": "any",
       "effect": "network",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "process-integration",
         "unit-fixture-io"
@@ -756,7 +770,7 @@
       ],
       "source_pair": {
         "zapbrew": "crates/zapbrew-net/src/download.rs:356-359,471-476",
-        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/download_strategy/curl_github_packages_download_strategy.rb#L12-L24"
+        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/brew.sh#L633-L646; https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/download_strategy/curl_github_packages_download_strategy.rb#L18-L23"
       }
     },
     {
@@ -796,7 +810,7 @@
     {
       "cell_id": "api-net-env-domain-contract",
       "module": "zapbrew-api-transport",
-      "behavior": "HOMEBREW_API_DOMAIN is parsed from the environment, defaulting to the canonical API domain",
+      "behavior": "HOMEBREW_API_DOMAIN selects the configured API domain and, when that domain fails, preserves Homebrew-compatible fallback to the canonical API domain",
       "platform": "any",
       "effect": "network",
       "expected_disposition": "must-match",
@@ -1203,10 +1217,10 @@
     {
       "cell_id": "cli-completions-surface",
       "module": "cli",
-      "behavior": "Clap surface and arg struct for `completions`",
+      "behavior": "Expose Homebrew 6.0.16-compatible completions state, link, and unlink operations; no subcommand is the state query",
       "platform": "any",
       "effect": "value",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -1240,7 +1254,7 @@
       "behavior": "Clap surface and arg struct for `deps`",
       "platform": "any",
       "effect": "value",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -1310,7 +1324,7 @@
       "behavior": "Clap surface and arg struct for `fetch`",
       "platform": "any",
       "effect": "value",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -1346,7 +1360,7 @@
       "behavior": "Clap surface and arg struct for `info`",
       "platform": "any",
       "effect": "value",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -1364,7 +1378,7 @@
       "behavior": "Install --cask and --formula are mutually exclusive",
       "platform": "any",
       "effect": "refusal",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -1379,10 +1393,10 @@
     {
       "cell_id": "cli-install-surface",
       "module": "cli",
-      "behavior": "Clap surface and arg struct for `install`",
+      "behavior": "The install CLI exposes shared formula/cask semantics without silent drops; --appdir applies only in cask mode, and formula mode deterministically rejects --appdir before any ops call",
       "platform": "any",
       "effect": "value",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -1449,7 +1463,7 @@
       "behavior": "List --cask and --formula are mutually exclusive",
       "platform": "any",
       "effect": "refusal",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -1467,7 +1481,7 @@
       "behavior": "Clap surface and arg struct for `list`",
       "platform": "any",
       "effect": "value",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -1485,7 +1499,7 @@
       "behavior": "Clap surface and arg struct for `outdated`",
       "platform": "any",
       "effect": "value",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -1503,7 +1517,7 @@
       "behavior": "Clap surface and arg struct for `pin`",
       "platform": "any",
       "effect": "value",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -1534,10 +1548,10 @@
     {
       "cell_id": "cli-quiet-verbose-conflict",
       "module": "cli",
-      "behavior": "Clap rejects simultaneous --quiet and --verbose",
+      "behavior": "Clap deterministically rejects simultaneous --quiet and --verbose with the Homebrew-compatible conflict contract",
       "platform": "any",
       "effect": "refusal",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -1555,7 +1569,7 @@
       "behavior": "Clap surface and arg struct for `reinstall`",
       "platform": "any",
       "effect": "value",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -1574,7 +1588,7 @@
       "behavior": "Search --formula and --cask are mutually exclusive",
       "platform": "any",
       "effect": "refusal",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -1592,7 +1606,7 @@
       "behavior": "Clap surface and arg struct for `search`",
       "platform": "any",
       "effect": "value",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -1610,7 +1624,7 @@
       "behavior": "Clap surface and arg struct for `services`",
       "platform": "any",
       "effect": "value",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -1692,7 +1706,7 @@
       "behavior": "Clap surface and arg struct for `uninstall`",
       "platform": "any",
       "effect": "value",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -1744,7 +1758,7 @@
       "behavior": "Clap surface and arg struct for `unpin`",
       "platform": "any",
       "effect": "value",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -1794,7 +1808,7 @@
       "behavior": "Clap surface and arg struct for `upgrade`",
       "platform": "any",
       "effect": "value",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -1813,7 +1827,7 @@
       "behavior": "Clap surface and arg struct for `uses`",
       "platform": "any",
       "effect": "value",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -1842,12 +1856,12 @@
       }
     },
     {
-      "cell_id": "completions-bad-shell-refusal",
+      "cell_id": "completions-invalid-operation-refusal",
       "module": "completions",
-      "behavior": "Clap rejects a non-bash/zsh/fish shell value",
+      "behavior": "Deterministically refuse unsupported completion operations before filesystem mutation",
       "platform": "any",
       "effect": "refusal",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -1860,30 +1874,32 @@
       }
     },
     {
-      "cell_id": "completions-generate",
+      "cell_id": "completions-link",
       "module": "completions",
-      "behavior": "Generate a shell completion script for bash/zsh/fish from the clap surface",
+      "behavior": "Discover eligible tap completion files and idempotently link them into the managed bash, zsh, and fish completion locations",
       "platform": "any",
-      "effect": "output",
-      "expected_disposition": "product-decision-pending",
+      "effect": "filesystem-mutation",
+      "expected_disposition": "must-match",
       "expected_evidence": [
-        "platform-independent pure logic"
+        "cross-compile",
+        "process-integration",
+        "unit-fixture-io"
       ],
       "decision_refs": [
         "D6-completions-surface"
       ],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-cli/src/completions.rs:22-30",
+        "zapbrew": "crates/zapbrew-cli/src/completions.rs:1-30",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/docs/Manpage.md#L937-L953"
       }
     },
     {
-      "cell_id": "completions-shell-bash",
+      "cell_id": "completions-state-query",
       "module": "completions",
-      "behavior": "Bash completion script contains _zapbrew registration and binary name",
+      "behavior": "With no subcommand or with state, report the current Homebrew-compatible completion link state",
       "platform": "any",
       "effect": "output",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -1891,17 +1907,17 @@
         "D6-completions-surface"
       ],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-cli/src/completions.rs:23-24,63-75",
+        "zapbrew": "crates/zapbrew-cli/src/completions.rs:1-30",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/docs/Manpage.md#L937-L953"
       }
     },
     {
-      "cell_id": "completions-shell-fish",
+      "cell_id": "completions-static-assets",
       "module": "completions",
-      "behavior": "Fish completion script contains 'complete -c zapbrew' marker",
+      "behavior": "Ship Zapbrew bash, zsh, and fish completion assets for the managed link operation",
       "platform": "any",
       "effect": "output",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -1909,25 +1925,27 @@
         "D6-completions-surface"
       ],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-cli/src/completions.rs:26,91-103",
+        "zapbrew": "crates/zapbrew-cli/src/completions.rs:1-30",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/docs/Manpage.md#L937-L953"
       }
     },
     {
-      "cell_id": "completions-shell-zsh",
+      "cell_id": "completions-unlink",
       "module": "completions",
-      "behavior": "Zsh completion script contains #compdef zapbrew marker",
+      "behavior": "Idempotently unlink managed bash, zsh, and fish completion files without removing source assets",
       "platform": "any",
-      "effect": "output",
-      "expected_disposition": "product-decision-pending",
+      "effect": "filesystem-mutation",
+      "expected_disposition": "must-match",
       "expected_evidence": [
-        "platform-independent pure logic"
+        "cross-compile",
+        "process-integration",
+        "unit-fixture-io"
       ],
       "decision_refs": [
         "D6-completions-surface"
       ],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-cli/src/completions.rs:25,77-89",
+        "zapbrew": "crates/zapbrew-cli/src/completions.rs:1-30",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/docs/Manpage.md#L937-L953"
       }
     },
@@ -2102,19 +2120,20 @@
     {
       "cell_id": "cp.cask-artifact.unsupported",
       "module": "ops-cask-artifact",
-      "behavior": "Unknown artifact directives refuse during preflight before download or mutation",
-      "platform": "macos",
+      "behavior": "Preflight refuses unknown artifact directives on every platform and, on Linux, refuses casks requiring macOS, macOS-only artifact classes, and manual installers before download or mutation",
+      "platform": "any",
       "effect": "refusal",
       "expected_disposition": "must-match",
       "expected_evidence": [
         "unit-fixture-io"
       ],
       "decision_refs": [
+        "D2-linux-cask-subset",
         "D5-cask-tranche-granularity"
       ],
       "source_pair": {
         "zapbrew": "crates/zapbrew-ops/src/cask/artifact.rs:85-152",
-        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cask/artifact.rb#L40-L65"
+        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/extend/os/linux/cask/installer.rb#L13-L26; https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cask/artifact.rb#L40-L65"
       }
     },
     {
@@ -2172,12 +2191,12 @@
       }
     },
     {
-      "cell_id": "cp.cask-list.linux-refusal",
+      "cell_id": "cp.cask-list.linux-query",
       "module": "ops-cask-list",
-      "behavior": "Cask list refuses on Linux before scanning Caskroom",
+      "behavior": "On Linux, cask list and other read-only cask queries inspect installed Caskroom state and signed cask metadata instead of applying a blanket platform refusal",
       "platform": "linux",
-      "effect": "refusal",
-      "expected_disposition": "product-decision-pending",
+      "effect": "query",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "unit-fixture-io"
       ],
@@ -2186,7 +2205,7 @@
       ],
       "source_pair": {
         "zapbrew": "crates/zapbrew-ops/src/cask/list.rs:18-19",
-        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cask/dsl.rb#L136-L140"
+        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cmd/list.rb#L17-L90"
       }
     },
     {
@@ -2222,13 +2241,14 @@
       }
     },
     {
-      "cell_id": "cp.cask-root.linux-refusal",
+      "cell_id": "cp.cask-root.linux-supported-artifacts",
       "module": "ops-cask-root",
-      "behavior": "Non-macOS cask operations refuse with the fixed Linux unsupported message",
+      "behavior": "On Linux, install every artifact accepted by Homebrew 6.0.16's Linux predicate through a confined transaction: all non-macOS-only artifact classes plus non-manual installers",
       "platform": "linux",
-      "effect": "refusal",
-      "expected_disposition": "product-decision-pending",
+      "effect": "filesystem-mutation",
+      "expected_disposition": "must-match",
       "expected_evidence": [
+        "process-integration",
         "unit-fixture-io"
       ],
       "decision_refs": [
@@ -2236,7 +2256,7 @@
       ],
       "source_pair": {
         "zapbrew": "crates/zapbrew-ops/src/cask/mod.rs:23-30",
-        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cask/dsl.rb#L136-L140"
+        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/extend/os/linux/cask/installer.rb#L13-L26; https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/cask/artifact.rb#L42-L63"
       }
     },
     {
@@ -2626,7 +2646,7 @@
     {
       "cell_id": "cp.services.linux-restart-native",
       "module": "ops-services",
-      "behavior": "Linux Restart performs stop then persistent start using systemd user manager",
+      "behavior": "Linux Restart preserves registration mode: persistently registered services remain enabled, while transient Run services restart without enabling",
       "platform": "linux",
       "effect": "native-mutation",
       "expected_disposition": "must-match",
@@ -2634,7 +2654,9 @@
         "command-construction",
         "native-side-effect"
       ],
-      "decision_refs": [],
+      "decision_refs": [
+        "D3-linux-service-registration"
+      ],
       "source_pair": {
         "zapbrew": "crates/zapbrew-ops/src/services.rs:249-264",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/docs/Manpage.md#L1998-L2112"
@@ -2694,10 +2716,10 @@
     {
       "cell_id": "cp.services.linux-start-native",
       "module": "ops-services",
-      "behavior": "Linux Start reloads and starts the user unit but does not register it for login/boot",
+      "behavior": "Linux Start persistently registers/enables the systemd user service and then starts it; Linux Run remains transient",
       "platform": "linux",
       "effect": "native-mutation",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "command-construction",
         "native-side-effect"
@@ -3237,7 +3259,7 @@
       "behavior": "--appdir values that are not valid UTF-8 are refused before cask install",
       "platform": "macos",
       "effect": "refusal",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -3252,10 +3274,10 @@
     {
       "cell_id": "dispatch-cask-unsupported-flags",
       "module": "dispatch",
-      "behavior": "Install --cask refuses --only-dependencies, --dry-run, --build-from-source, --HEAD, --interactive, --include-test before any ops call",
+      "behavior": "Cask dispatch implements every expressible shared install semantic and deterministically refuses only source-, Ruby-, or git-dependent semantics before any ops call; current table-driven broader refusals are safe interim behavior, not parity",
       "platform": "any",
       "effect": "refusal",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -3568,10 +3590,10 @@
     {
       "cell_id": "main-argv0-shim-hint",
       "module": "main",
-      "behavior": "Derive the hint program from argv0 via zapbrew_ops::shim::hint_program before dispatch",
+      "behavior": "Zapbrew derives its actual program identity from argv0 before dispatch and consistently uses that identity rather than pretending to be brew",
       "platform": "any",
       "effect": "value",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-be-outside-architecture",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -3636,10 +3658,10 @@
     {
       "cell_id": "main-intercept-completions",
       "module": "main",
-      "behavior": "Intercept `completions <shell>` before Env detection, fast path, runtime, or network and emit a script",
+      "behavior": "Recognize completion state, link, unlink, and refusal paths before catalog or network setup and route filesystem effects through the completion handler",
       "platform": "any",
       "effect": "output",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -4344,7 +4366,7 @@
       "behavior": "Cask downloads/checksum/retry/architecture variants are absent but expressible from signed JSON; source/HEAD fetch modes remain outside architecture",
       "platform": "any",
       "effect": "query",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "unit-fixture-io"
       ],
@@ -4499,7 +4521,7 @@
       "behavior": "No-argument installation statistics and full cask-info parity are missing but expressible",
       "platform": "any",
       "effect": "query",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "unit-fixture-io"
       ],
@@ -5306,7 +5328,7 @@
       "behavior": "Cask and greedy variants are missing but expressible from signed cask JSON",
       "platform": "any",
       "effect": "query",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "unit-fixture-io"
       ],
@@ -5374,7 +5396,7 @@
       "behavior": "Cask pinning is absent but present in Homebrew 6.0.16 surface",
       "platform": "any",
       "effect": "query",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "unit-fixture-io"
       ],
@@ -5475,7 +5497,7 @@
       "behavior": "Cask reinstall and --zap are absent but expressible from signed cask JSON",
       "platform": "any",
       "effect": "query",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "unit-fixture-io"
       ],
@@ -5996,7 +6018,7 @@
       "behavior": "Cask unpinning is absent but present in Homebrew 6.0.16 surface",
       "platform": "any",
       "effect": "query",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "unit-fixture-io"
       ],
@@ -6133,7 +6155,7 @@
       "behavior": "Cask selection and wider Homebrew upgrade controls are missing but expressible from signed JSON",
       "platform": "any",
       "effect": "query",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "unit-fixture-io"
       ],
@@ -6200,7 +6222,7 @@
       "behavior": "Cask targets and additional missing-linkage/evaluation controls are missing but expressible",
       "platform": "any",
       "effect": "query",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "unit-fixture-io"
       ],
@@ -6317,10 +6339,10 @@
     {
       "cell_id": "output-hint-program",
       "module": "output",
-      "behavior": "TerminalReporter carries the argv0-derived hint program name",
+      "behavior": "TerminalReporter carries and consistently renders Zapbrew's actual argv0-derived program identity rather than pretending to be brew",
       "platform": "any",
       "effect": "value",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-be-outside-architecture",
       "expected_evidence": [
         "platform-independent pure logic"
       ],
@@ -7161,6 +7183,24 @@
       }
     },
     {
+      "cell_id": "zapbrew-prefix/env:allowed-taps",
+      "module": "zapbrew-prefix/env",
+      "behavior": "HOMEBREW_ALLOWED_TAPS is enforced at tap and dependency admission sinks before download or mutation",
+      "platform": "any",
+      "effect": "query",
+      "expected_disposition": "must-match",
+      "expected_evidence": [
+        "unit-fixture-io"
+      ],
+      "decision_refs": [
+        "D4-env-contracts"
+      ],
+      "source_pair": {
+        "zapbrew": "crates/zapbrew-prefix/src/env.rs:538",
+        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/env_config.rb#L47-L53"
+      }
+    },
+    {
       "cell_id": "zapbrew-prefix/env:api-domain",
       "module": "zapbrew-prefix/env",
       "behavior": "HOMEBREW_API_DOMAIN parses with default https://formulae.brew.sh/api and is consumed by download fallback",
@@ -7207,6 +7247,24 @@
       "source_pair": {
         "zapbrew": "crates/zapbrew-prefix/src/env.rs:514-522",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/env_config.rb#L282-L285; https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/env_config.rb#L522-L534; https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/env_config.rb#L586-L592; https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/env_config.rb#L757-L760"
+      }
+    },
+    {
+      "cell_id": "zapbrew-prefix/env:bottle-domain",
+      "module": "zapbrew-prefix/env",
+      "behavior": "HOMEBREW_BOTTLE_DOMAIN is honored when resolving bottle download URLs, including the configured mirror-domain behavior",
+      "platform": "any",
+      "effect": "query",
+      "expected_disposition": "must-match",
+      "expected_evidence": [
+        "unit-fixture-io"
+      ],
+      "decision_refs": [
+        "D4-env-contracts"
+      ],
+      "source_pair": {
+        "zapbrew": "crates/zapbrew-prefix/src/env.rs:494",
+        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/env_config.rb#L141-L151"
       }
     },
     {
@@ -7343,48 +7401,12 @@
       }
     },
     {
-      "cell_id": "zapbrew-prefix/env:inert-allowed-taps",
+      "cell_id": "zapbrew-prefix/env:forbidden-formulae",
       "module": "zapbrew-prefix/env",
-      "behavior": "HOMEBREW_ALLOWED_TAPS is accepted into Env but has zero production reads",
+      "behavior": "HOMEBREW_FORBIDDEN_FORMULAE is enforced at formula selection and dependency admission sinks before download or mutation",
       "platform": "any",
       "effect": "query",
-      "expected_disposition": "product-decision-pending",
-      "expected_evidence": [
-        "unit-fixture-io"
-      ],
-      "decision_refs": [
-        "D4-env-contracts"
-      ],
-      "source_pair": {
-        "zapbrew": "crates/zapbrew-prefix/src/env.rs:538",
-        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/env_config.rb#L47-L53"
-      }
-    },
-    {
-      "cell_id": "zapbrew-prefix/env:inert-bottle-domain",
-      "module": "zapbrew-prefix/env",
-      "behavior": "HOMEBREW_BOTTLE_DOMAIN is accepted into Env but has zero production reads",
-      "platform": "any",
-      "effect": "query",
-      "expected_disposition": "product-decision-pending",
-      "expected_evidence": [
-        "unit-fixture-io"
-      ],
-      "decision_refs": [
-        "D4-env-contracts"
-      ],
-      "source_pair": {
-        "zapbrew": "crates/zapbrew-prefix/src/env.rs:494",
-        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/env_config.rb#L141-L151"
-      }
-    },
-    {
-      "cell_id": "zapbrew-prefix/env:inert-forbidden-formulae",
-      "module": "zapbrew-prefix/env",
-      "behavior": "HOMEBREW_FORBIDDEN_FORMULAE is accepted into Env but has zero production reads",
-      "platform": "any",
-      "effect": "query",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "unit-fixture-io"
       ],
@@ -7397,12 +7419,12 @@
       }
     },
     {
-      "cell_id": "zapbrew-prefix/env:inert-forbidden-licenses",
+      "cell_id": "zapbrew-prefix/env:forbidden-licenses",
       "module": "zapbrew-prefix/env",
-      "behavior": "HOMEBREW_FORBIDDEN_LICENSES is accepted into Env but has zero production reads",
+      "behavior": "HOMEBREW_FORBIDDEN_LICENSES is enforced against formula metadata at admission before download or mutation",
       "platform": "any",
       "effect": "query",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "unit-fixture-io"
       ],
@@ -7415,12 +7437,12 @@
       }
     },
     {
-      "cell_id": "zapbrew-prefix/env:inert-forbidden-owner",
+      "cell_id": "zapbrew-prefix/env:forbidden-owner",
       "module": "zapbrew-prefix/env",
-      "behavior": "HOMEBREW_FORBIDDEN_OWNER is accepted into Env but has zero production reads",
+      "behavior": "HOMEBREW_FORBIDDEN_OWNER is enforced at ownership-sensitive install/admission sinks before download or mutation",
       "platform": "any",
       "effect": "query",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "unit-fixture-io"
       ],
@@ -7433,12 +7455,12 @@
       }
     },
     {
-      "cell_id": "zapbrew-prefix/env:inert-forbidden-taps",
+      "cell_id": "zapbrew-prefix/env:forbidden-taps",
       "module": "zapbrew-prefix/env",
-      "behavior": "HOMEBREW_FORBIDDEN_TAPS is accepted into Env but has zero production reads",
+      "behavior": "HOMEBREW_FORBIDDEN_TAPS is enforced at tap and dependency admission sinks before download or mutation",
       "platform": "any",
       "effect": "query",
-      "expected_disposition": "product-decision-pending",
+      "expected_disposition": "must-match",
       "expected_evidence": [
         "unit-fixture-io"
       ],
@@ -7448,114 +7470,6 @@
       "source_pair": {
         "zapbrew": "crates/zapbrew-prefix/src/env.rs:531",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/env_config.rb#L378-L384"
-      }
-    },
-    {
-      "cell_id": "zapbrew-prefix/env:inert-logs",
-      "module": "zapbrew-prefix/env",
-      "behavior": "HOMEBREW_LOGS is accepted into Env but has zero production reads",
-      "platform": "any",
-      "effect": "query",
-      "expected_disposition": "product-decision-pending",
-      "expected_evidence": [
-        "unit-fixture-io"
-      ],
-      "decision_refs": [
-        "D4-env-contracts"
-      ],
-      "source_pair": {
-        "zapbrew": "crates/zapbrew-prefix/src/env.rs:451",
-        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/env_config.rb#L498-L503"
-      }
-    },
-    {
-      "cell_id": "zapbrew-prefix/env:inert-no-cleanup-formulae",
-      "module": "zapbrew-prefix/env",
-      "behavior": "HOMEBREW_NO_CLEANUP_FORMULAE is accepted into Env but has zero production reads",
-      "platform": "any",
-      "effect": "query",
-      "expected_disposition": "product-decision-pending",
-      "expected_evidence": [
-        "unit-fixture-io"
-      ],
-      "decision_refs": [
-        "D4-env-contracts"
-      ],
-      "source_pair": {
-        "zapbrew": "crates/zapbrew-prefix/src/env.rs:518",
-        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/env_config.rb#L539-L542"
-      }
-    },
-    {
-      "cell_id": "zapbrew-prefix/env:inert-no-emoji",
-      "module": "zapbrew-prefix/env",
-      "behavior": "HOMEBREW_NO_EMOJI is accepted into Env but has zero production reads",
-      "platform": "any",
-      "effect": "query",
-      "expected_disposition": "product-decision-pending",
-      "expected_evidence": [
-        "unit-fixture-io"
-      ],
-      "decision_refs": [
-        "D4-env-contracts"
-      ],
-      "source_pair": {
-        "zapbrew": "crates/zapbrew-prefix/src/env.rs:526",
-        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/env_config.rb#L548-L551"
-      }
-    },
-    {
-      "cell_id": "zapbrew-prefix/env:inert-no-env-hints",
-      "module": "zapbrew-prefix/env",
-      "behavior": "HOMEBREW_NO_ENV_HINTS is accepted into Env but has zero production reads",
-      "platform": "any",
-      "effect": "query",
-      "expected_disposition": "product-decision-pending",
-      "expected_evidence": [
-        "unit-fixture-io"
-      ],
-      "decision_refs": [
-        "D4-env-contracts"
-      ],
-      "source_pair": {
-        "zapbrew": "crates/zapbrew-prefix/src/env.rs:528",
-        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/env_config.rb#L552-L555"
-      }
-    },
-    {
-      "cell_id": "zapbrew-prefix/env:inert-no-install-upgrade",
-      "module": "zapbrew-prefix/env",
-      "behavior": "HOMEBREW_NO_INSTALL_UPGRADE is accepted into Env but has zero production reads",
-      "platform": "any",
-      "effect": "query",
-      "expected_disposition": "product-decision-pending",
-      "expected_evidence": [
-        "unit-fixture-io"
-      ],
-      "decision_refs": [
-        "D4-env-contracts"
-      ],
-      "source_pair": {
-        "zapbrew": "crates/zapbrew-prefix/src/env.rs:529",
-        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/env_config.rb#L598-L602"
-      }
-    },
-    {
-      "cell_id": "zapbrew-prefix/env:inert-temp",
-      "module": "zapbrew-prefix/env",
-      "behavior": "HOMEBREW_TEMP is accepted into Env but has zero production reads",
-      "platform": "any",
-      "effect": "query",
-      "expected_disposition": "product-decision-pending",
-      "expected_evidence": [
-        "unit-fixture-io"
-      ],
-      "decision_refs": [
-        "D4-env-contracts"
-      ],
-      "source_pair": {
-        "zapbrew": "crates/zapbrew-prefix/src/env.rs:459",
-        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/env_config.rb#L718-L726"
       }
     },
     {
@@ -7575,6 +7489,24 @@
       }
     },
     {
+      "cell_id": "zapbrew-prefix/env:logs",
+      "module": "zapbrew-prefix/env",
+      "behavior": "HOMEBREW_LOGS selects the operation log sink wherever Zapbrew creates or writes command logs",
+      "platform": "any",
+      "effect": "query",
+      "expected_disposition": "must-match",
+      "expected_evidence": [
+        "unit-fixture-io"
+      ],
+      "decision_refs": [
+        "D4-env-contracts"
+      ],
+      "source_pair": {
+        "zapbrew": "crates/zapbrew-prefix/src/env.rs:451",
+        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/env_config.rb#L498-L503"
+      }
+    },
+    {
       "cell_id": "zapbrew-prefix/env:macos-product-version",
       "module": "zapbrew-prefix/env",
       "behavior": "macOS product version is read by running sw_vers -productVersion",
@@ -7589,6 +7521,78 @@
       "source_pair": {
         "zapbrew": "crates/zapbrew-prefix/src/env.rs:418-434",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/utils/os.sh#L71-L92"
+      }
+    },
+    {
+      "cell_id": "zapbrew-prefix/env:no-cleanup-formulae",
+      "module": "zapbrew-prefix/env",
+      "behavior": "HOMEBREW_NO_CLEANUP_FORMULAE is honored by cleanup when retaining configured formulae from cleanup candidates",
+      "platform": "any",
+      "effect": "query",
+      "expected_disposition": "must-match",
+      "expected_evidence": [
+        "unit-fixture-io"
+      ],
+      "decision_refs": [
+        "D4-env-contracts"
+      ],
+      "source_pair": {
+        "zapbrew": "crates/zapbrew-ops/src/cleanup.rs:248-258",
+        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/env_config.rb#L539-L542"
+      }
+    },
+    {
+      "cell_id": "zapbrew-prefix/env:no-emoji",
+      "module": "zapbrew-prefix/env",
+      "behavior": "HOMEBREW_NO_EMOJI is honored at user-facing output decoration sinks without changing machine/protocol output",
+      "platform": "any",
+      "effect": "query",
+      "expected_disposition": "must-match",
+      "expected_evidence": [
+        "unit-fixture-io"
+      ],
+      "decision_refs": [
+        "D4-env-contracts"
+      ],
+      "source_pair": {
+        "zapbrew": "crates/zapbrew-prefix/src/env.rs:526",
+        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/env_config.rb#L548-L551"
+      }
+    },
+    {
+      "cell_id": "zapbrew-prefix/env:no-env-hints",
+      "module": "zapbrew-prefix/env",
+      "behavior": "HOMEBREW_NO_ENV_HINTS suppresses environment hint output at the reporter/hint sink",
+      "platform": "any",
+      "effect": "query",
+      "expected_disposition": "must-match",
+      "expected_evidence": [
+        "unit-fixture-io"
+      ],
+      "decision_refs": [
+        "D4-env-contracts"
+      ],
+      "source_pair": {
+        "zapbrew": "crates/zapbrew-prefix/src/env.rs:528",
+        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/env_config.rb#L552-L555"
+      }
+    },
+    {
+      "cell_id": "zapbrew-prefix/env:no-install-upgrade",
+      "module": "zapbrew-prefix/env",
+      "behavior": "HOMEBREW_NO_INSTALL_UPGRADE prevents install from implicitly upgrading already-installed formulae or casks at install selection",
+      "platform": "any",
+      "effect": "query",
+      "expected_disposition": "must-match",
+      "expected_evidence": [
+        "unit-fixture-io"
+      ],
+      "decision_refs": [
+        "D4-env-contracts"
+      ],
+      "source_pair": {
+        "zapbrew": "crates/zapbrew-prefix/src/env.rs:529",
+        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/env_config.rb#L598-L602"
       }
     },
     {
@@ -7625,19 +7629,20 @@
     },
     {
       "cell_id": "zapbrew-prefix/env:proxy",
-      "module": "zapbrew-prefix/env",
-      "behavior": "Proxy environment variables are parsed into Env.proxy but never read by production code",
+      "module": "dispatch",
+      "behavior": "HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, and NO_PROXY process settings reach the production reqwest client with Homebrew-compatible routing while no duplicate parsed Env.proxy state remains",
       "platform": "any",
-      "effect": "query",
-      "expected_disposition": "product-decision-pending",
+      "effect": "network",
+      "expected_disposition": "must-match",
       "expected_evidence": [
+        "process-integration",
         "unit-fixture-io"
       ],
       "decision_refs": [
         "D4-env-contracts"
       ],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-prefix/src/env.rs:543-551",
+        "zapbrew": "crates/zapbrew-cli/src/dispatch.rs:461-463",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/docs/Manpage.md#L5089-L5112"
       }
     },
@@ -7655,6 +7660,24 @@
       "source_pair": {
         "zapbrew": "crates/zapbrew-prefix/src/env.rs:191-256",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/docs/Manpage.md#L2119-L2136"
+      }
+    },
+    {
+      "cell_id": "zapbrew-prefix/env:temp",
+      "module": "zapbrew-prefix/env",
+      "behavior": "HOMEBREW_TEMP selects temporary download, extraction, and staging roots at their filesystem sinks",
+      "platform": "any",
+      "effect": "query",
+      "expected_disposition": "must-match",
+      "expected_evidence": [
+        "unit-fixture-io"
+      ],
+      "decision_refs": [
+        "D4-env-contracts"
+      ],
+      "source_pair": {
+        "zapbrew": "crates/zapbrew-prefix/src/env.rs:459",
+        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/Library/Homebrew/env_config.rb#L718-L726"
       }
     },
     {

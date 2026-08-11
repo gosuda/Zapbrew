@@ -609,7 +609,7 @@
       "finding": "none"
     },
     {
-      "cell": "completions-bad-shell-refusal",
+      "cell": "completions-invalid-operation-refusal",
       "achieved_evidence": [],
       "failure_evidence": null,
       "perf_refs": [],
@@ -617,7 +617,7 @@
       "finding": "none"
     },
     {
-      "cell": "completions-generate",
+      "cell": "completions-link",
       "achieved_evidence": [],
       "failure_evidence": null,
       "perf_refs": [],
@@ -625,7 +625,7 @@
       "finding": "none"
     },
     {
-      "cell": "completions-shell-bash",
+      "cell": "completions-state-query",
       "achieved_evidence": [],
       "failure_evidence": null,
       "perf_refs": [],
@@ -633,7 +633,7 @@
       "finding": "none"
     },
     {
-      "cell": "completions-shell-fish",
+      "cell": "completions-static-assets",
       "achieved_evidence": [],
       "failure_evidence": null,
       "perf_refs": [],
@@ -641,7 +641,7 @@
       "finding": "none"
     },
     {
-      "cell": "completions-shell-zsh",
+      "cell": "completions-unlink",
       "achieved_evidence": [],
       "failure_evidence": null,
       "perf_refs": [],
@@ -761,7 +761,7 @@
       "finding": "none"
     },
     {
-      "cell": "cp.cask-list.linux-refusal",
+      "cell": "cp.cask-list.linux-query",
       "achieved_evidence": [],
       "failure_evidence": null,
       "perf_refs": [],
@@ -785,7 +785,7 @@
       "finding": "none"
     },
     {
-      "cell": "cp.cask-root.linux-refusal",
+      "cell": "cp.cask-root.linux-supported-artifacts",
       "achieved_evidence": [],
       "failure_evidence": null,
       "perf_refs": [],
@@ -2035,12 +2035,37 @@
     {
       "cell": "ops.journal.commit-success.linux",
       "achieved_evidence": [
-        {"id":"ops-journal-commit-success-unit-linux","kind":"unit-fixture-io","platform":"linux","anchor":"crates/zapbrew-ops/tests/postinstall.rs#postinstall_cleans_up_journal_after_successful_overwrite","digest":"e0c03f1c0f69df896a4d2bf3c3f93b49e6c77095351258c2edf5c0cc594d3eef"},
-        {"id":"ops-journal-commit-success-process-linux","kind":"process-integration","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"bafb6f268ccf4ec5cb3058a1665e02e44f3491e15479214554567e8dacb43939"},
-        {"id":"ops-journal-commit-success-mutation-linux","kind":"unit-fixture-io","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"9e41f119315e5c03671a139f54a5cb121f2ea21128b2bd9989ffe81459c9ed3f"}
+        {
+          "id": "ops-journal-commit-success-unit-linux",
+          "kind": "unit-fixture-io",
+          "platform": "linux",
+          "anchor": "crates/zapbrew-ops/tests/postinstall.rs#postinstall_cleans_up_journal_after_successful_overwrite",
+          "digest": "e0c03f1c0f69df896a4d2bf3c3f93b49e6c77095351258c2edf5c0cc594d3eef"
+        },
+        {
+          "id": "ops-journal-commit-success-process-linux",
+          "kind": "process-integration",
+          "platform": "linux",
+          "anchor": ".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof",
+          "digest": "bafb6f268ccf4ec5cb3058a1665e02e44f3491e15479214554567e8dacb43939"
+        },
+        {
+          "id": "ops-journal-commit-success-mutation-linux",
+          "kind": "unit-fixture-io",
+          "platform": "linux",
+          "anchor": ".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof",
+          "digest": "9e41f119315e5c03671a139f54a5cb121f2ea21128b2bd9989ffe81459c9ed3f"
+        }
       ],
-      "failure_evidence": {"status":"proved","evidence_refs":["ops-journal-commit-success-mutation-linux"]},
-      "perf_refs": ["ops.journal.commit-success.fixed.linux"],
+      "failure_evidence": {
+        "status": "proved",
+        "evidence_refs": [
+          "ops-journal-commit-success-mutation-linux"
+        ]
+      },
+      "perf_refs": [
+        "ops.journal.commit-success.fixed.linux"
+      ],
       "deviation": "DEV-ops-journal-commit-success-linux",
       "finding": "none"
     },
@@ -2055,14 +2080,57 @@
     {
       "cell": "ops.journal.per-formula-isolation.linux",
       "achieved_evidence": [
-        {"id":"ops-journal-per-formula-unit-linux","kind":"unit-fixture-io","platform":"linux","anchor":"crates/zapbrew-ops/tests/postinstall.rs#postinstall_failure_does_not_roll_back_prior_formula","digest":"e0c03f1c0f69df896a4d2bf3c3f93b49e6c77095351258c2edf5c0cc594d3eef"},
-        {"id":"ops-journal-per-formula-command-unit-linux","kind":"unit-fixture-io","platform":"linux","anchor":"crates/zapbrew-ops/tests/install_steps.rs#run_and_maintenance_effects_survive_rollback","digest":"fa5a206ab94b8874f7970faf6609b6534f306e9727e3f334904c982e37ecb15c"},
-        {"id":"ops-journal-per-formula-process-linux","kind":"process-integration","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"a1bbbaad110aa80adc3c9ef55f877b072a453de08f699c73bb936720a2d18718"},
-        {"id":"ops-journal-per-formula-command-process-linux","kind":"process-integration","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"1dac96ca5aee23bdd4f17e117a1bfc11534fba74f670db53bd167b5ef063b255"},
-        {"id":"ops-journal-per-formula-mutation-linux","kind":"unit-fixture-io","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"03f6c4016ae068db4bae528c6f94e1019da0550358cafb81c408419e61ffedd7"},
-        {"id":"ops-journal-per-formula-maintenance-mutation-linux","kind":"unit-fixture-io","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"d1eed015aaa12d3ee84a3d9168ce840c39b61e962241a5a90ca98028c3111be9"}
+        {
+          "id": "ops-journal-per-formula-unit-linux",
+          "kind": "unit-fixture-io",
+          "platform": "linux",
+          "anchor": "crates/zapbrew-ops/tests/postinstall.rs#postinstall_failure_does_not_roll_back_prior_formula",
+          "digest": "e0c03f1c0f69df896a4d2bf3c3f93b49e6c77095351258c2edf5c0cc594d3eef"
+        },
+        {
+          "id": "ops-journal-per-formula-command-unit-linux",
+          "kind": "unit-fixture-io",
+          "platform": "linux",
+          "anchor": "crates/zapbrew-ops/tests/install_steps.rs#run_and_maintenance_effects_survive_rollback",
+          "digest": "fa5a206ab94b8874f7970faf6609b6534f306e9727e3f334904c982e37ecb15c"
+        },
+        {
+          "id": "ops-journal-per-formula-process-linux",
+          "kind": "process-integration",
+          "platform": "linux",
+          "anchor": ".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof",
+          "digest": "a1bbbaad110aa80adc3c9ef55f877b072a453de08f699c73bb936720a2d18718"
+        },
+        {
+          "id": "ops-journal-per-formula-command-process-linux",
+          "kind": "process-integration",
+          "platform": "linux",
+          "anchor": ".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof",
+          "digest": "1dac96ca5aee23bdd4f17e117a1bfc11534fba74f670db53bd167b5ef063b255"
+        },
+        {
+          "id": "ops-journal-per-formula-mutation-linux",
+          "kind": "unit-fixture-io",
+          "platform": "linux",
+          "anchor": ".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof",
+          "digest": "03f6c4016ae068db4bae528c6f94e1019da0550358cafb81c408419e61ffedd7"
+        },
+        {
+          "id": "ops-journal-per-formula-maintenance-mutation-linux",
+          "kind": "unit-fixture-io",
+          "platform": "linux",
+          "anchor": ".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof",
+          "digest": "d1eed015aaa12d3ee84a3d9168ce840c39b61e962241a5a90ca98028c3111be9"
+        }
       ],
-      "failure_evidence": {"status":"proved","evidence_refs":["ops-journal-per-formula-mutation-linux","ops-journal-per-formula-command-process-linux","ops-journal-per-formula-maintenance-mutation-linux"]},
+      "failure_evidence": {
+        "status": "proved",
+        "evidence_refs": [
+          "ops-journal-per-formula-mutation-linux",
+          "ops-journal-per-formula-command-process-linux",
+          "ops-journal-per-formula-maintenance-mutation-linux"
+        ]
+      },
       "perf_refs": [],
       "deviation": "DEV-ops-journal-per-formula-isolation-linux",
       "finding": "none"
@@ -2078,10 +2146,27 @@
     {
       "cell": "ops.journal.postcommit-cleanup-failure.linux",
       "achieved_evidence": [
-        {"id":"ops-journal-postcommit-cleanup-unit-linux","kind":"unit-fixture-io","platform":"linux","anchor":"crates/zapbrew-ops/tests/transaction.rs#step_root_cleanup_failure_keeps_new_keg_active","digest":"b7dd0f6b0c0d2ce585ca6229b5509005bdb952d1c5976964edb5b4fdc354f307"},
-        {"id":"ops-journal-postcommit-cleanup-process-linux","kind":"process-integration","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"df4dc7332c744011b3db49886a338888d5436e771c9d62bb1d048e8a0e86e5c1"}
+        {
+          "id": "ops-journal-postcommit-cleanup-unit-linux",
+          "kind": "unit-fixture-io",
+          "platform": "linux",
+          "anchor": "crates/zapbrew-ops/tests/transaction.rs#step_root_cleanup_failure_keeps_new_keg_active",
+          "digest": "b7dd0f6b0c0d2ce585ca6229b5509005bdb952d1c5976964edb5b4fdc354f307"
+        },
+        {
+          "id": "ops-journal-postcommit-cleanup-process-linux",
+          "kind": "process-integration",
+          "platform": "linux",
+          "anchor": ".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof",
+          "digest": "df4dc7332c744011b3db49886a338888d5436e771c9d62bb1d048e8a0e86e5c1"
+        }
       ],
-      "failure_evidence": {"status":"proved","evidence_refs":["ops-journal-postcommit-cleanup-process-linux"]},
+      "failure_evidence": {
+        "status": "proved",
+        "evidence_refs": [
+          "ops-journal-postcommit-cleanup-process-linux"
+        ]
+      },
       "perf_refs": [],
       "deviation": "DEV-ops-journal-postcommit-cleanup-failure-linux",
       "finding": "none"
@@ -2097,13 +2182,49 @@
     {
       "cell": "ops.journal.postinstall-lifecycle.linux",
       "achieved_evidence": [
-        {"id":"ops-journal-postinstall-success-unit-linux","kind":"unit-fixture-io","platform":"linux","anchor":"crates/zapbrew-ops/tests/postinstall.rs#postinstall_cleans_up_journal_after_successful_overwrite","digest":"e0c03f1c0f69df896a4d2bf3c3f93b49e6c77095351258c2edf5c0cc594d3eef"},
-        {"id":"ops-journal-postinstall-rollback-unit-linux","kind":"unit-fixture-io","platform":"linux","anchor":"crates/zapbrew-ops/tests/postinstall.rs#postinstall_rollback_restores_original_on_failure","digest":"e0c03f1c0f69df896a4d2bf3c3f93b49e6c77095351258c2edf5c0cc594d3eef"},
-        {"id":"ops-journal-postinstall-cleanup-unit-linux","kind":"unit-fixture-io","platform":"linux","anchor":"crates/zapbrew-ops/tests/postinstall.rs#postinstall_cleanup_failure_reports_selected_keg_and_journal_root","digest":"e0c03f1c0f69df896a4d2bf3c3f93b49e6c77095351258c2edf5c0cc594d3eef"},
-        {"id":"ops-journal-postinstall-lifecycle-process-linux","kind":"process-integration","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"a1bbbaad110aa80adc3c9ef55f877b072a453de08f699c73bb936720a2d18718"},
-        {"id":"ops-journal-postinstall-cleanup-mutation-linux","kind":"unit-fixture-io","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"b3fd8d9468aa5a1cc5e09381e19434e81f996442a6c53891f8e60dfccc66533a"}
+        {
+          "id": "ops-journal-postinstall-success-unit-linux",
+          "kind": "unit-fixture-io",
+          "platform": "linux",
+          "anchor": "crates/zapbrew-ops/tests/postinstall.rs#postinstall_cleans_up_journal_after_successful_overwrite",
+          "digest": "e0c03f1c0f69df896a4d2bf3c3f93b49e6c77095351258c2edf5c0cc594d3eef"
+        },
+        {
+          "id": "ops-journal-postinstall-rollback-unit-linux",
+          "kind": "unit-fixture-io",
+          "platform": "linux",
+          "anchor": "crates/zapbrew-ops/tests/postinstall.rs#postinstall_rollback_restores_original_on_failure",
+          "digest": "e0c03f1c0f69df896a4d2bf3c3f93b49e6c77095351258c2edf5c0cc594d3eef"
+        },
+        {
+          "id": "ops-journal-postinstall-cleanup-unit-linux",
+          "kind": "unit-fixture-io",
+          "platform": "linux",
+          "anchor": "crates/zapbrew-ops/tests/postinstall.rs#postinstall_cleanup_failure_reports_selected_keg_and_journal_root",
+          "digest": "e0c03f1c0f69df896a4d2bf3c3f93b49e6c77095351258c2edf5c0cc594d3eef"
+        },
+        {
+          "id": "ops-journal-postinstall-lifecycle-process-linux",
+          "kind": "process-integration",
+          "platform": "linux",
+          "anchor": ".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof",
+          "digest": "a1bbbaad110aa80adc3c9ef55f877b072a453de08f699c73bb936720a2d18718"
+        },
+        {
+          "id": "ops-journal-postinstall-cleanup-mutation-linux",
+          "kind": "unit-fixture-io",
+          "platform": "linux",
+          "anchor": ".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof",
+          "digest": "b3fd8d9468aa5a1cc5e09381e19434e81f996442a6c53891f8e60dfccc66533a"
+        }
       ],
-      "failure_evidence": {"status":"proved","evidence_refs":["ops-journal-postinstall-lifecycle-process-linux","ops-journal-postinstall-cleanup-mutation-linux"]},
+      "failure_evidence": {
+        "status": "proved",
+        "evidence_refs": [
+          "ops-journal-postinstall-lifecycle-process-linux",
+          "ops-journal-postinstall-cleanup-mutation-linux"
+        ]
+      },
       "perf_refs": [],
       "deviation": "DEV-ops-journal-postinstall-lifecycle-linux",
       "finding": "none"
@@ -2119,15 +2240,65 @@
     {
       "cell": "ops.journal.precommit-failure.linux",
       "achieved_evidence": [
-        {"id":"ops-journal-precommit-unit-linux","kind":"unit-fixture-io","platform":"linux","anchor":"crates/zapbrew-ops/tests/postinstall.rs#postinstall_rollback_restores_original_on_failure","digest":"e0c03f1c0f69df896a4d2bf3c3f93b49e6c77095351258c2edf5c0cc594d3eef"},
-        {"id":"ops-journal-precommit-inverse-unit-linux","kind":"unit-fixture-io","platform":"linux","anchor":"crates/zapbrew-ops/tests/install_steps.rs#inverse_failure_merges_into_outer_rollback_incomplete","digest":"fa5a206ab94b8874f7970faf6609b6534f306e9727e3f334904c982e37ecb15c"},
-        {"id":"ops-journal-precommit-reverse-order-unit-linux","kind":"unit-fixture-io","platform":"linux","anchor":"crates/zapbrew-ops/tests/install_steps.rs#rollback_replays_multiple_inverses_in_reverse_order","digest":"fa5a206ab94b8874f7970faf6609b6534f306e9727e3f334904c982e37ecb15c"},
-        {"id":"ops-journal-precommit-process-linux","kind":"process-integration","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"bafb6f268ccf4ec5cb3058a1665e02e44f3491e15479214554567e8dacb43939"},
-        {"id":"ops-journal-precommit-inverse-process-linux","kind":"process-integration","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"1dac96ca5aee23bdd4f17e117a1bfc11534fba74f670db53bd167b5ef063b255"},
-        {"id":"ops-journal-precommit-inverse-mutation-linux","kind":"unit-fixture-io","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"579930430fb0b61ce4d45885005c425c52e93766ed0c6dd4319453d9c67b6e09"},
-        {"id":"ops-journal-precommit-reverse-order-mutation-linux","kind":"unit-fixture-io","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"108b22ef5dd747066bcefb6c4f3405f82c6cba622ab6ee67e5bbc02dcb714bb7"}
+        {
+          "id": "ops-journal-precommit-unit-linux",
+          "kind": "unit-fixture-io",
+          "platform": "linux",
+          "anchor": "crates/zapbrew-ops/tests/postinstall.rs#postinstall_rollback_restores_original_on_failure",
+          "digest": "e0c03f1c0f69df896a4d2bf3c3f93b49e6c77095351258c2edf5c0cc594d3eef"
+        },
+        {
+          "id": "ops-journal-precommit-inverse-unit-linux",
+          "kind": "unit-fixture-io",
+          "platform": "linux",
+          "anchor": "crates/zapbrew-ops/tests/install_steps.rs#inverse_failure_merges_into_outer_rollback_incomplete",
+          "digest": "fa5a206ab94b8874f7970faf6609b6534f306e9727e3f334904c982e37ecb15c"
+        },
+        {
+          "id": "ops-journal-precommit-reverse-order-unit-linux",
+          "kind": "unit-fixture-io",
+          "platform": "linux",
+          "anchor": "crates/zapbrew-ops/tests/install_steps.rs#rollback_replays_multiple_inverses_in_reverse_order",
+          "digest": "fa5a206ab94b8874f7970faf6609b6534f306e9727e3f334904c982e37ecb15c"
+        },
+        {
+          "id": "ops-journal-precommit-process-linux",
+          "kind": "process-integration",
+          "platform": "linux",
+          "anchor": ".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof",
+          "digest": "bafb6f268ccf4ec5cb3058a1665e02e44f3491e15479214554567e8dacb43939"
+        },
+        {
+          "id": "ops-journal-precommit-inverse-process-linux",
+          "kind": "process-integration",
+          "platform": "linux",
+          "anchor": ".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof",
+          "digest": "1dac96ca5aee23bdd4f17e117a1bfc11534fba74f670db53bd167b5ef063b255"
+        },
+        {
+          "id": "ops-journal-precommit-inverse-mutation-linux",
+          "kind": "unit-fixture-io",
+          "platform": "linux",
+          "anchor": ".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof",
+          "digest": "579930430fb0b61ce4d45885005c425c52e93766ed0c6dd4319453d9c67b6e09"
+        },
+        {
+          "id": "ops-journal-precommit-reverse-order-mutation-linux",
+          "kind": "unit-fixture-io",
+          "platform": "linux",
+          "anchor": ".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof",
+          "digest": "108b22ef5dd747066bcefb6c4f3405f82c6cba622ab6ee67e5bbc02dcb714bb7"
+        }
       ],
-      "failure_evidence": {"status":"proved","evidence_refs":["ops-journal-precommit-process-linux","ops-journal-precommit-inverse-process-linux","ops-journal-precommit-inverse-mutation-linux","ops-journal-precommit-reverse-order-mutation-linux"]},
+      "failure_evidence": {
+        "status": "proved",
+        "evidence_refs": [
+          "ops-journal-precommit-process-linux",
+          "ops-journal-precommit-inverse-process-linux",
+          "ops-journal-precommit-inverse-mutation-linux",
+          "ops-journal-precommit-reverse-order-mutation-linux"
+        ]
+      },
       "perf_refs": [],
       "deviation": "DEV-ops-journal-precommit-failure-linux",
       "finding": "none"
@@ -3157,6 +3328,14 @@
       "finding": "none"
     },
     {
+      "cell": "zapbrew-prefix/env:allowed-taps",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
       "cell": "zapbrew-prefix/env:api-domain",
       "achieved_evidence": [],
       "failure_evidence": null,
@@ -3174,6 +3353,14 @@
     },
     {
       "cell": "zapbrew-prefix/env:boolean-flags",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:bottle-domain",
       "achieved_evidence": [],
       "failure_evidence": null,
       "perf_refs": [],
@@ -3245,7 +3432,7 @@
       "finding": "none"
     },
     {
-      "cell": "zapbrew-prefix/env:inert-allowed-taps",
+      "cell": "zapbrew-prefix/env:forbidden-formulae",
       "achieved_evidence": [],
       "failure_evidence": null,
       "perf_refs": [],
@@ -3253,7 +3440,7 @@
       "finding": "none"
     },
     {
-      "cell": "zapbrew-prefix/env:inert-bottle-domain",
+      "cell": "zapbrew-prefix/env:forbidden-licenses",
       "achieved_evidence": [],
       "failure_evidence": null,
       "perf_refs": [],
@@ -3261,7 +3448,7 @@
       "finding": "none"
     },
     {
-      "cell": "zapbrew-prefix/env:inert-forbidden-formulae",
+      "cell": "zapbrew-prefix/env:forbidden-owner",
       "achieved_evidence": [],
       "failure_evidence": null,
       "perf_refs": [],
@@ -3269,71 +3456,7 @@
       "finding": "none"
     },
     {
-      "cell": "zapbrew-prefix/env:inert-forbidden-licenses",
-      "achieved_evidence": [],
-      "failure_evidence": null,
-      "perf_refs": [],
-      "deviation": null,
-      "finding": "none"
-    },
-    {
-      "cell": "zapbrew-prefix/env:inert-forbidden-owner",
-      "achieved_evidence": [],
-      "failure_evidence": null,
-      "perf_refs": [],
-      "deviation": null,
-      "finding": "none"
-    },
-    {
-      "cell": "zapbrew-prefix/env:inert-forbidden-taps",
-      "achieved_evidence": [],
-      "failure_evidence": null,
-      "perf_refs": [],
-      "deviation": null,
-      "finding": "none"
-    },
-    {
-      "cell": "zapbrew-prefix/env:inert-logs",
-      "achieved_evidence": [],
-      "failure_evidence": null,
-      "perf_refs": [],
-      "deviation": null,
-      "finding": "none"
-    },
-    {
-      "cell": "zapbrew-prefix/env:inert-no-cleanup-formulae",
-      "achieved_evidence": [],
-      "failure_evidence": null,
-      "perf_refs": [],
-      "deviation": null,
-      "finding": "none"
-    },
-    {
-      "cell": "zapbrew-prefix/env:inert-no-emoji",
-      "achieved_evidence": [],
-      "failure_evidence": null,
-      "perf_refs": [],
-      "deviation": null,
-      "finding": "none"
-    },
-    {
-      "cell": "zapbrew-prefix/env:inert-no-env-hints",
-      "achieved_evidence": [],
-      "failure_evidence": null,
-      "perf_refs": [],
-      "deviation": null,
-      "finding": "none"
-    },
-    {
-      "cell": "zapbrew-prefix/env:inert-no-install-upgrade",
-      "achieved_evidence": [],
-      "failure_evidence": null,
-      "perf_refs": [],
-      "deviation": null,
-      "finding": "none"
-    },
-    {
-      "cell": "zapbrew-prefix/env:inert-temp",
+      "cell": "zapbrew-prefix/env:forbidden-taps",
       "achieved_evidence": [],
       "failure_evidence": null,
       "perf_refs": [],
@@ -3349,7 +3472,47 @@
       "finding": "none"
     },
     {
+      "cell": "zapbrew-prefix/env:logs",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
       "cell": "zapbrew-prefix/env:macos-product-version",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:no-cleanup-formulae",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:no-emoji",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:no-env-hints",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:no-install-upgrade",
       "achieved_evidence": [],
       "failure_evidence": null,
       "perf_refs": [],
@@ -3382,6 +3545,14 @@
     },
     {
       "cell": "zapbrew-prefix/env:shellenv",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "zapbrew-prefix/env:temp",
       "achieved_evidence": [],
       "failure_evidence": null,
       "perf_refs": [],
@@ -3609,7 +3780,11 @@
       "zapbrew_anchor": "crates/zapbrew-ops/src/install_steps.rs:303-370; crates/zapbrew-ops/src/transaction.rs:440-512",
       "reproduction": "Run the W4 success workload and inspect replacement bytes, keg and link state, and absence of `.zapbrew-step-journal-*`.",
       "alternatives_rejected": "A borrowed cleanup path plus a later clear was rejected because it split one terminal transition; no journal was rejected because overwrite rollback would lose prior bytes.",
-      "evidence_refs": ["ops-journal-commit-success-unit-linux","ops-journal-commit-success-process-linux","ops-journal-commit-success-mutation-linux"],
+      "evidence_refs": [
+        "ops-journal-commit-success-unit-linux",
+        "ops-journal-commit-success-process-linux",
+        "ops-journal-commit-success-mutation-linux"
+      ],
       "proof_digest": "51f1d5d866fa5ecf049068038cece540eabbdc3b8d7394067c370a08b3a9829f",
       "created_at": "2026-08-11T09:13:33Z"
     },
@@ -3624,7 +3799,14 @@
       "zapbrew_anchor": "crates/zapbrew-ops/src/postinstall.rs:28-76; crates/zapbrew-ops/src/install_steps.rs:272-299,326-370",
       "reproduction": "Run `postinstall_failure_does_not_roll_back_prior_formula` and `run_and_maintenance_effects_survive_rollback`; the first formula stays committed when the second rolls back, and generic Run plus deferred maintenance markers survive structured compensation.",
       "alternatives_rejected": "A shared journal was rejected because it couples independent formula terminals; pretending external commands are reversible was rejected because their effects have no reliable inverse.",
-      "evidence_refs": ["ops-journal-per-formula-unit-linux","ops-journal-per-formula-command-unit-linux","ops-journal-per-formula-process-linux","ops-journal-per-formula-command-process-linux","ops-journal-per-formula-mutation-linux","ops-journal-per-formula-maintenance-mutation-linux"],
+      "evidence_refs": [
+        "ops-journal-per-formula-unit-linux",
+        "ops-journal-per-formula-command-unit-linux",
+        "ops-journal-per-formula-process-linux",
+        "ops-journal-per-formula-command-process-linux",
+        "ops-journal-per-formula-mutation-linux",
+        "ops-journal-per-formula-maintenance-mutation-linux"
+      ],
       "proof_digest": "0c3ccae7a59295e2a5ba5e16e9ef19f3f3a2723a46d2e41ed3dd4910e87278c6",
       "created_at": "2026-08-11T09:13:33Z"
     },
@@ -3639,7 +3821,10 @@
       "zapbrew_anchor": "crates/zapbrew-ops/src/install_steps.rs:345-370; crates/zapbrew-ops/src/transaction.rs:440-512,646-656",
       "reproduction": "Arm the one-shot cleanup failure and run `step_root_cleanup_failure_keeps_new_keg_active`; inspect the typed error, active links, new bytes, and one surviving root.",
       "alternatives_rejected": "Rollback-on-cleanup-error was rejected because commit is irreversible at this boundary; silent cleanup failure was rejected because it hides retained backup data.",
-      "evidence_refs": ["ops-journal-postcommit-cleanup-unit-linux","ops-journal-postcommit-cleanup-process-linux"],
+      "evidence_refs": [
+        "ops-journal-postcommit-cleanup-unit-linux",
+        "ops-journal-postcommit-cleanup-process-linux"
+      ],
       "proof_digest": "9e23bf9ec9a68c06f6ec9140b7b8677c63db8de261eb0c8233ff027ac0acda1c",
       "created_at": "2026-08-11T09:13:33Z"
     },
@@ -3654,7 +3839,13 @@
       "zapbrew_anchor": "crates/zapbrew-ops/src/postinstall.rs:28-76; crates/zapbrew-ops/src/install_steps.rs:303-370,2901-2906",
       "reproduction": "Run the postinstall integration suite; observe successful cleanup, selected-keg rollback, and `CleanupIncomplete` naming the selected keg and surviving journal-root symlink.",
       "alternatives_rejected": "One shared journal was rejected because formula effects can cross-contaminate; untyped cleanup was rejected because it loses keg attribution.",
-      "evidence_refs": ["ops-journal-postinstall-success-unit-linux","ops-journal-postinstall-rollback-unit-linux","ops-journal-postinstall-cleanup-unit-linux","ops-journal-postinstall-lifecycle-process-linux","ops-journal-postinstall-cleanup-mutation-linux"],
+      "evidence_refs": [
+        "ops-journal-postinstall-success-unit-linux",
+        "ops-journal-postinstall-rollback-unit-linux",
+        "ops-journal-postinstall-cleanup-unit-linux",
+        "ops-journal-postinstall-lifecycle-process-linux",
+        "ops-journal-postinstall-cleanup-mutation-linux"
+      ],
       "proof_digest": "4aefc2857cd484931799ba8d9624d04067bbc8a30f01fa728e1080024cbe4aea",
       "created_at": "2026-08-11T09:13:33Z"
     },
@@ -3669,7 +3860,15 @@
       "zapbrew_anchor": "crates/zapbrew-ops/src/install_steps.rs:326-360; crates/zapbrew-ops/src/transaction.rs:515-595",
       "reproduction": "Run the W4 rollback workload, `rollback_replays_multiple_inverses_in_reverse_order`, and `inverse_failure_merges_into_outer_rollback_incomplete`; inspect restored original bytes after reverse replay and the merged original command error plus surviving path after inverse failure.",
       "alternatives_rejected": "Best-effort deletion without inverses was rejected because it cannot restore overwritten bytes; independent error returns were rejected because they can hide rollback residue.",
-      "evidence_refs": ["ops-journal-precommit-unit-linux","ops-journal-precommit-inverse-unit-linux","ops-journal-precommit-reverse-order-unit-linux","ops-journal-precommit-process-linux","ops-journal-precommit-inverse-process-linux","ops-journal-precommit-inverse-mutation-linux","ops-journal-precommit-reverse-order-mutation-linux"],
+      "evidence_refs": [
+        "ops-journal-precommit-unit-linux",
+        "ops-journal-precommit-inverse-unit-linux",
+        "ops-journal-precommit-reverse-order-unit-linux",
+        "ops-journal-precommit-process-linux",
+        "ops-journal-precommit-inverse-process-linux",
+        "ops-journal-precommit-inverse-mutation-linux",
+        "ops-journal-precommit-reverse-order-mutation-linux"
+      ],
       "proof_digest": "42f30a3fce9c1cfd10c2168c6a64b730cb93c9ec7fe11e6ff9aab5c3cbcb6a06",
       "created_at": "2026-08-11T09:13:33Z"
     }
@@ -3686,8 +3885,30 @@
       "toolchain_digest": "ce1e068fdb6f1a46e17b4ccf7781576f64e0e01d43b67fb889e6ef454b621466",
       "build_digest": "99c278eed69d2697c3bc9620de1d977179f29aaa2c2a953c7d8e1597122d4bd0",
       "warmups": 3,
-      "samples": [2.35035610108, 2.37502221508, 2.41695446008, 2.2154510800800002, 2.3658144880800003, 2.23467268708, 2.18987075808, 2.35298838808, 2.55746996408, 2.38687078908],
-      "install_loop_samples": [2.12225723, 2.168630387, 2.210812154, 2.02805898, 2.167526401, 2.037557769, 1.996750292, 2.147422651, 2.328687089, 2.177673367],
+      "samples": [
+        2.35035610108,
+        2.37502221508,
+        2.41695446008,
+        2.2154510800800002,
+        2.3658144880800003,
+        2.23467268708,
+        2.18987075808,
+        2.35298838808,
+        2.55746996408,
+        2.38687078908
+      ],
+      "install_loop_samples": [
+        2.12225723,
+        2.168630387,
+        2.210812154,
+        2.02805898,
+        2.167526401,
+        2.037557769,
+        1.996750292,
+        2.147422651,
+        2.328687089,
+        2.177673367
+      ],
       "sample_artifact_digest": "4e021b6cb45d707246b2f88e1f6935a395f9ba7bd072f23216442d94d27b1a21"
     },
     {
@@ -3701,8 +3922,30 @@
       "toolchain_digest": "ce1e068fdb6f1a46e17b4ccf7781576f64e0e01d43b67fb889e6ef454b621466",
       "build_digest": "a54a167cb4d37dd55e9c56db581edb52c5cbd9e23bc7e309a22fdccc5abcc5a5",
       "warmups": 3,
-      "samples": [2.3517291685, 2.3825219135, 2.3403264445, 2.3443018245, 2.3209546145, 2.2764398345, 2.2891588805, 2.2653996165, 2.3289225965, 2.3703589905],
-      "install_loop_samples": [2.149720609, 2.186298734, 2.15773443, 2.144824213, 2.124446649, 2.078456356, 2.085795102, 2.0691242, 2.090616491, 2.168064438],
+      "samples": [
+        2.3517291685,
+        2.3825219135,
+        2.3403264445,
+        2.3443018245,
+        2.3209546145,
+        2.2764398345,
+        2.2891588805,
+        2.2653996165,
+        2.3289225965,
+        2.3703589905
+      ],
+      "install_loop_samples": [
+        2.149720609,
+        2.186298734,
+        2.15773443,
+        2.144824213,
+        2.124446649,
+        2.078456356,
+        2.085795102,
+        2.0691242,
+        2.090616491,
+        2.168064438
+      ],
       "sample_artifact_digest": "3da86320425a71d9755af33501d397f3069e0128e58a021757469bd052185adf"
     },
     {
@@ -3716,8 +3959,30 @@
       "toolchain_digest": "ce1e068fdb6f1a46e17b4ccf7781576f64e0e01d43b67fb889e6ef454b621466",
       "build_digest": "fb76482c155fdc36b9eb5c535c8efa66d5e0fc3ee54f5e1c1767bfb0afc25845",
       "warmups": 3,
-      "samples": [2.43072725034, 2.2718253433399997, 2.34648681234, 2.53004498334, 2.32520338434, 2.4501854863399997, 2.27870491434, 2.3327367523399998, 2.3286074153399996, 2.37348861534],
-      "install_loop_samples": [2.224904596, 2.070375873, 2.129024939, 2.293036234, 2.137501049, 2.217971704, 2.072694856, 2.117467471, 2.129665941, 2.166108936],
+      "samples": [
+        2.43072725034,
+        2.2718253433399997,
+        2.34648681234,
+        2.53004498334,
+        2.32520338434,
+        2.4501854863399997,
+        2.27870491434,
+        2.3327367523399998,
+        2.3286074153399996,
+        2.37348861534
+      ],
+      "install_loop_samples": [
+        2.224904596,
+        2.070375873,
+        2.129024939,
+        2.293036234,
+        2.137501049,
+        2.217971704,
+        2.072694856,
+        2.117467471,
+        2.129665941,
+        2.166108936
+      ],
       "sample_artifact_digest": "efdc2ac6f7964f6eda5715919207fefb2596bfcc82d2c03ca683e3ad245cd957"
     }
   ],

@@ -2558,7 +2558,8 @@ def run_self_tests(source: Path) -> tuple[bool, list[str]]:
     @case("product-decision-pending cell with no decision ref -> exit 2")
     def orphan_pending_cell(ledger: Path) -> tuple[bool, str]:
         scope = json.loads((ledger / "scope.json").read_text())
-        cell = next(cell for cell in scope["cells"] if cell["expected_disposition"] == "product-decision-pending")
+        cell = scope["cells"][0]
+        cell["expected_disposition"] = "product-decision-pending"
         cell["decision_refs"] = []
         write_json(ledger / "scope.json", scope)
         result = verify(ledger, offline=True)
