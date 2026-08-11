@@ -1,0 +1,1707 @@
+#compdef zapbrew
+
+autoload -U is-at-least
+
+_zapbrew() {
+    typeset -A opt_args
+    typeset -a _arguments_options
+    local ret=1
+
+    if is-at-least 5.2; then
+        _arguments_options=(-s -S -C)
+    else
+        _arguments_options=(-s -C)
+    fi
+
+    local context curcontext="$curcontext" state line
+    _arguments "${_arguments_options[@]}" : \
+'--prefix=[Print the install prefix, optionally for a formula. Resolved later]::formula:_default' \
+'--cellar=[Print the Cellar path, optionally for a formula. Resolved later]::formula:_default' \
+'--caskroom=[Print the Caskroom path, optionally for a cask token. Resolved later]::cask:_default' \
+'--cache=[Print the download cache path, optionally for a formula. Resolved later]::formula:_default' \
+'--repository=[Print the repository path, optionally for a tap. Resolved later]::tap:_default' \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'--taps[Print the Taps directory path]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+":: :_zapbrew_commands" \
+"*::: :->zapbrew" \
+&& ret=0
+    case $state in
+    (zapbrew)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:zapbrew-command-$line[1]:"
+        case $line[1] in
+            (install)
+_arguments "${_arguments_options[@]}" : \
+'--appdir=[Target application directory for cask apps]:DIR:_files' \
+'--only-dependencies[Install only the dependencies, not the formulae themselves]' \
+'-f[Install even if already installed]' \
+'--force[Install even if already installed]' \
+'-n[Show what would be installed without doing it]' \
+'--dry-run[Show what would be installed without doing it]' \
+'--build-from-source[Compile from source instead of pouring a bottle]' \
+'--HEAD[Install the HEAD version]' \
+'-i[Run the installation interactively]' \
+'--interactive[Run the installation interactively]' \
+'--include-test[Include test dependencies during expansion]' \
+'(--formula)--cask[Treat the named arguments as casks (macOS only)]' \
+'--formula[Treat the named arguments as formulae]' \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Formula or cask names to install:_default' \
+&& ret=0
+;;
+(reinstall)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Formula names:_default' \
+&& ret=0
+;;
+(uninstall)
+_arguments "${_arguments_options[@]}" : \
+'-f[Delete all installed versions, not just the active one]' \
+'--force[Delete all installed versions, not just the active one]' \
+'--ignore-dependencies[Do not check for dependents before uninstalling]' \
+'(--formula)--cask[Treat the named arguments as casks (macOS only)]' \
+'--formula[Treat the named arguments as formulae]' \
+'--zap[Also remove all files a cask created (cask only)]' \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Formula or cask names to uninstall:_default' \
+&& ret=0
+;;
+(upgrade)
+_arguments "${_arguments_options[@]}" : \
+'-n[Show what would be upgraded without doing it]' \
+'--dry-run[Show what would be upgraded without doing it]' \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Formula names to upgrade; empty upgrades all:_default' \
+&& ret=0
+;;
+(outdated)
+_arguments "${_arguments_options[@]}" : \
+'--json=[Emit JSON output (v2 schema)]::v2:(v2)' \
+'--greedy[Include casks with auto-updates or \`latest\` versions]' \
+'--greedy-latest[Include casks whose version is \`latest\`]' \
+'--greedy-auto-updates[Include casks that update themselves]' \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Formula or cask names to check; empty checks all installed formulae and casks:_default' \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+'--versions[Show version numbers]' \
+'-1[Print one entry per line]' \
+'(--formula)--cask[List casks instead of formulae (macOS only)]' \
+'--formula[Treat the named arguments as formulae]' \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Formula or cask names to list; empty lists all formulae unless --cask is set:_default' \
+&& ret=0
+;;
+(info)
+_arguments "${_arguments_options[@]}" : \
+'--json=[Emit JSON output (v2 schema)]::v2:(v2)' \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Formula or cask names to describe:_default' \
+&& ret=0
+;;
+(deps)
+_arguments "${_arguments_options[@]}" : \
+'--tree[Render the dependency graph as a tree]' \
+'--union[Show the union of dependencies across all arguments]' \
+'--include-build[Include \`\:build\` dependencies]' \
+'--include-test[Include \`\:test\` dependencies]' \
+'--include-optional[Include \`\:optional\` dependencies]' \
+'--skip-recommended[Skip \`\:recommended\` dependencies]' \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Formula names:_default' \
+&& ret=0
+;;
+(uses)
+_arguments "${_arguments_options[@]}" : \
+'-r[Resolve the reverse-dependency closure recursively]' \
+'--recursive[Resolve the reverse-dependency closure recursively]' \
+'--installed[Restrict results to installed formulae and casks]' \
+'--include-build[Include \`\:build\` dependencies]' \
+'--include-test[Include \`\:test\` dependencies]' \
+'--include-optional[Include \`\:optional\` dependencies]' \
+'--skip-recommended[Skip \`\:recommended\` dependencies]' \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Formula or cask names:_default' \
+&& ret=0
+;;
+(leaves)
+_arguments "${_arguments_options[@]}" : \
+'(-p --installed-as-dependency)-r[Only list formulae installed on request]' \
+'(-p --installed-as-dependency)--installed-on-request[Only list formulae installed on request]' \
+'-p[Only list formulae installed as a dependency]' \
+'--installed-as-dependency[Only list formulae installed as a dependency]' \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(autoremove)
+_arguments "${_arguments_options[@]}" : \
+'-n[Show what would be removed without doing it]' \
+'--dry-run[Show what would be removed without doing it]' \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(pin)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Formula names:_default' \
+&& ret=0
+;;
+(unpin)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Formula names:_default' \
+&& ret=0
+;;
+(link)
+_arguments "${_arguments_options[@]}" : \
+'--overwrite[Delete files that already exist in the prefix]' \
+'-n[Show what would be linked without doing it]' \
+'--dry-run[Show what would be linked without doing it]' \
+'-f[Force linking even for keg-only formulae]' \
+'--force[Force linking even for keg-only formulae]' \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Formula names to link:_default' \
+&& ret=0
+;;
+(unlink)
+_arguments "${_arguments_options[@]}" : \
+'-n[Show what would be removed without doing it]' \
+'--dry-run[Show what would be removed without doing it]' \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Formula names to unlink:_default' \
+&& ret=0
+;;
+(fetch)
+_arguments "${_arguments_options[@]}" : \
+'--deps[Also fetch the dependency closure]' \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Formula names to fetch:_default' \
+&& ret=0
+;;
+(cleanup)
+_arguments "${_arguments_options[@]}" : \
+'--prune=[Remove all cache files older than <days>, or '\''all'\'']:days:_default' \
+'-s[Scrub the download cache of the latest versions too]' \
+'--scrub[Scrub the download cache of the latest versions too]' \
+'-n[Show what would be removed without doing it]' \
+'--dry-run[Show what would be removed without doing it]' \
+'--prune-prefix[Only prune the symlinks and directories from the prefix]' \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Formula names to clean; empty cleans all:_default' \
+&& ret=0
+;;
+(search)
+_arguments "${_arguments_options[@]}" : \
+'--desc[Search descriptions as well as names]' \
+'(--cask)--formula[Restrict the search to formulae]' \
+'--cask[Restrict the search to casks]' \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':query -- Search term, or `/regex/`:_default' \
+&& ret=0
+;;
+(desc)
+_arguments "${_arguments_options[@]}" : \
+'-s+[Search names and descriptions for <text>]:SEARCH:_default' \
+'--search=[Search names and descriptions for <text>]:SEARCH:_default' \
+'-n+[Search only names]:SEARCH_NAME:_default' \
+'--search-name=[Search only names]:SEARCH_NAME:_default' \
+'-d+[Search only descriptions]:SEARCH_DESCRIPTION:_default' \
+'--search-description=[Search only descriptions]:SEARCH_DESCRIPTION:_default' \
+'--formula[Treat named arguments as formulae]' \
+'(--formula)--cask[Treat named arguments as casks]' \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Formula, cask, or search text:_default' \
+&& ret=0
+;;
+(postinstall)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Formula names:_default' \
+&& ret=0
+;;
+(config)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(shellenv)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::shell -- Shell template\: bash/sh, zsh, fish, csh/tcsh, or pwsh; other names use POSIX. Defaults to the current shell:_default' \
+&& ret=0
+;;
+(tap)
+_arguments "${_arguments_options[@]}" : \
+'-f[Force the tap even for a built-in name]' \
+'--force[Force the tap even for a built-in name]' \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::name -- Tap name, e.g. `user/repo`. Omit to list taps:_default' \
+'::url -- Remote URL to clone the tap from:_default' \
+&& ret=0
+;;
+(untap)
+_arguments "${_arguments_options[@]}" : \
+'-f[Remove even if formulae from the tap are installed]' \
+'--force[Remove even if formulae from the tap are installed]' \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Tap names to remove:_default' \
+&& ret=0
+;;
+(tap-info)
+_arguments "${_arguments_options[@]}" : \
+'--installed[Show information for every installed tap]' \
+'--json[Emit JSON output]' \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Tap names to describe:_default' \
+&& ret=0
+;;
+(doctor)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(services)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_zapbrew__subcmd__services_commands" \
+"*::: :->services" \
+&& ret=0
+
+    case $state in
+    (services)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:zapbrew-services-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(start)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Service names to start:_default' \
+&& ret=0
+;;
+(stop)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Service names to stop:_default' \
+&& ret=0
+;;
+(restart)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Service names to restart:_default' \
+&& ret=0
+;;
+(run)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Service names to run:_default' \
+&& ret=0
+;;
+(info)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Service names to inspect:_default' \
+&& ret=0
+;;
+(kill)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Service names to kill:_default' \
+&& ret=0
+;;
+(cleanup)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_zapbrew__subcmd__services__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:zapbrew-services-help-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(start)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(stop)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(restart)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(run)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(info)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(kill)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(cleanup)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(update)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(shim)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_zapbrew__subcmd__shim_commands" \
+"*::: :->shim" \
+&& ret=0
+
+    case $state in
+    (shim)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:zapbrew-shim-command-$line[1]:"
+        case $line[1] in
+            (install)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(remove)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_zapbrew__subcmd__shim__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:zapbrew-shim-help-command-$line[1]:"
+        case $line[1] in
+            (install)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(remove)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(completions)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::shell -- Legacy shell shortcut, treated as `completions generate <shell>` when no subcommand is given:(bash zsh fish)' \
+":: :_zapbrew__subcmd__completions_commands" \
+"*::: :->completions" \
+&& ret=0
+
+    case $state in
+    (completions)
+        words=($line[2] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:zapbrew-completions-command-$line[2]:"
+        case $line[2] in
+            (state)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(link)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(unlink)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(generate)
+_arguments "${_arguments_options[@]}" : \
+'--debug[Enable debug output]' \
+'(-v --verbose)-q[Suppress non-essential output]' \
+'(-v --verbose)--quiet[Suppress non-essential output]' \
+'-v[Enable verbose output]' \
+'--verbose[Enable verbose output]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':shell -- Shell to generate a completion script for:(bash zsh fish)' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_zapbrew__subcmd__completions__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:zapbrew-completions-help-command-$line[1]:"
+        case $line[1] in
+            (state)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(link)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(unlink)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(generate)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_zapbrew__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:zapbrew-help-command-$line[1]:"
+        case $line[1] in
+            (install)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reinstall)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(uninstall)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(upgrade)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(outdated)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(info)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(deps)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(uses)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(leaves)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(autoremove)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(pin)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(unpin)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(link)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(unlink)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(fetch)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(cleanup)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(search)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(desc)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(postinstall)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(config)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(shellenv)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(tap)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(untap)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(tap-info)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(doctor)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(services)
+_arguments "${_arguments_options[@]}" : \
+":: :_zapbrew__subcmd__help__subcmd__services_commands" \
+"*::: :->services" \
+&& ret=0
+
+    case $state in
+    (services)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:zapbrew-help-services-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(start)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(stop)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(restart)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(run)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(info)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(kill)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(cleanup)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(update)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(shim)
+_arguments "${_arguments_options[@]}" : \
+":: :_zapbrew__subcmd__help__subcmd__shim_commands" \
+"*::: :->shim" \
+&& ret=0
+
+    case $state in
+    (shim)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:zapbrew-help-shim-command-$line[1]:"
+        case $line[1] in
+            (install)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(remove)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(completions)
+_arguments "${_arguments_options[@]}" : \
+":: :_zapbrew__subcmd__help__subcmd__completions_commands" \
+"*::: :->completions" \
+&& ret=0
+
+    case $state in
+    (completions)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:zapbrew-help-completions-command-$line[1]:"
+        case $line[1] in
+            (state)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(link)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(unlink)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(generate)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+}
+
+(( $+functions[_zapbrew_commands] )) ||
+_zapbrew_commands() {
+    local commands; commands=(
+'install:Install formulae or casks' \
+'reinstall:Reinstall formulae' \
+'uninstall:Uninstall formulae or casks' \
+'upgrade:Upgrade outdated formulae' \
+'outdated:List outdated formulae and casks' \
+'list:List installed formulae or casks' \
+'info:Show information about formulae and casks' \
+'deps:Show dependencies of formulae' \
+'uses:Show formulae and casks that depend on the named formulae or casks' \
+'leaves:List installed formulae not required by others' \
+'autoremove:Uninstall formulae that are no longer needed' \
+'pin:Pin formulae, preventing upgrades' \
+'unpin:Unpin formulae, allowing upgrades' \
+'link:Symlink a keg'\''s files into the prefix' \
+'unlink:Remove a keg'\''s symlinks from the prefix' \
+'fetch:Download bottles without installing' \
+'cleanup:Remove stale downloads and old versions' \
+'search:Search for formulae and casks' \
+'desc:Show descriptions or search names/descriptions of formulae/casks' \
+'postinstall:Rerun post-install steps for installed formulae' \
+'config:Show the effective configuration' \
+'shellenv:Print shell integration for the environment' \
+'tap:Tap a formula repository, or list taps' \
+'untap:Remove a tapped repository' \
+'tap-info:Show information about a tap' \
+'doctor:Check the system for potential problems' \
+'services:Manage background services' \
+'update:Fetch the latest catalog and taps' \
+'shim:Manage the opt-in \`brew\` shim' \
+'completions:Manage shell completion links' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'zapbrew commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__autoremove_commands] )) ||
+_zapbrew__subcmd__autoremove_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew autoremove commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__cleanup_commands] )) ||
+_zapbrew__subcmd__cleanup_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew cleanup commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__completions_commands] )) ||
+_zapbrew__subcmd__completions_commands() {
+    local commands; commands=(
+'state:Display the current completion link state' \
+'link:Link discovered completion files into the active prefix' \
+'unlink:Remove only links to discovered completion files' \
+'generate:Generate a completion script from the live Clap surface' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'zapbrew completions commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__completions__subcmd__generate_commands] )) ||
+_zapbrew__subcmd__completions__subcmd__generate_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew completions generate commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__completions__subcmd__help_commands] )) ||
+_zapbrew__subcmd__completions__subcmd__help_commands() {
+    local commands; commands=(
+'state:Display the current completion link state' \
+'link:Link discovered completion files into the active prefix' \
+'unlink:Remove only links to discovered completion files' \
+'generate:Generate a completion script from the live Clap surface' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'zapbrew completions help commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__completions__subcmd__help__subcmd__generate_commands] )) ||
+_zapbrew__subcmd__completions__subcmd__help__subcmd__generate_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew completions help generate commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__completions__subcmd__help__subcmd__help_commands] )) ||
+_zapbrew__subcmd__completions__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew completions help help commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__completions__subcmd__help__subcmd__link_commands] )) ||
+_zapbrew__subcmd__completions__subcmd__help__subcmd__link_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew completions help link commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__completions__subcmd__help__subcmd__state_commands] )) ||
+_zapbrew__subcmd__completions__subcmd__help__subcmd__state_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew completions help state commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__completions__subcmd__help__subcmd__unlink_commands] )) ||
+_zapbrew__subcmd__completions__subcmd__help__subcmd__unlink_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew completions help unlink commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__completions__subcmd__link_commands] )) ||
+_zapbrew__subcmd__completions__subcmd__link_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew completions link commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__completions__subcmd__state_commands] )) ||
+_zapbrew__subcmd__completions__subcmd__state_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew completions state commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__completions__subcmd__unlink_commands] )) ||
+_zapbrew__subcmd__completions__subcmd__unlink_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew completions unlink commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__config_commands] )) ||
+_zapbrew__subcmd__config_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew config commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__deps_commands] )) ||
+_zapbrew__subcmd__deps_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew deps commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__desc_commands] )) ||
+_zapbrew__subcmd__desc_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew desc commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__doctor_commands] )) ||
+_zapbrew__subcmd__doctor_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew doctor commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__fetch_commands] )) ||
+_zapbrew__subcmd__fetch_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew fetch commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help_commands] )) ||
+_zapbrew__subcmd__help_commands() {
+    local commands; commands=(
+'install:Install formulae or casks' \
+'reinstall:Reinstall formulae' \
+'uninstall:Uninstall formulae or casks' \
+'upgrade:Upgrade outdated formulae' \
+'outdated:List outdated formulae and casks' \
+'list:List installed formulae or casks' \
+'info:Show information about formulae and casks' \
+'deps:Show dependencies of formulae' \
+'uses:Show formulae and casks that depend on the named formulae or casks' \
+'leaves:List installed formulae not required by others' \
+'autoremove:Uninstall formulae that are no longer needed' \
+'pin:Pin formulae, preventing upgrades' \
+'unpin:Unpin formulae, allowing upgrades' \
+'link:Symlink a keg'\''s files into the prefix' \
+'unlink:Remove a keg'\''s symlinks from the prefix' \
+'fetch:Download bottles without installing' \
+'cleanup:Remove stale downloads and old versions' \
+'search:Search for formulae and casks' \
+'desc:Show descriptions or search names/descriptions of formulae/casks' \
+'postinstall:Rerun post-install steps for installed formulae' \
+'config:Show the effective configuration' \
+'shellenv:Print shell integration for the environment' \
+'tap:Tap a formula repository, or list taps' \
+'untap:Remove a tapped repository' \
+'tap-info:Show information about a tap' \
+'doctor:Check the system for potential problems' \
+'services:Manage background services' \
+'update:Fetch the latest catalog and taps' \
+'shim:Manage the opt-in \`brew\` shim' \
+'completions:Manage shell completion links' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'zapbrew help commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__autoremove_commands] )) ||
+_zapbrew__subcmd__help__subcmd__autoremove_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help autoremove commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__cleanup_commands] )) ||
+_zapbrew__subcmd__help__subcmd__cleanup_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help cleanup commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__completions_commands] )) ||
+_zapbrew__subcmd__help__subcmd__completions_commands() {
+    local commands; commands=(
+'state:Display the current completion link state' \
+'link:Link discovered completion files into the active prefix' \
+'unlink:Remove only links to discovered completion files' \
+'generate:Generate a completion script from the live Clap surface' \
+    )
+    _describe -t commands 'zapbrew help completions commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__completions__subcmd__generate_commands] )) ||
+_zapbrew__subcmd__help__subcmd__completions__subcmd__generate_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help completions generate commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__completions__subcmd__link_commands] )) ||
+_zapbrew__subcmd__help__subcmd__completions__subcmd__link_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help completions link commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__completions__subcmd__state_commands] )) ||
+_zapbrew__subcmd__help__subcmd__completions__subcmd__state_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help completions state commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__completions__subcmd__unlink_commands] )) ||
+_zapbrew__subcmd__help__subcmd__completions__subcmd__unlink_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help completions unlink commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__config_commands] )) ||
+_zapbrew__subcmd__help__subcmd__config_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help config commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__deps_commands] )) ||
+_zapbrew__subcmd__help__subcmd__deps_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help deps commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__desc_commands] )) ||
+_zapbrew__subcmd__help__subcmd__desc_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help desc commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__doctor_commands] )) ||
+_zapbrew__subcmd__help__subcmd__doctor_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help doctor commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__fetch_commands] )) ||
+_zapbrew__subcmd__help__subcmd__fetch_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help fetch commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__help_commands] )) ||
+_zapbrew__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help help commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__info_commands] )) ||
+_zapbrew__subcmd__help__subcmd__info_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help info commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__install_commands] )) ||
+_zapbrew__subcmd__help__subcmd__install_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help install commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__leaves_commands] )) ||
+_zapbrew__subcmd__help__subcmd__leaves_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help leaves commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__link_commands] )) ||
+_zapbrew__subcmd__help__subcmd__link_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help link commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__list_commands] )) ||
+_zapbrew__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help list commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__outdated_commands] )) ||
+_zapbrew__subcmd__help__subcmd__outdated_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help outdated commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__pin_commands] )) ||
+_zapbrew__subcmd__help__subcmd__pin_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help pin commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__postinstall_commands] )) ||
+_zapbrew__subcmd__help__subcmd__postinstall_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help postinstall commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__reinstall_commands] )) ||
+_zapbrew__subcmd__help__subcmd__reinstall_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help reinstall commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__search_commands] )) ||
+_zapbrew__subcmd__help__subcmd__search_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help search commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__services_commands] )) ||
+_zapbrew__subcmd__help__subcmd__services_commands() {
+    local commands; commands=(
+'list:List services and their status' \
+'start:Start services' \
+'stop:Stop services' \
+'restart:Restart services' \
+'run:Run a service without registering it to launch at login or boot' \
+'info:Print one-line status for services' \
+'kill:Stop a service but keep it registered' \
+'cleanup:Remove unused service files' \
+    )
+    _describe -t commands 'zapbrew help services commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__services__subcmd__cleanup_commands] )) ||
+_zapbrew__subcmd__help__subcmd__services__subcmd__cleanup_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help services cleanup commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__services__subcmd__info_commands] )) ||
+_zapbrew__subcmd__help__subcmd__services__subcmd__info_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help services info commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__services__subcmd__kill_commands] )) ||
+_zapbrew__subcmd__help__subcmd__services__subcmd__kill_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help services kill commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__services__subcmd__list_commands] )) ||
+_zapbrew__subcmd__help__subcmd__services__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help services list commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__services__subcmd__restart_commands] )) ||
+_zapbrew__subcmd__help__subcmd__services__subcmd__restart_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help services restart commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__services__subcmd__run_commands] )) ||
+_zapbrew__subcmd__help__subcmd__services__subcmd__run_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help services run commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__services__subcmd__start_commands] )) ||
+_zapbrew__subcmd__help__subcmd__services__subcmd__start_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help services start commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__services__subcmd__stop_commands] )) ||
+_zapbrew__subcmd__help__subcmd__services__subcmd__stop_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help services stop commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__shellenv_commands] )) ||
+_zapbrew__subcmd__help__subcmd__shellenv_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help shellenv commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__shim_commands] )) ||
+_zapbrew__subcmd__help__subcmd__shim_commands() {
+    local commands; commands=(
+'install:Install the \`<prefix>/bin/brew\` shim' \
+'remove:Remove the \`<prefix>/bin/brew\` shim' \
+    )
+    _describe -t commands 'zapbrew help shim commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__shim__subcmd__install_commands] )) ||
+_zapbrew__subcmd__help__subcmd__shim__subcmd__install_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help shim install commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__shim__subcmd__remove_commands] )) ||
+_zapbrew__subcmd__help__subcmd__shim__subcmd__remove_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help shim remove commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__tap_commands] )) ||
+_zapbrew__subcmd__help__subcmd__tap_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help tap commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__tap-info_commands] )) ||
+_zapbrew__subcmd__help__subcmd__tap-info_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help tap-info commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__uninstall_commands] )) ||
+_zapbrew__subcmd__help__subcmd__uninstall_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help uninstall commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__unlink_commands] )) ||
+_zapbrew__subcmd__help__subcmd__unlink_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help unlink commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__unpin_commands] )) ||
+_zapbrew__subcmd__help__subcmd__unpin_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help unpin commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__untap_commands] )) ||
+_zapbrew__subcmd__help__subcmd__untap_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help untap commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__update_commands] )) ||
+_zapbrew__subcmd__help__subcmd__update_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help update commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__upgrade_commands] )) ||
+_zapbrew__subcmd__help__subcmd__upgrade_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help upgrade commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__help__subcmd__uses_commands] )) ||
+_zapbrew__subcmd__help__subcmd__uses_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew help uses commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__info_commands] )) ||
+_zapbrew__subcmd__info_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew info commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__install_commands] )) ||
+_zapbrew__subcmd__install_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew install commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__leaves_commands] )) ||
+_zapbrew__subcmd__leaves_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew leaves commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__link_commands] )) ||
+_zapbrew__subcmd__link_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew link commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__list_commands] )) ||
+_zapbrew__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew list commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__outdated_commands] )) ||
+_zapbrew__subcmd__outdated_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew outdated commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__pin_commands] )) ||
+_zapbrew__subcmd__pin_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew pin commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__postinstall_commands] )) ||
+_zapbrew__subcmd__postinstall_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew postinstall commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__reinstall_commands] )) ||
+_zapbrew__subcmd__reinstall_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew reinstall commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__search_commands] )) ||
+_zapbrew__subcmd__search_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew search commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__services_commands] )) ||
+_zapbrew__subcmd__services_commands() {
+    local commands; commands=(
+'list:List services and their status' \
+'start:Start services' \
+'stop:Stop services' \
+'restart:Restart services' \
+'run:Run a service without registering it to launch at login or boot' \
+'info:Print one-line status for services' \
+'kill:Stop a service but keep it registered' \
+'cleanup:Remove unused service files' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'zapbrew services commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__services__subcmd__cleanup_commands] )) ||
+_zapbrew__subcmd__services__subcmd__cleanup_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew services cleanup commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__services__subcmd__help_commands] )) ||
+_zapbrew__subcmd__services__subcmd__help_commands() {
+    local commands; commands=(
+'list:List services and their status' \
+'start:Start services' \
+'stop:Stop services' \
+'restart:Restart services' \
+'run:Run a service without registering it to launch at login or boot' \
+'info:Print one-line status for services' \
+'kill:Stop a service but keep it registered' \
+'cleanup:Remove unused service files' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'zapbrew services help commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__services__subcmd__help__subcmd__cleanup_commands] )) ||
+_zapbrew__subcmd__services__subcmd__help__subcmd__cleanup_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew services help cleanup commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__services__subcmd__help__subcmd__help_commands] )) ||
+_zapbrew__subcmd__services__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew services help help commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__services__subcmd__help__subcmd__info_commands] )) ||
+_zapbrew__subcmd__services__subcmd__help__subcmd__info_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew services help info commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__services__subcmd__help__subcmd__kill_commands] )) ||
+_zapbrew__subcmd__services__subcmd__help__subcmd__kill_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew services help kill commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__services__subcmd__help__subcmd__list_commands] )) ||
+_zapbrew__subcmd__services__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew services help list commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__services__subcmd__help__subcmd__restart_commands] )) ||
+_zapbrew__subcmd__services__subcmd__help__subcmd__restart_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew services help restart commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__services__subcmd__help__subcmd__run_commands] )) ||
+_zapbrew__subcmd__services__subcmd__help__subcmd__run_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew services help run commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__services__subcmd__help__subcmd__start_commands] )) ||
+_zapbrew__subcmd__services__subcmd__help__subcmd__start_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew services help start commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__services__subcmd__help__subcmd__stop_commands] )) ||
+_zapbrew__subcmd__services__subcmd__help__subcmd__stop_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew services help stop commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__services__subcmd__info_commands] )) ||
+_zapbrew__subcmd__services__subcmd__info_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew services info commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__services__subcmd__kill_commands] )) ||
+_zapbrew__subcmd__services__subcmd__kill_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew services kill commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__services__subcmd__list_commands] )) ||
+_zapbrew__subcmd__services__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew services list commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__services__subcmd__restart_commands] )) ||
+_zapbrew__subcmd__services__subcmd__restart_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew services restart commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__services__subcmd__run_commands] )) ||
+_zapbrew__subcmd__services__subcmd__run_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew services run commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__services__subcmd__start_commands] )) ||
+_zapbrew__subcmd__services__subcmd__start_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew services start commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__services__subcmd__stop_commands] )) ||
+_zapbrew__subcmd__services__subcmd__stop_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew services stop commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__shellenv_commands] )) ||
+_zapbrew__subcmd__shellenv_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew shellenv commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__shim_commands] )) ||
+_zapbrew__subcmd__shim_commands() {
+    local commands; commands=(
+'install:Install the \`<prefix>/bin/brew\` shim' \
+'remove:Remove the \`<prefix>/bin/brew\` shim' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'zapbrew shim commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__shim__subcmd__help_commands] )) ||
+_zapbrew__subcmd__shim__subcmd__help_commands() {
+    local commands; commands=(
+'install:Install the \`<prefix>/bin/brew\` shim' \
+'remove:Remove the \`<prefix>/bin/brew\` shim' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'zapbrew shim help commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__shim__subcmd__help__subcmd__help_commands] )) ||
+_zapbrew__subcmd__shim__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew shim help help commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__shim__subcmd__help__subcmd__install_commands] )) ||
+_zapbrew__subcmd__shim__subcmd__help__subcmd__install_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew shim help install commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__shim__subcmd__help__subcmd__remove_commands] )) ||
+_zapbrew__subcmd__shim__subcmd__help__subcmd__remove_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew shim help remove commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__shim__subcmd__install_commands] )) ||
+_zapbrew__subcmd__shim__subcmd__install_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew shim install commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__shim__subcmd__remove_commands] )) ||
+_zapbrew__subcmd__shim__subcmd__remove_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew shim remove commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__tap_commands] )) ||
+_zapbrew__subcmd__tap_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew tap commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__tap-info_commands] )) ||
+_zapbrew__subcmd__tap-info_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew tap-info commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__uninstall_commands] )) ||
+_zapbrew__subcmd__uninstall_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew uninstall commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__unlink_commands] )) ||
+_zapbrew__subcmd__unlink_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew unlink commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__unpin_commands] )) ||
+_zapbrew__subcmd__unpin_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew unpin commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__untap_commands] )) ||
+_zapbrew__subcmd__untap_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew untap commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__update_commands] )) ||
+_zapbrew__subcmd__update_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew update commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__upgrade_commands] )) ||
+_zapbrew__subcmd__upgrade_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew upgrade commands' commands "$@"
+}
+(( $+functions[_zapbrew__subcmd__uses_commands] )) ||
+_zapbrew__subcmd__uses_commands() {
+    local commands; commands=()
+    _describe -t commands 'zapbrew uses commands' commands "$@"
+}
+
+if [ "$funcstack[1]" = "_zapbrew" ]; then
+    _zapbrew "$@"
+else
+    compdef _zapbrew zapbrew
+fi

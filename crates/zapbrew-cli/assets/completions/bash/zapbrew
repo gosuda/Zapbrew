@@ -1,0 +1,1976 @@
+_zapbrew() {
+    local i cur prev opts cmd
+    COMPREPLY=()
+    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+        cur="$2"
+    else
+        cur="${COMP_WORDS[COMP_CWORD]}"
+    fi
+    prev="$3"
+    cmd=""
+    opts=""
+
+    for i in "${COMP_WORDS[@]:0:COMP_CWORD}"
+    do
+        case "${cmd},${i}" in
+            ",$1")
+                cmd="zapbrew"
+                ;;
+            zapbrew,autoremove)
+                cmd="zapbrew__subcmd__autoremove"
+                ;;
+            zapbrew,cleanup)
+                cmd="zapbrew__subcmd__cleanup"
+                ;;
+            zapbrew,completions)
+                cmd="zapbrew__subcmd__completions"
+                ;;
+            zapbrew,config)
+                cmd="zapbrew__subcmd__config"
+                ;;
+            zapbrew,deps)
+                cmd="zapbrew__subcmd__deps"
+                ;;
+            zapbrew,desc)
+                cmd="zapbrew__subcmd__desc"
+                ;;
+            zapbrew,doctor)
+                cmd="zapbrew__subcmd__doctor"
+                ;;
+            zapbrew,fetch)
+                cmd="zapbrew__subcmd__fetch"
+                ;;
+            zapbrew,help)
+                cmd="zapbrew__subcmd__help"
+                ;;
+            zapbrew,info)
+                cmd="zapbrew__subcmd__info"
+                ;;
+            zapbrew,install)
+                cmd="zapbrew__subcmd__install"
+                ;;
+            zapbrew,leaves)
+                cmd="zapbrew__subcmd__leaves"
+                ;;
+            zapbrew,link)
+                cmd="zapbrew__subcmd__link"
+                ;;
+            zapbrew,list)
+                cmd="zapbrew__subcmd__list"
+                ;;
+            zapbrew,outdated)
+                cmd="zapbrew__subcmd__outdated"
+                ;;
+            zapbrew,pin)
+                cmd="zapbrew__subcmd__pin"
+                ;;
+            zapbrew,postinstall)
+                cmd="zapbrew__subcmd__postinstall"
+                ;;
+            zapbrew,reinstall)
+                cmd="zapbrew__subcmd__reinstall"
+                ;;
+            zapbrew,search)
+                cmd="zapbrew__subcmd__search"
+                ;;
+            zapbrew,services)
+                cmd="zapbrew__subcmd__services"
+                ;;
+            zapbrew,shellenv)
+                cmd="zapbrew__subcmd__shellenv"
+                ;;
+            zapbrew,shim)
+                cmd="zapbrew__subcmd__shim"
+                ;;
+            zapbrew,tap)
+                cmd="zapbrew__subcmd__tap"
+                ;;
+            zapbrew,tap-info)
+                cmd="zapbrew__subcmd__tap__subcmd__info"
+                ;;
+            zapbrew,uninstall)
+                cmd="zapbrew__subcmd__uninstall"
+                ;;
+            zapbrew,unlink)
+                cmd="zapbrew__subcmd__unlink"
+                ;;
+            zapbrew,unpin)
+                cmd="zapbrew__subcmd__unpin"
+                ;;
+            zapbrew,untap)
+                cmd="zapbrew__subcmd__untap"
+                ;;
+            zapbrew,update)
+                cmd="zapbrew__subcmd__update"
+                ;;
+            zapbrew,upgrade)
+                cmd="zapbrew__subcmd__upgrade"
+                ;;
+            zapbrew,uses)
+                cmd="zapbrew__subcmd__uses"
+                ;;
+            zapbrew__subcmd__completions,generate)
+                cmd="zapbrew__subcmd__completions__subcmd__generate"
+                ;;
+            zapbrew__subcmd__completions,help)
+                cmd="zapbrew__subcmd__completions__subcmd__help"
+                ;;
+            zapbrew__subcmd__completions,link)
+                cmd="zapbrew__subcmd__completions__subcmd__link"
+                ;;
+            zapbrew__subcmd__completions,state)
+                cmd="zapbrew__subcmd__completions__subcmd__state"
+                ;;
+            zapbrew__subcmd__completions,unlink)
+                cmd="zapbrew__subcmd__completions__subcmd__unlink"
+                ;;
+            zapbrew__subcmd__completions__subcmd__help,generate)
+                cmd="zapbrew__subcmd__completions__subcmd__help__subcmd__generate"
+                ;;
+            zapbrew__subcmd__completions__subcmd__help,help)
+                cmd="zapbrew__subcmd__completions__subcmd__help__subcmd__help"
+                ;;
+            zapbrew__subcmd__completions__subcmd__help,link)
+                cmd="zapbrew__subcmd__completions__subcmd__help__subcmd__link"
+                ;;
+            zapbrew__subcmd__completions__subcmd__help,state)
+                cmd="zapbrew__subcmd__completions__subcmd__help__subcmd__state"
+                ;;
+            zapbrew__subcmd__completions__subcmd__help,unlink)
+                cmd="zapbrew__subcmd__completions__subcmd__help__subcmd__unlink"
+                ;;
+            zapbrew__subcmd__help,autoremove)
+                cmd="zapbrew__subcmd__help__subcmd__autoremove"
+                ;;
+            zapbrew__subcmd__help,cleanup)
+                cmd="zapbrew__subcmd__help__subcmd__cleanup"
+                ;;
+            zapbrew__subcmd__help,completions)
+                cmd="zapbrew__subcmd__help__subcmd__completions"
+                ;;
+            zapbrew__subcmd__help,config)
+                cmd="zapbrew__subcmd__help__subcmd__config"
+                ;;
+            zapbrew__subcmd__help,deps)
+                cmd="zapbrew__subcmd__help__subcmd__deps"
+                ;;
+            zapbrew__subcmd__help,desc)
+                cmd="zapbrew__subcmd__help__subcmd__desc"
+                ;;
+            zapbrew__subcmd__help,doctor)
+                cmd="zapbrew__subcmd__help__subcmd__doctor"
+                ;;
+            zapbrew__subcmd__help,fetch)
+                cmd="zapbrew__subcmd__help__subcmd__fetch"
+                ;;
+            zapbrew__subcmd__help,help)
+                cmd="zapbrew__subcmd__help__subcmd__help"
+                ;;
+            zapbrew__subcmd__help,info)
+                cmd="zapbrew__subcmd__help__subcmd__info"
+                ;;
+            zapbrew__subcmd__help,install)
+                cmd="zapbrew__subcmd__help__subcmd__install"
+                ;;
+            zapbrew__subcmd__help,leaves)
+                cmd="zapbrew__subcmd__help__subcmd__leaves"
+                ;;
+            zapbrew__subcmd__help,link)
+                cmd="zapbrew__subcmd__help__subcmd__link"
+                ;;
+            zapbrew__subcmd__help,list)
+                cmd="zapbrew__subcmd__help__subcmd__list"
+                ;;
+            zapbrew__subcmd__help,outdated)
+                cmd="zapbrew__subcmd__help__subcmd__outdated"
+                ;;
+            zapbrew__subcmd__help,pin)
+                cmd="zapbrew__subcmd__help__subcmd__pin"
+                ;;
+            zapbrew__subcmd__help,postinstall)
+                cmd="zapbrew__subcmd__help__subcmd__postinstall"
+                ;;
+            zapbrew__subcmd__help,reinstall)
+                cmd="zapbrew__subcmd__help__subcmd__reinstall"
+                ;;
+            zapbrew__subcmd__help,search)
+                cmd="zapbrew__subcmd__help__subcmd__search"
+                ;;
+            zapbrew__subcmd__help,services)
+                cmd="zapbrew__subcmd__help__subcmd__services"
+                ;;
+            zapbrew__subcmd__help,shellenv)
+                cmd="zapbrew__subcmd__help__subcmd__shellenv"
+                ;;
+            zapbrew__subcmd__help,shim)
+                cmd="zapbrew__subcmd__help__subcmd__shim"
+                ;;
+            zapbrew__subcmd__help,tap)
+                cmd="zapbrew__subcmd__help__subcmd__tap"
+                ;;
+            zapbrew__subcmd__help,tap-info)
+                cmd="zapbrew__subcmd__help__subcmd__tap__subcmd__info"
+                ;;
+            zapbrew__subcmd__help,uninstall)
+                cmd="zapbrew__subcmd__help__subcmd__uninstall"
+                ;;
+            zapbrew__subcmd__help,unlink)
+                cmd="zapbrew__subcmd__help__subcmd__unlink"
+                ;;
+            zapbrew__subcmd__help,unpin)
+                cmd="zapbrew__subcmd__help__subcmd__unpin"
+                ;;
+            zapbrew__subcmd__help,untap)
+                cmd="zapbrew__subcmd__help__subcmd__untap"
+                ;;
+            zapbrew__subcmd__help,update)
+                cmd="zapbrew__subcmd__help__subcmd__update"
+                ;;
+            zapbrew__subcmd__help,upgrade)
+                cmd="zapbrew__subcmd__help__subcmd__upgrade"
+                ;;
+            zapbrew__subcmd__help,uses)
+                cmd="zapbrew__subcmd__help__subcmd__uses"
+                ;;
+            zapbrew__subcmd__help__subcmd__completions,generate)
+                cmd="zapbrew__subcmd__help__subcmd__completions__subcmd__generate"
+                ;;
+            zapbrew__subcmd__help__subcmd__completions,link)
+                cmd="zapbrew__subcmd__help__subcmd__completions__subcmd__link"
+                ;;
+            zapbrew__subcmd__help__subcmd__completions,state)
+                cmd="zapbrew__subcmd__help__subcmd__completions__subcmd__state"
+                ;;
+            zapbrew__subcmd__help__subcmd__completions,unlink)
+                cmd="zapbrew__subcmd__help__subcmd__completions__subcmd__unlink"
+                ;;
+            zapbrew__subcmd__help__subcmd__services,cleanup)
+                cmd="zapbrew__subcmd__help__subcmd__services__subcmd__cleanup"
+                ;;
+            zapbrew__subcmd__help__subcmd__services,info)
+                cmd="zapbrew__subcmd__help__subcmd__services__subcmd__info"
+                ;;
+            zapbrew__subcmd__help__subcmd__services,kill)
+                cmd="zapbrew__subcmd__help__subcmd__services__subcmd__kill"
+                ;;
+            zapbrew__subcmd__help__subcmd__services,list)
+                cmd="zapbrew__subcmd__help__subcmd__services__subcmd__list"
+                ;;
+            zapbrew__subcmd__help__subcmd__services,restart)
+                cmd="zapbrew__subcmd__help__subcmd__services__subcmd__restart"
+                ;;
+            zapbrew__subcmd__help__subcmd__services,run)
+                cmd="zapbrew__subcmd__help__subcmd__services__subcmd__run"
+                ;;
+            zapbrew__subcmd__help__subcmd__services,start)
+                cmd="zapbrew__subcmd__help__subcmd__services__subcmd__start"
+                ;;
+            zapbrew__subcmd__help__subcmd__services,stop)
+                cmd="zapbrew__subcmd__help__subcmd__services__subcmd__stop"
+                ;;
+            zapbrew__subcmd__help__subcmd__shim,install)
+                cmd="zapbrew__subcmd__help__subcmd__shim__subcmd__install"
+                ;;
+            zapbrew__subcmd__help__subcmd__shim,remove)
+                cmd="zapbrew__subcmd__help__subcmd__shim__subcmd__remove"
+                ;;
+            zapbrew__subcmd__services,cleanup)
+                cmd="zapbrew__subcmd__services__subcmd__cleanup"
+                ;;
+            zapbrew__subcmd__services,help)
+                cmd="zapbrew__subcmd__services__subcmd__help"
+                ;;
+            zapbrew__subcmd__services,info)
+                cmd="zapbrew__subcmd__services__subcmd__info"
+                ;;
+            zapbrew__subcmd__services,kill)
+                cmd="zapbrew__subcmd__services__subcmd__kill"
+                ;;
+            zapbrew__subcmd__services,list)
+                cmd="zapbrew__subcmd__services__subcmd__list"
+                ;;
+            zapbrew__subcmd__services,restart)
+                cmd="zapbrew__subcmd__services__subcmd__restart"
+                ;;
+            zapbrew__subcmd__services,run)
+                cmd="zapbrew__subcmd__services__subcmd__run"
+                ;;
+            zapbrew__subcmd__services,start)
+                cmd="zapbrew__subcmd__services__subcmd__start"
+                ;;
+            zapbrew__subcmd__services,stop)
+                cmd="zapbrew__subcmd__services__subcmd__stop"
+                ;;
+            zapbrew__subcmd__services__subcmd__help,cleanup)
+                cmd="zapbrew__subcmd__services__subcmd__help__subcmd__cleanup"
+                ;;
+            zapbrew__subcmd__services__subcmd__help,help)
+                cmd="zapbrew__subcmd__services__subcmd__help__subcmd__help"
+                ;;
+            zapbrew__subcmd__services__subcmd__help,info)
+                cmd="zapbrew__subcmd__services__subcmd__help__subcmd__info"
+                ;;
+            zapbrew__subcmd__services__subcmd__help,kill)
+                cmd="zapbrew__subcmd__services__subcmd__help__subcmd__kill"
+                ;;
+            zapbrew__subcmd__services__subcmd__help,list)
+                cmd="zapbrew__subcmd__services__subcmd__help__subcmd__list"
+                ;;
+            zapbrew__subcmd__services__subcmd__help,restart)
+                cmd="zapbrew__subcmd__services__subcmd__help__subcmd__restart"
+                ;;
+            zapbrew__subcmd__services__subcmd__help,run)
+                cmd="zapbrew__subcmd__services__subcmd__help__subcmd__run"
+                ;;
+            zapbrew__subcmd__services__subcmd__help,start)
+                cmd="zapbrew__subcmd__services__subcmd__help__subcmd__start"
+                ;;
+            zapbrew__subcmd__services__subcmd__help,stop)
+                cmd="zapbrew__subcmd__services__subcmd__help__subcmd__stop"
+                ;;
+            zapbrew__subcmd__shim,help)
+                cmd="zapbrew__subcmd__shim__subcmd__help"
+                ;;
+            zapbrew__subcmd__shim,install)
+                cmd="zapbrew__subcmd__shim__subcmd__install"
+                ;;
+            zapbrew__subcmd__shim,remove)
+                cmd="zapbrew__subcmd__shim__subcmd__remove"
+                ;;
+            zapbrew__subcmd__shim__subcmd__help,help)
+                cmd="zapbrew__subcmd__shim__subcmd__help__subcmd__help"
+                ;;
+            zapbrew__subcmd__shim__subcmd__help,install)
+                cmd="zapbrew__subcmd__shim__subcmd__help__subcmd__install"
+                ;;
+            zapbrew__subcmd__shim__subcmd__help,remove)
+                cmd="zapbrew__subcmd__shim__subcmd__help__subcmd__remove"
+                ;;
+            *)
+                ;;
+        esac
+    done
+
+    case "${cmd}" in
+        zapbrew)
+            opts="-q -v -h -V --debug --quiet --verbose --prefix --cellar --caskroom --cache --repository --taps --help --version install reinstall uninstall upgrade outdated list info deps uses leaves autoremove pin unpin link unlink fetch cleanup search desc postinstall config shellenv tap untap tap-info doctor services update shim completions help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --prefix)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --cellar)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --caskroom)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --cache)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --repository)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__autoremove)
+            opts="-n -q -v -h --dry-run --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__cleanup)
+            opts="-s -n -q -v -h --scrub --dry-run --prune --prune-prefix --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --prune)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__completions)
+            opts="-q -v -h --debug --quiet --verbose --help bash zsh fish state link unlink generate help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__completions__subcmd__generate)
+            opts="-q -v -h --debug --quiet --verbose --help bash zsh fish"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__completions__subcmd__help)
+            opts="state link unlink generate help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__completions__subcmd__help__subcmd__generate)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__completions__subcmd__help__subcmd__help)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__completions__subcmd__help__subcmd__link)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__completions__subcmd__help__subcmd__state)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__completions__subcmd__help__subcmd__unlink)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__completions__subcmd__link)
+            opts="-q -v -h --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__completions__subcmd__state)
+            opts="-q -v -h --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__completions__subcmd__unlink)
+            opts="-q -v -h --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__config)
+            opts="-q -v -h --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__deps)
+            opts="-q -v -h --tree --union --include-build --include-test --include-optional --skip-recommended --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__desc)
+            opts="-s -n -d -q -v -h --search --search-name --search-description --formula --cask --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --search)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -s)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --search-name)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -n)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --search-description)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -d)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__doctor)
+            opts="-q -v -h --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__fetch)
+            opts="-q -v -h --deps --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help)
+            opts="install reinstall uninstall upgrade outdated list info deps uses leaves autoremove pin unpin link unlink fetch cleanup search desc postinstall config shellenv tap untap tap-info doctor services update shim completions help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__autoremove)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__cleanup)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__completions)
+            opts="state link unlink generate"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__completions__subcmd__generate)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__completions__subcmd__link)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__completions__subcmd__state)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__completions__subcmd__unlink)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__config)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__deps)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__desc)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__doctor)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__fetch)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__help)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__info)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__install)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__leaves)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__link)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__list)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__outdated)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__pin)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__postinstall)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__reinstall)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__search)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__services)
+            opts="list start stop restart run info kill cleanup"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__services__subcmd__cleanup)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__services__subcmd__info)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__services__subcmd__kill)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__services__subcmd__list)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__services__subcmd__restart)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__services__subcmd__run)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__services__subcmd__start)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__services__subcmd__stop)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__shellenv)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__shim)
+            opts="install remove"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__shim__subcmd__install)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__shim__subcmd__remove)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__tap)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__tap__subcmd__info)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__uninstall)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__unlink)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__unpin)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__untap)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__update)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__upgrade)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__help__subcmd__uses)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__info)
+            opts="-q -v -h --json --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --json)
+                    COMPREPLY=($(compgen -W "v2" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__install)
+            opts="-f -n -i -q -v -h --only-dependencies --force --dry-run --build-from-source --HEAD --interactive --include-test --cask --formula --appdir --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --appdir)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__leaves)
+            opts="-r -p -q -v -h --installed-on-request --installed-as-dependency --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__link)
+            opts="-n -f -q -v -h --overwrite --dry-run --force --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__list)
+            opts="-1 -q -v -h --versions --cask --formula --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__outdated)
+            opts="-q -v -h --json --greedy --greedy-latest --greedy-auto-updates --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --json)
+                    COMPREPLY=($(compgen -W "v2" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__pin)
+            opts="-q -v -h --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__postinstall)
+            opts="-q -v -h --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__reinstall)
+            opts="-q -v -h --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__search)
+            opts="-q -v -h --desc --formula --cask --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__services)
+            opts="-q -v -h --debug --quiet --verbose --help list start stop restart run info kill cleanup help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__services__subcmd__cleanup)
+            opts="-q -v -h --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__services__subcmd__help)
+            opts="list start stop restart run info kill cleanup help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__services__subcmd__help__subcmd__cleanup)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__services__subcmd__help__subcmd__help)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__services__subcmd__help__subcmd__info)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__services__subcmd__help__subcmd__kill)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__services__subcmd__help__subcmd__list)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__services__subcmd__help__subcmd__restart)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__services__subcmd__help__subcmd__run)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__services__subcmd__help__subcmd__start)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__services__subcmd__help__subcmd__stop)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__services__subcmd__info)
+            opts="-q -v -h --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__services__subcmd__kill)
+            opts="-q -v -h --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__services__subcmd__list)
+            opts="-q -v -h --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__services__subcmd__restart)
+            opts="-q -v -h --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__services__subcmd__run)
+            opts="-q -v -h --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__services__subcmd__start)
+            opts="-q -v -h --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__services__subcmd__stop)
+            opts="-q -v -h --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__shellenv)
+            opts="-q -v -h --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__shim)
+            opts="-q -v -h --debug --quiet --verbose --help install remove help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__shim__subcmd__help)
+            opts="install remove help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__shim__subcmd__help__subcmd__help)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__shim__subcmd__help__subcmd__install)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__shim__subcmd__help__subcmd__remove)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__shim__subcmd__install)
+            opts="-q -v -h --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__shim__subcmd__remove)
+            opts="-q -v -h --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__tap)
+            opts="-f -q -v -h --force --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__tap__subcmd__info)
+            opts="-q -v -h --installed --json --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__uninstall)
+            opts="-f -q -v -h --force --ignore-dependencies --cask --formula --zap --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__unlink)
+            opts="-n -q -v -h --dry-run --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__unpin)
+            opts="-q -v -h --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__untap)
+            opts="-f -q -v -h --force --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__update)
+            opts="-q -v -h --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__upgrade)
+            opts="-n -q -v -h --dry-run --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        zapbrew__subcmd__uses)
+            opts="-r -q -v -h --recursive --installed --include-build --include-test --include-optional --skip-recommended --debug --quiet --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+    esac
+}
+
+if [[ "${BASH_VERSINFO[0]}" -eq 4 && "${BASH_VERSINFO[1]}" -ge 4 || "${BASH_VERSINFO[0]}" -gt 4 ]]; then
+    complete -F _zapbrew -o nosort -o bashdefault -o default zapbrew
+else
+    complete -F _zapbrew -o bashdefault -o default zapbrew
+fi

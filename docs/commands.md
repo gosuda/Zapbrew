@@ -73,7 +73,7 @@ Options:
 | [`services`](#zapbrew-services) | Manage background services |
 | [`update`](#zapbrew-update) | Fetch the latest catalog and taps |
 | [`shim`](#zapbrew-shim) | Manage the opt-in `brew` shim |
-| [`completions`](#zapbrew-completions) | Generate a shell completion script |
+| [`completions`](#zapbrew-completions) | Manage shell completion links |
 
 ### `zapbrew install`
 
@@ -862,12 +862,78 @@ Options:
 
 ### `zapbrew completions`
 
-Generate a shell completion script.
+Manage shell completion links.
 
 ```text
-Generate a shell completion script
+Manage shell completion links
 
-Usage: zapbrew completions [OPTIONS] <SHELL>
+Usage: zapbrew completions [OPTIONS] [SHELL] [COMMAND]
+
+Commands:
+  state     Display the current completion link state
+  link      Link discovered completion files into the active prefix
+  unlink    Remove only links to discovered completion files
+  generate  Generate a completion script from the live Clap surface
+  help      Print this message or the help of the given subcommand(s)
+
+Arguments:
+  [SHELL]  Legacy shell shortcut, treated as `completions generate <shell>` when no subcommand is given [possible values: bash, zsh, fish]
+
+Options:
+      --debug    Enable debug output
+  -q, --quiet    Suppress non-essential output
+  -v, --verbose  Enable verbose output
+  -h, --help     Print help
+```
+
+#### `zapbrew completions state`
+
+```text
+Display the current completion link state
+
+Usage: zapbrew completions state [OPTIONS]
+
+Options:
+      --debug    Enable debug output
+  -q, --quiet    Suppress non-essential output
+  -v, --verbose  Enable verbose output
+  -h, --help     Print help
+```
+
+#### `zapbrew completions link`
+
+```text
+Link discovered completion files into the active prefix
+
+Usage: zapbrew completions link [OPTIONS]
+
+Options:
+      --debug    Enable debug output
+  -q, --quiet    Suppress non-essential output
+  -v, --verbose  Enable verbose output
+  -h, --help     Print help
+```
+
+#### `zapbrew completions unlink`
+
+```text
+Remove only links to discovered completion files
+
+Usage: zapbrew completions unlink [OPTIONS]
+
+Options:
+      --debug    Enable debug output
+  -q, --quiet    Suppress non-essential output
+  -v, --verbose  Enable verbose output
+  -h, --help     Print help
+```
+
+#### `zapbrew completions generate`
+
+```text
+Generate a completion script from the live Clap surface
+
+Usage: zapbrew completions generate [OPTIONS] <SHELL>
 
 Arguments:
   <SHELL>  Shell to generate a completion script for [possible values: bash, zsh, fish]

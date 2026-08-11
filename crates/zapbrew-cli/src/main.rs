@@ -26,12 +26,18 @@ fn main() -> ExitCode {
     let args = cli::canonicalize_argv(std::env::args().collect());
     let cli = cli::Cli::parse_from(args);
 
-    // Completion generation is a pure function of the clap surface. Intercept it
-    // before the argv0 shim hint, `Env::detect`, fast paths, the runtime, HTTP,
-    // catalogs, or any `Ctx` so it never touches the host or the network.
+    // `completions generate` and the legacy `completions <shell>` shortcut are
+    // pure functions of the clap surface. Intercept them before `Env::detect`
+    // so they never touch the host or the network.
     if let Some(cli::Commands::Completions(args)) = &cli.command {
-        completions::generate(args.shell, &mut std::io::stdout());
-        return output::success();
+        let shell = args.shell.or(match &args.command {
+            Some(cli::CompletionsCommand::Generate { shell }) => Some(*shell),
+            _ => None,
+        });
+        if let Some(shell) = shell {
+            completions::generate(shell, &mut std::io::stdout());
+            return output::success();
+        }
     }
 
     let argv0 = std::env::args().next().unwrap_or_default();
@@ -50,6 +56,18 @@ fn main() -> ExitCode {
     env.verbose |= cli.globals.verbose;
 
     let reporter = TerminalReporter::from_env(&env, cli.globals.quiet, env.verbose, hint);
+
+    // Completions state/link/unlink are handled here, before any runtime,
+    // catalog, or network work. They only inspect and mutate the active prefix.
+    if let Some(cli::Commands::Completions(args)) = &cli.command {
+        match completions::run(args, &env, &reporter) {
+            Ok(()) => return output::success(),
+            Err(err) => {
+                output::report_error(&reporter, &err);
+                return output::exit_code(&err);
+            }
+        }
+    }
 
     match fastpath::resolve(&cli, &env) {
         FastPath::Print(line) => {

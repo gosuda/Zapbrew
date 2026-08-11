@@ -10,7 +10,8 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-/// Rewrite common Homebrew command aliases to their canonical names.
+/// Rewrite common Homebrew command aliases and legacy completion shortcuts to
+/// their canonical names.
 ///
 /// This operates on the argument vector (including the binary name at index 0)
 /// and returns a newly-allocated vector. It runs before clap so that `ls`,
@@ -19,18 +20,18 @@ pub(crate) fn canonicalize_argv(argv: Vec<String>) -> Vec<String> {
     let mut argv = argv;
     if let Some(first) = argv.get_mut(1) {
         *first = match first.as_str() {
-            "ls" => "list",
-            "-S" => "search",
-            "up" => "update",
-            "ln" => "link",
-            "instal" => "install",
-            "uninstal" | "rm" | "remove" => "uninstall",
-            "abv" => "info",
-            "dr" => "doctor",
-            other => other,
-        }
-        .to_owned();
+            "ls" => "list".to_owned(),
+            "-S" => "search".to_owned(),
+            "up" => "update".to_owned(),
+            "ln" => "link".to_owned(),
+            "instal" => "install".to_owned(),
+            "uninstal" | "rm" | "remove" => "uninstall".to_owned(),
+            "abv" => "info".to_owned(),
+            "dr" => "doctor".to_owned(),
+            other => other.to_owned(),
+        };
     }
+
     argv
 }
 
@@ -96,7 +97,7 @@ pub enum JsonVersion {
     V2,
 }
 
-/// Shell dialect the `completions` subcommand generates a script for.
+/// Shell dialect the explicitly named completion generator supports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum CompletionShell {
     Bash,
@@ -165,7 +166,7 @@ pub enum Commands {
     Update,
     /// Manage the opt-in `brew` shim.
     Shim(ShimArgs),
-    /// Generate a shell completion script.
+    /// Manage shell completion links.
     Completions(CompletionsArgs),
 }
 
@@ -545,9 +546,30 @@ pub enum ShimCommand {
 
 #[derive(Debug, Args)]
 pub struct CompletionsArgs {
-    /// Shell to generate a completion script for.
+    /// Completion link operation; omit to display the current state.
+    #[command(subcommand)]
+    pub command: Option<CompletionsCommand>,
+    /// Legacy shell shortcut, treated as `completions generate <shell>` when no
+    /// subcommand is given.
     #[arg(value_enum)]
-    pub shell: CompletionShell,
+    pub shell: Option<CompletionShell>,
+}
+
+/// Shell completion link operations.
+#[derive(Debug, Subcommand)]
+pub enum CompletionsCommand {
+    /// Display the current completion link state.
+    State,
+    /// Link discovered completion files into the active prefix.
+    Link,
+    /// Remove only links to discovered completion files.
+    Unlink,
+    /// Generate a completion script from the live Clap surface.
+    Generate {
+        /// Shell to generate a completion script for.
+        #[arg(value_enum)]
+        shell: CompletionShell,
+    },
 }
 
 #[cfg(test)]
@@ -1045,7 +1067,49 @@ mod tests {
     }
 
     #[test]
-    fn completions_parses_every_shell_and_rejects_bad_values() {
+    fn completions_parses_state_link_unlink_and_both_generation_forms() {
+        for argv in [
+            &["zapbrew", "completions"][..],
+            &["zapbrew", "completions", "state"][..],
+            &["zapbrew", "completions", "link"][..],
+            &["zapbrew", "completions", "unlink"][..],
+        ] {
+            let Commands::Completions(args) = command(argv) else {
+                panic!("expected completions for {argv:?}");
+            };
+            assert!(args.shell.is_none(), "argv: {argv:?}");
+        }
+
+        let Commands::Completions(bare) = command(&["zapbrew", "completions"]) else {
+            panic!("expected bare completions");
+        };
+        assert!(bare.command.is_none());
+        assert!(bare.shell.is_none());
+
+        for (argv, expected) in [
+            (
+                &["zapbrew", "completions", "generate", "bash"][..],
+                CompletionShell::Bash,
+            ),
+            (
+                &["zapbrew", "completions", "generate", "zsh"][..],
+                CompletionShell::Zsh,
+            ),
+            (
+                &["zapbrew", "completions", "generate", "fish"][..],
+                CompletionShell::Fish,
+            ),
+        ] {
+            let Commands::Completions(args) = command(argv) else {
+                panic!("expected completions for {argv:?}");
+            };
+            assert!(args.shell.is_none(), "argv: {argv:?}");
+            let Some(CompletionsCommand::Generate { shell }) = args.command else {
+                panic!("expected generate for {argv:?}");
+            };
+            assert_eq!(shell, expected, "argv: {argv:?}");
+        }
+
         for (argv, expected) in [
             (
                 &["zapbrew", "completions", "bash"][..],
@@ -1060,16 +1124,21 @@ mod tests {
             let Commands::Completions(args) = command(argv) else {
                 panic!("expected completions for {argv:?}");
             };
-            assert_eq!(args.shell, expected, "argv: {argv:?}");
+            assert!(args.command.is_none(), "argv: {argv:?}");
+            assert_eq!(args.shell, Some(expected), "argv: {argv:?}");
         }
 
-        assert_eq!(
-            parse_kind(&["zapbrew", "completions"]),
-            ErrorKind::MissingRequiredArgument
-        );
-        assert_eq!(
-            parse_kind(&["zapbrew", "completions", "powershell"]),
-            ErrorKind::InvalidValue
-        );
+        for (argv, expected) in [
+            (
+                &["zapbrew", "completions", "powershell"][..],
+                ErrorKind::InvalidValue,
+            ),
+            (
+                &["zapbrew", "completions", "generate", "powershell"][..],
+                ErrorKind::InvalidValue,
+            ),
+        ] {
+            assert_eq!(parse_kind(argv), expected, "argv: {argv:?}");
+        }
     }
 }

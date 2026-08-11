@@ -1,7 +1,7 @@
 //! Process-boundary command-compatibility contracts.
 //!
 //! Five tests drive the real `zapbrew` binary at the OS process boundary. The
-//! command-reference case pins all 41 generated help blocks; the other four
+//! command-reference case pins all 44 generated help blocks; the other four
 //! pin exact bytes and exit status. The unknown-formula case
 //! traverses the production JWS verifier: `cargo test -p zapbrew-cli` unifies
 //! the `zapbrew-api` `test-trust-root` dev-dependency feature into the binary
@@ -70,7 +70,11 @@ fn binary_help(args: &[String]) -> String {
         .arg("--help")
         .output()
         .expect("run help");
-    assert!(output.status.success(), "status: {:?}", output.status);
+    assert!(
+        output.status.success(),
+        "args: {args:?}; status: {:?}",
+        output.status
+    );
     assert!(output.stderr.is_empty(), "stderr: {:?}", output.stderr);
     String::from_utf8(output.stdout).expect("UTF-8 help")
 }
@@ -80,7 +84,7 @@ fn child_commands(help: &str) -> Vec<&str> {
         return Vec::new();
     };
     let commands = remainder
-        .split_once("\n\nOptions:\n")
+        .split_once("\n\n")
         .map_or(remainder, |(commands, _)| commands);
     commands
         .lines()
@@ -117,7 +121,7 @@ fn command_reference_matches_binary_help() {
     const REFERENCE: &str = include_str!("../../../docs/commands.md");
 
     let documented = documented_commands(REFERENCE);
-    assert_eq!(documented.len(), 40, "documented command help blocks");
+    assert_eq!(documented.len(), 44, "documented command help blocks");
 
     let root_help = binary_help(&[]);
     let actual_global = root_help
