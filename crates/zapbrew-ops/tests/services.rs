@@ -305,6 +305,7 @@ async fn linux_start_writes_unit_and_uses_exact_argv_and_output() {
         Outcome::failure(),
         Outcome::success(),
         Outcome::success(),
+        Outcome::success(),
     ]));
     ctx.commands = runner.clone();
 
@@ -326,6 +327,7 @@ async fn linux_start_writes_unit_and_uses_exact_argv_and_output() {
         [
             vec!["systemctl", "--user", "is-active", "homebrew.demo.service"],
             vec!["systemctl", "--user", "daemon-reload"],
+            vec!["systemctl", "--user", "enable", "homebrew.demo.service"],
             vec!["systemctl", "--user", "start", "homebrew.demo.service"],
         ]
     );
@@ -349,6 +351,7 @@ async fn timed_linux_start_writes_both_files_and_starts_timer() {
         Outcome::failure(),
         Outcome::success(),
         Outcome::success(),
+        Outcome::success(),
     ]));
     ctx.commands = runner.clone();
 
@@ -368,8 +371,77 @@ async fn timed_linux_start_writes_both_files_and_starts_timer() {
         [
             vec!["systemctl", "--user", "is-active", "homebrew.demo.timer"],
             vec!["systemctl", "--user", "daemon-reload"],
+            vec!["systemctl", "--user", "enable", "homebrew.demo.timer"],
             vec!["systemctl", "--user", "start", "homebrew.demo.timer"],
         ]
+    );
+}
+
+#[tokio::test]
+async fn linux_start_active_enabled_is_noop() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
+    let (mut ctx, reporter) = fixture.context(vec![service_formula("demo", service)]);
+    let runner = Arc::new(ScriptRunner::new([Outcome::success(), Outcome::success()]));
+    ctx.commands = runner.clone();
+
+    services::run(&ctx, run_args(ServiceAction::Start, &["demo"]))
+        .await
+        .expect("already active and enabled");
+
+    assert_eq!(
+        runner.calls(),
+        [
+            vec!["systemctl", "--user", "is-active", "homebrew.demo.service"],
+            vec!["systemctl", "--user", "is-enabled", "homebrew.demo.service"],
+        ]
+    );
+    assert_eq!(
+        reporter.take(),
+        ["print:Service `demo` already started, use zapbrew restart demo to restart."]
+    );
+}
+
+#[tokio::test]
+async fn linux_start_active_disabled_converts_to_persistent_without_restart() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
+    let (mut ctx, reporter) = fixture.context(vec![service_formula("demo", service.clone())]);
+    let runner = Arc::new(ScriptRunner::new([
+        Outcome::success(),
+        Outcome::failure(),
+        Outcome::success(),
+        Outcome::success(),
+    ]));
+    ctx.commands = runner.clone();
+
+    services::run(&ctx, run_args(ServiceAction::Start, &["demo"]))
+        .await
+        .expect("active disabled conversion");
+
+    let unit = fixture
+        .env
+        .home
+        .join(".config/systemd/user/homebrew.demo.service");
+    assert_eq!(
+        fs::read_to_string(&unit).expect("unit file"),
+        services_test_support::render_systemd_unit(&fixture.env, "demo", &service)
+            .expect("rendered unit")
+    );
+    assert_eq!(
+        runner.calls(),
+        [
+            vec!["systemctl", "--user", "is-active", "homebrew.demo.service"],
+            vec!["systemctl", "--user", "is-enabled", "homebrew.demo.service"],
+            vec!["systemctl", "--user", "daemon-reload"],
+            vec!["systemctl", "--user", "enable", "homebrew.demo.service"],
+        ]
+    );
+    assert_eq!(
+        reporter.take(),
+        ["ohai:Successfully started `demo` (label: homebrew.demo)"]
     );
 }
 
@@ -379,12 +451,16 @@ async fn active_start_inactive_stop_and_missing_formula_have_pinned_states() {
     install(&fixture, "demo");
     let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
     let (mut ctx, reporter) = fixture.context(vec![service_formula("demo", service)]);
-    let runner = Arc::new(ScriptRunner::new([Outcome::success(), Outcome::failure()]));
+    let runner = Arc::new(ScriptRunner::new([
+        Outcome::success(),
+        Outcome::success(),
+        Outcome::failure(),
+    ]));
     ctx.commands = runner.clone();
 
     services::run(&ctx, run_args(ServiceAction::Start, &["demo"]))
         .await
-        .expect("already active");
+        .expect("already active and enabled");
     services::run(&ctx, run_args(ServiceAction::Stop, &["demo"]))
         .await
         .expect("already inactive");
@@ -397,6 +473,7 @@ async fn active_start_inactive_stop_and_missing_formula_have_pinned_states() {
         runner.calls(),
         [
             vec!["systemctl", "--user", "is-active", "homebrew.demo.service"],
+            vec!["systemctl", "--user", "is-enabled", "homebrew.demo.service"],
             vec!["systemctl", "--user", "is-active", "homebrew.demo.service"],
         ]
     );
@@ -437,7 +514,7 @@ async fn absent_service_data_and_universal_platform_are_named_refusals() {
 }
 
 #[tokio::test]
-async fn linux_stop_and_restart_use_exact_stateful_argv_and_messages() {
+async fn linux_stop_and_fresh_restart_uses_enable_start_and_no_is_enabled_probe() {
     let fixture = Fixture::new();
     install(&fixture, "demo");
     let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
@@ -447,7 +524,7 @@ async fn linux_stop_and_restart_use_exact_stateful_argv_and_messages() {
         Outcome::success(),
         Outcome::success(),
         Outcome::success(),
-        Outcome::failure(),
+        Outcome::success(),
         Outcome::success(),
         Outcome::success(),
     ]));
@@ -458,13 +535,65 @@ async fn linux_stop_and_restart_use_exact_stateful_argv_and_messages() {
         .expect("stop");
     services::run(&ctx, run_args(ServiceAction::Restart, &["demo"]))
         .await
-        .expect("restart");
+        .expect("fresh restart");
 
     assert_eq!(
         runner.calls(),
         [
             vec!["systemctl", "--user", "is-active", "homebrew.demo.service"],
             vec!["systemctl", "--user", "stop", "homebrew.demo.service"],
+            vec!["systemctl", "--user", "is-active", "homebrew.demo.service"],
+            vec!["systemctl", "--user", "stop", "homebrew.demo.service"],
+            vec!["systemctl", "--user", "daemon-reload"],
+            vec!["systemctl", "--user", "enable", "homebrew.demo.service"],
+            vec!["systemctl", "--user", "start", "homebrew.demo.service"],
+        ]
+    );
+    assert_eq!(
+        reporter.take(),
+        [
+            "ohai:Successfully stopped `demo` (label: homebrew.demo)",
+            "ohai:Successfully stopped `demo` (label: homebrew.demo)",
+            "ohai:Successfully started `demo` (label: homebrew.demo)",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn linux_restart_disabled_unit_uses_transient_run_path() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
+    let (mut ctx, reporter) = fixture.context(vec![service_formula("demo", service.clone())]);
+    let unit = fixture
+        .env
+        .home
+        .join(".config/systemd/user/homebrew.demo.service");
+    fs::create_dir_all(unit.parent().expect("parent")).expect("unit dir");
+    fs::write(
+        &unit,
+        services_test_support::render_systemd_unit(&fixture.env, "demo", &service)
+            .expect("rendered unit"),
+    )
+    .expect("unit file");
+    let runner = Arc::new(ScriptRunner::new([
+        Outcome::failure(),
+        Outcome::success(),
+        Outcome::success(),
+        Outcome::failure(),
+        Outcome::success(),
+        Outcome::success(),
+    ]));
+    ctx.commands = runner.clone();
+
+    services::run(&ctx, run_args(ServiceAction::Restart, &["demo"]))
+        .await
+        .expect("transient restart");
+
+    assert_eq!(
+        runner.calls(),
+        [
+            vec!["systemctl", "--user", "is-enabled", "homebrew.demo.service"],
             vec!["systemctl", "--user", "is-active", "homebrew.demo.service"],
             vec!["systemctl", "--user", "stop", "homebrew.demo.service"],
             vec!["systemctl", "--user", "is-active", "homebrew.demo.service"],
@@ -476,6 +605,56 @@ async fn linux_stop_and_restart_use_exact_stateful_argv_and_messages() {
         reporter.take(),
         [
             "ohai:Successfully stopped `demo` (label: homebrew.demo)",
+            "ohai:Successfully ran `demo` (label: homebrew.demo)",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn linux_restart_preserves_enabled_registration() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
+    let (mut ctx, reporter) = fixture.context(vec![service_formula("demo", service.clone())]);
+    let unit = fixture
+        .env
+        .home
+        .join(".config/systemd/user/homebrew.demo.service");
+    fs::create_dir_all(unit.parent().expect("parent")).expect("unit dir");
+    fs::write(
+        &unit,
+        services_test_support::render_systemd_unit(&fixture.env, "demo", &service)
+            .expect("rendered unit"),
+    )
+    .expect("unit file");
+    let runner = Arc::new(ScriptRunner::new([
+        Outcome::success(),
+        Outcome::success(),
+        Outcome::success(),
+        Outcome::success(),
+        Outcome::success(),
+        Outcome::success(),
+    ]));
+    ctx.commands = runner.clone();
+
+    services::run(&ctx, run_args(ServiceAction::Restart, &["demo"]))
+        .await
+        .expect("persistent restart");
+
+    assert_eq!(
+        runner.calls(),
+        [
+            vec!["systemctl", "--user", "is-enabled", "homebrew.demo.service"],
+            vec!["systemctl", "--user", "is-active", "homebrew.demo.service"],
+            vec!["systemctl", "--user", "stop", "homebrew.demo.service"],
+            vec!["systemctl", "--user", "daemon-reload"],
+            vec!["systemctl", "--user", "enable", "homebrew.demo.service"],
+            vec!["systemctl", "--user", "start", "homebrew.demo.service"],
+        ]
+    );
+    assert_eq!(
+        reporter.take(),
+        [
             "ohai:Successfully stopped `demo` (label: homebrew.demo)",
             "ohai:Successfully started `demo` (label: homebrew.demo)",
         ]
@@ -605,6 +784,30 @@ async fn macos_start_stop_restart_and_list_use_exact_launchctl_argv_and_output()
             "print:Name Status File".to_owned(),
             format!("print:demo stopped {plist_path}"),
         ]
+    );
+}
+
+#[tokio::test]
+async fn macos_start_active_only_probes_and_messages() {
+    let fixture = Fixture::new();
+    install(&fixture, "demo");
+    let service = json!({"run": "$HOMEBREW_PREFIX/bin/demo"});
+    let (mut ctx, reporter) = fixture.context(vec![service_formula("demo", service)]);
+    ctx.env.bottle_tag = "arm64_sonoma".parse().expect("macOS tag");
+    let runner = Arc::new(ScriptRunner::new([Outcome::success()]));
+    ctx.commands = runner.clone();
+
+    services::run(&ctx, run_args(ServiceAction::Start, &["demo"]))
+        .await
+        .expect("mac active start");
+
+    assert_eq!(
+        runner.calls(),
+        [vec!["launchctl", "list", "homebrew.mxcl.demo"]]
+    );
+    assert_eq!(
+        reporter.take(),
+        ["print:Service `demo` already started, use zapbrew restart demo to restart."]
     );
 }
 
@@ -1051,6 +1254,7 @@ async fn macos_restart_preserves_transient_registration_mode() {
         Outcome::success(),
         Outcome::success(),
         Outcome::failure(),
+        Outcome::success(),
         Outcome::success(),
         Outcome::success(),
     ]));

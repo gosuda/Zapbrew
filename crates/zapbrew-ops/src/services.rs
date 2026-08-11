@@ -9,7 +9,7 @@ use zapbrew_types::BottleTag;
 
 use crate::platform::{
     LaunchctlAction, SystemctlAction, launchctl, launchctl_start, launchctl_stop, run_checked,
-    systemctl, systemctl_daemon_reload, systemctl_is_active,
+    systemctl, systemctl_daemon_reload, systemctl_is_active, systemctl_is_enabled,
 };
 use crate::state::{self, InstalledState};
 use crate::{Ctx, OpError};
@@ -196,33 +196,39 @@ fn list(ctx: &Ctx) -> Result<(), OpError> {
 fn start(ctx: &Ctx, target: &Target) -> Result<(), OpError> {
     let active = active(ctx, target)?;
     if active {
-        ctx.reporter.print(&format!(
-            "Service `{}` already started, use {} restart {} to restart.",
-            target.name,
-            ctx.reporter.hint_program(),
-            target.name
-        ));
-        return Ok(());
+        match &ctx.env.bottle_tag {
+            BottleTag::Linux { .. } => {
+                let unit = selected_unit(target);
+                if probe(ctx, &systemctl_is_enabled(&unit))? {
+                    ctx.reporter.print(&format!(
+                        "Service `{}` already started, use {} restart {} to restart.",
+                        target.name,
+                        ctx.reporter.hint_program(),
+                        target.name
+                    ));
+                    return Ok(());
+                }
+                write_and_enable_linux_unit(ctx, target)?;
+                started(ctx, target, &service_label(&target.name));
+                return Ok(());
+            }
+            BottleTag::MacOs { .. } => {
+                ctx.reporter.print(&format!(
+                    "Service `{}` already started, use {} restart {} to restart.",
+                    target.name,
+                    ctx.reporter.hint_program(),
+                    target.name
+                ));
+                return Ok(());
+            }
+            BottleTag::All => return Err(unsupported_platform()),
+        }
     }
 
     match &ctx.env.bottle_tag {
         BottleTag::Linux { .. } => {
-            let unit_path = systemd_dir(&ctx.env).join(service_unit(&target.name));
-            write_file(
-                &unit_path,
-                render_systemd_unit(&target.name, &target.config),
-            )?;
-            let unit = if target.config.timed() {
-                let timer_path = systemd_dir(&ctx.env).join(timer_unit(&target.name));
-                write_file(
-                    &timer_path,
-                    render_systemd_timer(&target.name, &target.config)?,
-                )?;
-                timer_unit(&target.name)
-            } else {
-                service_unit(&target.name)
-            };
-            run_checked(ctx.commands.as_ref(), &systemctl_daemon_reload())?;
+            write_and_enable_linux_unit(ctx, target)?;
+            let unit = selected_unit(target);
             run_checked(
                 ctx.commands.as_ref(),
                 &systemctl(SystemctlAction::Start, &unit),
@@ -247,12 +253,28 @@ fn start(ctx: &Ctx, target: &Target) -> Result<(), OpError> {
 }
 
 fn restart(ctx: &Ctx, target: &Target) -> Result<(), OpError> {
-    let transient = if matches!(&ctx.env.bottle_tag, BottleTag::MacOs { .. }) {
+    if matches!(&ctx.env.bottle_tag, BottleTag::Linux { .. }) {
+        let unit = selected_unit(target);
+        let path = systemd_dir(&ctx.env).join(&unit);
+        let transient = path.exists() && !probe(ctx, &systemctl_is_enabled(&unit))?;
+        stop(ctx, target)?;
+        if transient {
+            run_service(ctx, target)?;
+        } else {
+            write_and_enable_linux_unit(ctx, target)?;
+            run_checked(
+                ctx.commands.as_ref(),
+                &systemctl(SystemctlAction::Start, &unit),
+            )?;
+            started(ctx, target, &service_label(&target.name));
+        }
+        return Ok(());
+    }
+
+    let transient = {
         let name = plist_file_name(&target.name);
         !launch_agents_dir(&ctx.env).join(&name).exists()
             && transient_dir(&ctx.env).join(name).exists()
-    } else {
-        false
     };
 
     stop(ctx, target)?;
@@ -272,11 +294,7 @@ fn stop(ctx: &Ctx, target: &Target) -> Result<(), OpError> {
 
     match &ctx.env.bottle_tag {
         BottleTag::Linux { .. } => {
-            let unit = if target.config.timed() {
-                timer_unit(&target.name)
-            } else {
-                service_unit(&target.name)
-            };
+            let unit = selected_unit(target);
             run_checked(
                 ctx.commands.as_ref(),
                 &systemctl(SystemctlAction::Stop, &unit),
@@ -315,16 +333,14 @@ fn run_service(ctx: &Ctx, target: &Target) -> Result<(), OpError> {
                 &unit_path,
                 render_systemd_unit(&target.name, &target.config),
             )?;
-            let unit = if target.config.timed() {
+            let unit = selected_unit(target);
+            if target.config.timed() {
                 let timer_path = systemd_dir(&ctx.env).join(timer_unit(&target.name));
                 write_file(
                     &timer_path,
                     render_systemd_timer(&target.name, &target.config)?,
                 )?;
-                timer_unit(&target.name)
-            } else {
-                service_unit(&target.name)
-            };
+            }
             run_checked(ctx.commands.as_ref(), &systemctl_daemon_reload())?;
             run_checked(
                 ctx.commands.as_ref(),
@@ -492,11 +508,7 @@ fn kill(ctx: &Ctx, target: &Target) -> Result<(), OpError> {
 
     match &ctx.env.bottle_tag {
         BottleTag::Linux { .. } => {
-            let unit = if target.config.timed() {
-                timer_unit(&target.name)
-            } else {
-                service_unit(&target.name)
-            };
+            let unit = selected_unit(target);
             run_checked(
                 ctx.commands.as_ref(),
                 &systemctl(SystemctlAction::Stop, &unit),
@@ -605,11 +617,7 @@ fn cleanup_plist_dir(
 fn active(ctx: &Ctx, target: &Target) -> Result<bool, OpError> {
     match &ctx.env.bottle_tag {
         BottleTag::Linux { .. } => {
-            let unit = if target.config.timed() {
-                timer_unit(&target.name)
-            } else {
-                service_unit(&target.name)
-            };
+            let unit = selected_unit(target);
             probe(ctx, &systemctl_is_active(&unit))
         }
         BottleTag::MacOs { .. } => probe(ctx, &launchctl_list(&plist_label(&target.name))),
@@ -698,6 +706,38 @@ fn service_unit(name: &str) -> String {
 
 fn timer_unit(name: &str) -> String {
     format!("{}.timer", service_label(name))
+}
+
+fn selected_unit(target: &Target) -> String {
+    if target.config.timed() {
+        timer_unit(&target.name)
+    } else {
+        service_unit(&target.name)
+    }
+}
+
+fn write_and_enable_linux_unit(ctx: &Ctx, target: &Target) -> Result<(), OpError> {
+    let unit_path = systemd_dir(&ctx.env).join(service_unit(&target.name));
+    write_file(
+        &unit_path,
+        render_systemd_unit(&target.name, &target.config),
+    )?;
+    let unit = if target.config.timed() {
+        let timer_path = systemd_dir(&ctx.env).join(timer_unit(&target.name));
+        write_file(
+            &timer_path,
+            render_systemd_timer(&target.name, &target.config)?,
+        )?;
+        timer_unit(&target.name)
+    } else {
+        service_unit(&target.name)
+    };
+    run_checked(ctx.commands.as_ref(), &systemctl_daemon_reload())?;
+    run_checked(
+        ctx.commands.as_ref(),
+        &systemctl(SystemctlAction::Enable, &unit),
+    )?;
+    Ok(())
 }
 
 fn plist_label(name: &str) -> String {

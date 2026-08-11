@@ -6,6 +6,7 @@ use crate::OpError;
 /// A supported systemd user-service operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemctlAction {
+    Enable,
     Start,
     Stop,
     Restart,
@@ -14,6 +15,7 @@ pub enum SystemctlAction {
 impl SystemctlAction {
     const fn as_str(self) -> &'static str {
         match self {
+            Self::Enable => "enable",
             Self::Start => "start",
             Self::Stop => "stop",
             Self::Restart => "restart",
@@ -105,6 +107,14 @@ pub fn systemctl_is_active(unit: &str) -> CommandSpec {
     CommandSpec::new("systemctl")
         .arg("--user")
         .arg("is-active")
+        .arg(unit)
+}
+
+/// Probe whether a systemd user unit is enabled.
+pub fn systemctl_is_enabled(unit: &str) -> CommandSpec {
+    CommandSpec::new("systemctl")
+        .arg("--user")
+        .arg("is-enabled")
         .arg(unit)
 }
 

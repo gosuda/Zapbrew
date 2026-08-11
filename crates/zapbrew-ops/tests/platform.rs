@@ -9,7 +9,8 @@ use camino::{Utf8Path, Utf8PathBuf};
 use zapbrew_ops::OpError;
 use zapbrew_ops::platform::{
     LaunchctlAction, SystemctlAction, ditto, git_clone, git_pull, hdiutil_attach, hdiutil_detach,
-    installer, launchctl, pkgutil_forget, remove_path, run_checked, systemctl, unzip,
+    installer, launchctl, pkgutil_forget, remove_path, run_checked, systemctl, systemctl_is_active,
+    systemctl_is_enabled, unzip,
 };
 use zapbrew_prefix::{CommandOutput, CommandRunner, CommandSpec};
 
@@ -70,6 +71,36 @@ fn service_specs_include_platform_scoping() {
             "systemctl",
             "--user",
             "restart",
+            "homebrew.mxcl.redis.service",
+        ]
+    );
+    assert_eq!(
+        argv(&systemctl(
+            SystemctlAction::Enable,
+            "homebrew.mxcl.redis.service",
+        )),
+        [
+            "systemctl",
+            "--user",
+            "enable",
+            "homebrew.mxcl.redis.service",
+        ]
+    );
+    assert_eq!(
+        argv(&systemctl_is_active("homebrew.mxcl.redis.service")),
+        [
+            "systemctl",
+            "--user",
+            "is-active",
+            "homebrew.mxcl.redis.service",
+        ]
+    );
+    assert_eq!(
+        argv(&systemctl_is_enabled("homebrew.mxcl.redis.service")),
+        [
+            "systemctl",
+            "--user",
+            "is-enabled",
             "homebrew.mxcl.redis.service",
         ]
     );
