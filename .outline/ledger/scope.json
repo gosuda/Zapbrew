@@ -4839,7 +4839,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/install_steps.rs:303-370",
+        "zapbrew": "crates/zapbrew-ops/src/install_steps.rs:303-370; crates/zapbrew-ops/src/transaction.rs:440-512",
         "homebrew": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/formula_installer.rb#L987-L1084; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/formula_installer.rb#L1391-L1428"
       }
     },
@@ -4857,7 +4857,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/install_steps.rs:303-370",
+        "zapbrew": "crates/zapbrew-ops/src/install_steps.rs:303-370; crates/zapbrew-ops/src/transaction.rs:440-512",
         "homebrew": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/formula_installer.rb#L987-L1084; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/formula_installer.rb#L1391-L1428"
       }
     },
@@ -4874,7 +4874,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/postinstall.rs:28-76",
+        "zapbrew": "crates/zapbrew-ops/src/postinstall.rs:28-76; crates/zapbrew-ops/src/install_steps.rs:272-299,326-370",
         "homebrew": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/install.rb#L524-L531; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/formula_installer.rb#L987-L1084"
       }
     },
@@ -4892,7 +4892,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/postinstall.rs:28-76",
+        "zapbrew": "crates/zapbrew-ops/src/postinstall.rs:28-76; crates/zapbrew-ops/src/install_steps.rs:272-299,326-370",
         "homebrew": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/install.rb#L524-L531; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/formula_installer.rb#L987-L1084"
       }
     },
@@ -4909,7 +4909,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/install_steps.rs:345-370",
+        "zapbrew": "crates/zapbrew-ops/src/install_steps.rs:345-370; crates/zapbrew-ops/src/transaction.rs:440-512,646-656",
         "homebrew": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/install.rb#L524-L531; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cleanup.rb#L333-L339"
       }
     },
@@ -4927,7 +4927,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/install_steps.rs:345-370",
+        "zapbrew": "crates/zapbrew-ops/src/install_steps.rs:345-370; crates/zapbrew-ops/src/transaction.rs:440-512,646-656",
         "homebrew": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/install.rb#L524-L531; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cleanup.rb#L333-L339"
       }
     },
@@ -4944,7 +4944,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/postinstall.rs:28-76",
+        "zapbrew": "crates/zapbrew-ops/src/postinstall.rs:28-76; crates/zapbrew-ops/src/install_steps.rs:303-370,2901-2906",
         "homebrew": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/formula_installer.rb#L987-L1026; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/formula_installer.rb#L1391-L1428"
       }
     },
@@ -4962,7 +4962,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/postinstall.rs:28-76",
+        "zapbrew": "crates/zapbrew-ops/src/postinstall.rs:28-76; crates/zapbrew-ops/src/install_steps.rs:303-370,2901-2906",
         "homebrew": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/formula_installer.rb#L987-L1026; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/formula_installer.rb#L1391-L1428"
       }
     },
@@ -4979,7 +4979,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/install_steps.rs:326-360",
+        "zapbrew": "crates/zapbrew-ops/src/install_steps.rs:326-360; crates/zapbrew-ops/src/transaction.rs:515-595",
         "homebrew": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/formula_installer.rb#L609-L619; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/install.rb#L711-L740; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/formula_installer.rb#L1391-L1428"
       }
     },
@@ -4997,7 +4997,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/install_steps.rs:326-360",
+        "zapbrew": "crates/zapbrew-ops/src/install_steps.rs:326-360; crates/zapbrew-ops/src/transaction.rs:515-595",
         "homebrew": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/formula_installer.rb#L609-L619; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/install.rb#L711-L740; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/formula_installer.rb#L1391-L1428"
       }
     },

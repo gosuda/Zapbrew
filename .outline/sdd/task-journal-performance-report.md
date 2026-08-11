@@ -143,3 +143,87 @@ Performance records now use one required classification: `fixed`, `at-floor`, or
 The verifier rejects performance-floor and hot-reclassification approvals for a `fixed` unit. Full workload and classification records already enter the tranche-review closure; no closure compatibility path was added.
 
 The verifier self-test runs 88 checks. The new checks reject direct samples, floors, experiments, scaling, stale signed deltas and ratios, a 5% or larger disabled-stage saving, identical baseline/probe builds, misaligned workload receipts, invalid review evidence, false grade claims, and performance approvals attached to a fixed unit. The self-test fixture clears live evidence and event state after copying the ledger so each mutation starts from the canonical unresolved baseline. The live ledger is verified separately.
+
+## Linux journal behavior proof
+
+Fixture SHA-256 values:
+
+- `crates/zapbrew-ops/tests/w4_install_journal.rs`: `a9746d8da580870dc2509739d60bfe940fed80f1d50309634dd6b83efde6278b`
+- `crates/zapbrew-ops/tests/transaction.rs`: `b7dd0f6b0c0d2ce585ca6229b5509005bdb952d1c5976964edb5b4fdc354f307`
+- `crates/zapbrew-ops/tests/install_steps.rs`: `fa5a206ab94b8874f7970faf6609b6534f306e9727e3f334904c982e37ecb15c`
+- `crates/zapbrew-ops/tests/postinstall.rs`: `e0c03f1c0f69df896a4d2bf3c3f93b49e6c77095351258c2edf5c0cc594d3eef`
+
+Canonical execution receipts:
+
+```json
+{"command":"cargo test -p zapbrew-ops --test w4_install_journal -- --ignored --nocapture","observed_install_loop_seconds":6.017213496,"platform":"linux","result":"2 passed; 0 failed","tests":{"w4_install_journal_release_workload":"passed","w4_install_journal_restores_overwrite_after_later_failure":"passed"}}
+```
+
+SHA-256: `bafb6f268ccf4ec5cb3058a1665e02e44f3491e15479214554567e8dacb43939`
+
+```json
+{"command":"cargo test -p zapbrew-ops --test transaction step_root_cleanup_failure_keeps_new_keg_active -- --exact","platform":"linux","result":"1 passed; 0 failed","test":"step_root_cleanup_failure_keeps_new_keg_active"}
+```
+
+SHA-256: `df4dc7332c744011b3db49886a338888d5436e771c9d62bb1d048e8a0e86e5c1`
+
+```json
+{"command":"cargo test -p zapbrew-ops --test install_steps","platform":"linux","result":"15 passed; 0 failed","tests":15}
+```
+
+SHA-256: `1dac96ca5aee23bdd4f17e117a1bfc11534fba74f670db53bd167b5ef063b255`
+
+```json
+{"command":"cargo test -p zapbrew-ops --test postinstall","platform":"linux","result":"11 passed; 0 failed","tests":11}
+```
+
+SHA-256: `a1bbbaad110aa80adc3c9ef55f877b072a453de08f699c73bb936720a2d18718`
+
+Mutation receipts:
+
+```json
+{"mutant":"insert journal.rollback(&ctx.env) on successful formula before take_cleanup_root","mutant_result":"failed: first target was original, expected first-new","restored_result":"passed","source_restored":true,"test":"postinstall_failure_does_not_roll_back_prior_formula"}
+```
+
+SHA-256: `03f6c4016ae068db4bae528c6f94e1019da0550358cafb81c408419e61ffedd7`
+
+```json
+{"mutant":"change postinstall cleanup guard from remove.is_err() to remove.is_ok()","mutant_result":"failed: postinstall returned success, expected CleanupIncomplete","restored_result":"passed","source_restored":true,"test":"postinstall_cleanup_failure_reports_selected_keg_and_journal_root"}
+```
+
+SHA-256: `b3fd8d9468aa5a1cc5e09381e19434e81f996442a6c53891f8e60dfccc66533a`
+
+```json
+{"mutant":"suppress inverse replay error collection in StepJournal::rollback","mutant_result":"failed: returned CommandFailed, expected RollbackIncomplete","restored_result":"passed","source_restored":true,"test":"inverse_failure_merges_into_outer_rollback_incomplete"}
+```
+
+SHA-256: `579930430fb0b61ce4d45885005c425c52e93766ed0c6dd4319453d9c67b6e09`
+
+```json
+{"mutant":"skip deferred maintenance command execution","mutant_result":"failed: install returned success, expected maintenance CommandFailed","restored_result":"passed","source_restored":true,"test":"run_and_maintenance_effects_survive_rollback"}
+```
+
+SHA-256: `d1eed015aaa12d3ee84a3d9168ce840c39b61e962241a5a90ca98028c3111be9`
+
+```json
+{"mutant":"make StepJournal::take_cleanup_root return None without taking the root","mutant_result":"failed: successful postinstall left .zapbrew-step-journal-*","restored_result":"passed","source_restored":true,"test":"postinstall_cleans_up_journal_after_successful_overwrite"}
+```
+
+SHA-256: `9e41f119315e5c03671a139f54a5cb121f2ea21128b2bd9989ffe81459c9ed3f`
+
+```json
+{"mutant":"replay StepJournal inverses in insertion order instead of reverse order","mutant_result":"failed: restored first bytes, expected original","restored_result":"passed","source_restored":true,"test":"rollback_replays_multiple_inverses_in_reverse_order"}
+```
+
+SHA-256: `108b22ef5dd747066bcefb6c4f3405f82c6cba622ab6ee67e5bbc02dcb714bb7`
+
+Observed contracts:
+
+- Success keeps the installed keg and public links, writes replacement bytes, and removes the journal root.
+- A later structured-step failure restores sentinel bytes and removes the failed keg and journal root.
+- Multiple writes to one path replay their inverses in reverse order and restore the original bytes.
+- An inverse replay failure returns one `RollbackIncomplete` that keeps the original command error and names the surviving path.
+- A post-commit journal-root cleanup failure returns `CleanupIncomplete`, keeps the new keg and links active, and reports the surviving journal root.
+- Postinstall success removes its journal root. Execution failure restores only the selected keg's prior bytes. Cleanup failure names the selected keg and surviving root.
+- Generic `Run` and deferred maintenance effects remain outside structured file compensation.
+- A second formula's failure does not roll back the first formula's successful effects, and neither rack retains a journal root.

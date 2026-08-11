@@ -2034,12 +2034,14 @@
     },
     {
       "cell": "ops.journal.commit-success.linux",
-      "achieved_evidence": [],
-      "failure_evidence": null,
-      "perf_refs": [
-        "ops.journal.commit-success.fixed.linux"
+      "achieved_evidence": [
+        {"id":"ops-journal-commit-success-unit-linux","kind":"unit-fixture-io","platform":"linux","anchor":"crates/zapbrew-ops/tests/postinstall.rs#postinstall_cleans_up_journal_after_successful_overwrite","digest":"e0c03f1c0f69df896a4d2bf3c3f93b49e6c77095351258c2edf5c0cc594d3eef"},
+        {"id":"ops-journal-commit-success-process-linux","kind":"process-integration","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"bafb6f268ccf4ec5cb3058a1665e02e44f3491e15479214554567e8dacb43939"},
+        {"id":"ops-journal-commit-success-mutation-linux","kind":"unit-fixture-io","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"9e41f119315e5c03671a139f54a5cb121f2ea21128b2bd9989ffe81459c9ed3f"}
       ],
-      "deviation": null,
+      "failure_evidence": {"status":"proved","evidence_refs":["ops-journal-commit-success-mutation-linux"]},
+      "perf_refs": ["ops.journal.commit-success.fixed.linux"],
+      "deviation": "DEV-ops-journal-commit-success-linux",
       "finding": "none"
     },
     {
@@ -2052,10 +2054,17 @@
     },
     {
       "cell": "ops.journal.per-formula-isolation.linux",
-      "achieved_evidence": [],
-      "failure_evidence": null,
+      "achieved_evidence": [
+        {"id":"ops-journal-per-formula-unit-linux","kind":"unit-fixture-io","platform":"linux","anchor":"crates/zapbrew-ops/tests/postinstall.rs#postinstall_failure_does_not_roll_back_prior_formula","digest":"e0c03f1c0f69df896a4d2bf3c3f93b49e6c77095351258c2edf5c0cc594d3eef"},
+        {"id":"ops-journal-per-formula-command-unit-linux","kind":"unit-fixture-io","platform":"linux","anchor":"crates/zapbrew-ops/tests/install_steps.rs#run_and_maintenance_effects_survive_rollback","digest":"fa5a206ab94b8874f7970faf6609b6534f306e9727e3f334904c982e37ecb15c"},
+        {"id":"ops-journal-per-formula-process-linux","kind":"process-integration","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"a1bbbaad110aa80adc3c9ef55f877b072a453de08f699c73bb936720a2d18718"},
+        {"id":"ops-journal-per-formula-command-process-linux","kind":"process-integration","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"1dac96ca5aee23bdd4f17e117a1bfc11534fba74f670db53bd167b5ef063b255"},
+        {"id":"ops-journal-per-formula-mutation-linux","kind":"unit-fixture-io","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"03f6c4016ae068db4bae528c6f94e1019da0550358cafb81c408419e61ffedd7"},
+        {"id":"ops-journal-per-formula-maintenance-mutation-linux","kind":"unit-fixture-io","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"d1eed015aaa12d3ee84a3d9168ce840c39b61e962241a5a90ca98028c3111be9"}
+      ],
+      "failure_evidence": {"status":"proved","evidence_refs":["ops-journal-per-formula-mutation-linux","ops-journal-per-formula-command-process-linux","ops-journal-per-formula-maintenance-mutation-linux"]},
       "perf_refs": [],
-      "deviation": null,
+      "deviation": "DEV-ops-journal-per-formula-isolation-linux",
       "finding": "none"
     },
     {
@@ -2068,10 +2077,13 @@
     },
     {
       "cell": "ops.journal.postcommit-cleanup-failure.linux",
-      "achieved_evidence": [],
-      "failure_evidence": null,
+      "achieved_evidence": [
+        {"id":"ops-journal-postcommit-cleanup-unit-linux","kind":"unit-fixture-io","platform":"linux","anchor":"crates/zapbrew-ops/tests/transaction.rs#step_root_cleanup_failure_keeps_new_keg_active","digest":"b7dd0f6b0c0d2ce585ca6229b5509005bdb952d1c5976964edb5b4fdc354f307"},
+        {"id":"ops-journal-postcommit-cleanup-process-linux","kind":"process-integration","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"df4dc7332c744011b3db49886a338888d5436e771c9d62bb1d048e8a0e86e5c1"}
+      ],
+      "failure_evidence": {"status":"proved","evidence_refs":["ops-journal-postcommit-cleanup-process-linux"]},
       "perf_refs": [],
-      "deviation": null,
+      "deviation": "DEV-ops-journal-postcommit-cleanup-failure-linux",
       "finding": "none"
     },
     {
@@ -2084,10 +2096,16 @@
     },
     {
       "cell": "ops.journal.postinstall-lifecycle.linux",
-      "achieved_evidence": [],
-      "failure_evidence": null,
+      "achieved_evidence": [
+        {"id":"ops-journal-postinstall-success-unit-linux","kind":"unit-fixture-io","platform":"linux","anchor":"crates/zapbrew-ops/tests/postinstall.rs#postinstall_cleans_up_journal_after_successful_overwrite","digest":"e0c03f1c0f69df896a4d2bf3c3f93b49e6c77095351258c2edf5c0cc594d3eef"},
+        {"id":"ops-journal-postinstall-rollback-unit-linux","kind":"unit-fixture-io","platform":"linux","anchor":"crates/zapbrew-ops/tests/postinstall.rs#postinstall_rollback_restores_original_on_failure","digest":"e0c03f1c0f69df896a4d2bf3c3f93b49e6c77095351258c2edf5c0cc594d3eef"},
+        {"id":"ops-journal-postinstall-cleanup-unit-linux","kind":"unit-fixture-io","platform":"linux","anchor":"crates/zapbrew-ops/tests/postinstall.rs#postinstall_cleanup_failure_reports_selected_keg_and_journal_root","digest":"e0c03f1c0f69df896a4d2bf3c3f93b49e6c77095351258c2edf5c0cc594d3eef"},
+        {"id":"ops-journal-postinstall-lifecycle-process-linux","kind":"process-integration","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"a1bbbaad110aa80adc3c9ef55f877b072a453de08f699c73bb936720a2d18718"},
+        {"id":"ops-journal-postinstall-cleanup-mutation-linux","kind":"unit-fixture-io","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"b3fd8d9468aa5a1cc5e09381e19434e81f996442a6c53891f8e60dfccc66533a"}
+      ],
+      "failure_evidence": {"status":"proved","evidence_refs":["ops-journal-postinstall-lifecycle-process-linux","ops-journal-postinstall-cleanup-mutation-linux"]},
       "perf_refs": [],
-      "deviation": null,
+      "deviation": "DEV-ops-journal-postinstall-lifecycle-linux",
       "finding": "none"
     },
     {
@@ -2100,10 +2118,18 @@
     },
     {
       "cell": "ops.journal.precommit-failure.linux",
-      "achieved_evidence": [],
-      "failure_evidence": null,
+      "achieved_evidence": [
+        {"id":"ops-journal-precommit-unit-linux","kind":"unit-fixture-io","platform":"linux","anchor":"crates/zapbrew-ops/tests/postinstall.rs#postinstall_rollback_restores_original_on_failure","digest":"e0c03f1c0f69df896a4d2bf3c3f93b49e6c77095351258c2edf5c0cc594d3eef"},
+        {"id":"ops-journal-precommit-inverse-unit-linux","kind":"unit-fixture-io","platform":"linux","anchor":"crates/zapbrew-ops/tests/install_steps.rs#inverse_failure_merges_into_outer_rollback_incomplete","digest":"fa5a206ab94b8874f7970faf6609b6534f306e9727e3f334904c982e37ecb15c"},
+        {"id":"ops-journal-precommit-reverse-order-unit-linux","kind":"unit-fixture-io","platform":"linux","anchor":"crates/zapbrew-ops/tests/install_steps.rs#rollback_replays_multiple_inverses_in_reverse_order","digest":"fa5a206ab94b8874f7970faf6609b6534f306e9727e3f334904c982e37ecb15c"},
+        {"id":"ops-journal-precommit-process-linux","kind":"process-integration","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"bafb6f268ccf4ec5cb3058a1665e02e44f3491e15479214554567e8dacb43939"},
+        {"id":"ops-journal-precommit-inverse-process-linux","kind":"process-integration","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"1dac96ca5aee23bdd4f17e117a1bfc11534fba74f670db53bd167b5ef063b255"},
+        {"id":"ops-journal-precommit-inverse-mutation-linux","kind":"unit-fixture-io","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"579930430fb0b61ce4d45885005c425c52e93766ed0c6dd4319453d9c67b6e09"},
+        {"id":"ops-journal-precommit-reverse-order-mutation-linux","kind":"unit-fixture-io","platform":"linux","anchor":".outline/sdd/task-journal-performance-report.md#Linux journal behavior proof","digest":"108b22ef5dd747066bcefb6c4f3405f82c6cba622ab6ee67e5bbc02dcb714bb7"}
+      ],
+      "failure_evidence": {"status":"proved","evidence_refs":["ops-journal-precommit-process-linux","ops-journal-precommit-inverse-process-linux","ops-journal-precommit-inverse-mutation-linux","ops-journal-precommit-reverse-order-mutation-linux"]},
       "perf_refs": [],
-      "deviation": null,
+      "deviation": "DEV-ops-journal-precommit-failure-linux",
       "finding": "none"
     },
     {
@@ -3571,7 +3597,83 @@
       "finding": "none"
     }
   ],
-  "deviations": [],
+  "deviations": [
+    {
+      "id": "DEV-ops-journal-commit-success-linux",
+      "cell": "ops.journal.commit-success.linux",
+      "behavior_difference": "Zapbrew exposes an explicit per-formula step-journal terminal: success transfers and removes its backup root before reporting completion; Homebrew does not expose this journal ownership contract.",
+      "safety_risk": "A stale root can retain overwritten bytes; clearing state before ownership transfer can lose the cleanup target.",
+      "threat_model": "An interrupted or failed cleanup after structured file mutation, including hostile or inconsistent prefix entries.",
+      "invariant": "A successful install keeps the committed keg and links active, removes the step-journal root, and leaves the journal empty.",
+      "brew_anchor": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/formula_installer.rb#L987-L1084; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/formula_installer.rb#L1391-L1428",
+      "zapbrew_anchor": "crates/zapbrew-ops/src/install_steps.rs:303-370; crates/zapbrew-ops/src/transaction.rs:440-512",
+      "reproduction": "Run the W4 success workload and inspect replacement bytes, keg and link state, and absence of `.zapbrew-step-journal-*`.",
+      "alternatives_rejected": "A borrowed cleanup path plus a later clear was rejected because it split one terminal transition; no journal was rejected because overwrite rollback would lose prior bytes.",
+      "evidence_refs": ["ops-journal-commit-success-unit-linux","ops-journal-commit-success-process-linux","ops-journal-commit-success-mutation-linux"],
+      "proof_digest": "51f1d5d866fa5ecf049068038cece540eabbdc3b8d7394067c370a08b3a9829f",
+      "created_at": "2026-08-11T09:13:33Z"
+    },
+    {
+      "id": "DEV-ops-journal-per-formula-isolation-linux",
+      "cell": "ops.journal.per-formula-isolation.linux",
+      "behavior_difference": "Zapbrew isolates structured-step compensation per formula while leaving external Run and maintenance effects outside compensation; Homebrew does not expose an equivalent journal boundary.",
+      "safety_risk": "Cross-formula inverse replay can undo a formula that already completed successfully or report the wrong residue owner.",
+      "threat_model": "A later selected formula fails after an earlier selected formula completed; external commands can have effects that are not reversible file mutations.",
+      "invariant": "No journal records or replays another formula’s file-system effects; the first formula remains committed when the second rolls back.",
+      "brew_anchor": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/install.rb#L524-L531; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/formula_installer.rb#L987-L1084",
+      "zapbrew_anchor": "crates/zapbrew-ops/src/postinstall.rs:28-76; crates/zapbrew-ops/src/install_steps.rs:272-299,326-370",
+      "reproduction": "Run `postinstall_failure_does_not_roll_back_prior_formula` and `run_and_maintenance_effects_survive_rollback`; the first formula stays committed when the second rolls back, and generic Run plus deferred maintenance markers survive structured compensation.",
+      "alternatives_rejected": "A shared journal was rejected because it couples independent formula terminals; pretending external commands are reversible was rejected because their effects have no reliable inverse.",
+      "evidence_refs": ["ops-journal-per-formula-unit-linux","ops-journal-per-formula-command-unit-linux","ops-journal-per-formula-process-linux","ops-journal-per-formula-command-process-linux","ops-journal-per-formula-mutation-linux","ops-journal-per-formula-maintenance-mutation-linux"],
+      "proof_digest": "0c3ccae7a59295e2a5ba5e16e9ef19f3f3a2723a46d2e41ed3dd4910e87278c6",
+      "created_at": "2026-08-11T09:13:33Z"
+    },
+    {
+      "id": "DEV-ops-journal-postcommit-cleanup-failure-linux",
+      "cell": "ops.journal.postcommit-cleanup-failure.linux",
+      "behavior_difference": "Zapbrew treats step-journal-root removal after commit as typed cleanup and preserves the committed installation; Homebrew does not expose this post-commit journal cleanup contract.",
+      "safety_risk": "Rolling back after commit can replace the working keg with stale state; ignoring residue can leak backup data.",
+      "threat_model": "Journal-root removal fails after the keg and links have crossed the commit boundary.",
+      "invariant": "CleanupIncomplete names the committed keg and surviving root; the new keg and links remain active and no pre-commit rollback runs.",
+      "brew_anchor": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/install.rb#L524-L531; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cleanup.rb#L333-L339",
+      "zapbrew_anchor": "crates/zapbrew-ops/src/install_steps.rs:345-370; crates/zapbrew-ops/src/transaction.rs:440-512,646-656",
+      "reproduction": "Arm the one-shot cleanup failure and run `step_root_cleanup_failure_keeps_new_keg_active`; inspect the typed error, active links, new bytes, and one surviving root.",
+      "alternatives_rejected": "Rollback-on-cleanup-error was rejected because commit is irreversible at this boundary; silent cleanup failure was rejected because it hides retained backup data.",
+      "evidence_refs": ["ops-journal-postcommit-cleanup-unit-linux","ops-journal-postcommit-cleanup-process-linux"],
+      "proof_digest": "9e23bf9ec9a68c06f6ec9140b7b8677c63db8de261eb0c8233ff027ac0acda1c",
+      "created_at": "2026-08-11T09:13:33Z"
+    },
+    {
+      "id": "DEV-ops-journal-postinstall-lifecycle-linux",
+      "cell": "ops.journal.postinstall-lifecycle.linux",
+      "behavior_difference": "Zapbrew gives each selected postinstall formula an explicit journal and typed rollback or cleanup residue attribution; Homebrew does not expose this lifecycle as a public error contract.",
+      "safety_risk": "A shared or uncleared journal can attribute residue to the wrong keg or undo a prior formula.",
+      "threat_model": "Multiple selected formulae execute structured postinstall steps, with success, execution failure, or cleanup failure on any selected keg.",
+      "invariant": "Each selected formula owns one terminal journal; success removes its root, failure restores only that keg, and residue names that keg.",
+      "brew_anchor": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/formula_installer.rb#L987-L1026; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/formula_installer.rb#L1391-L1428",
+      "zapbrew_anchor": "crates/zapbrew-ops/src/postinstall.rs:28-76; crates/zapbrew-ops/src/install_steps.rs:303-370,2901-2906",
+      "reproduction": "Run the postinstall integration suite; observe successful cleanup, selected-keg rollback, and `CleanupIncomplete` naming the selected keg and surviving journal-root symlink.",
+      "alternatives_rejected": "One shared journal was rejected because formula effects can cross-contaminate; untyped cleanup was rejected because it loses keg attribution.",
+      "evidence_refs": ["ops-journal-postinstall-success-unit-linux","ops-journal-postinstall-rollback-unit-linux","ops-journal-postinstall-cleanup-unit-linux","ops-journal-postinstall-lifecycle-process-linux","ops-journal-postinstall-cleanup-mutation-linux"],
+      "proof_digest": "4aefc2857cd484931799ba8d9624d04067bbc8a30f01fa728e1080024cbe4aea",
+      "created_at": "2026-08-11T09:13:33Z"
+    },
+    {
+      "id": "DEV-ops-journal-precommit-failure-linux",
+      "cell": "ops.journal.precommit-failure.linux",
+      "behavior_difference": "Zapbrew replays explicit structured-step inverses before the outer transaction rollback and reports surviving paths; Homebrew does not expose this typed inverse-replay contract.",
+      "safety_risk": "Wrong replay order can restore stale bytes over newer state or leave a failed keg and links active.",
+      "threat_model": "A structured step fails after one or more confined file-system mutations; rollback operations can also fail.",
+      "invariant": "Every inverse is attempted in reverse order before outer rollback; clean rollback returns the original error, and residue becomes one RollbackIncomplete.",
+      "brew_anchor": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/formula_installer.rb#L609-L619; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/install.rb#L711-L740; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/formula_installer.rb#L1391-L1428",
+      "zapbrew_anchor": "crates/zapbrew-ops/src/install_steps.rs:326-360; crates/zapbrew-ops/src/transaction.rs:515-595",
+      "reproduction": "Run the W4 rollback workload, `rollback_replays_multiple_inverses_in_reverse_order`, and `inverse_failure_merges_into_outer_rollback_incomplete`; inspect restored original bytes after reverse replay and the merged original command error plus surviving path after inverse failure.",
+      "alternatives_rejected": "Best-effort deletion without inverses was rejected because it cannot restore overwritten bytes; independent error returns were rejected because they can hide rollback residue.",
+      "evidence_refs": ["ops-journal-precommit-unit-linux","ops-journal-precommit-inverse-unit-linux","ops-journal-precommit-reverse-order-unit-linux","ops-journal-precommit-process-linux","ops-journal-precommit-inverse-process-linux","ops-journal-precommit-inverse-mutation-linux","ops-journal-precommit-reverse-order-mutation-linux"],
+      "proof_digest": "42f30a3fce9c1cfd10c2168c6a64b730cb93c9ec7fe11e6ff9aab5c3cbcb6a06",
+      "created_at": "2026-08-11T09:13:33Z"
+    }
+  ],
   "workloads": [
     {
       "id": "w2-journal-disabled-probe-linux-x86_64",

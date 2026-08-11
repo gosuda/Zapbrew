@@ -1,5 +1,8 @@
 use std::collections::HashMap;
 use std::io;
+use std::os::unix::fs::{PermissionsExt, symlink};
+use std::os::unix::process::ExitStatusExt;
+use std::process::ExitStatus;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
@@ -7,7 +10,7 @@ use camino::Utf8PathBuf;
 use tempfile::TempDir;
 use zapbrew_api::{CaskCatalog, Catalog};
 use zapbrew_ops::postinstall::{self, Args};
-use zapbrew_ops::{Ctx, Reporter};
+use zapbrew_ops::{Ctx, OpError, Reporter};
 use zapbrew_prefix::{CommandOutput, CommandRunner, CommandSpec, Env, EnvDetectInput, Keg, Tab};
 use zapbrew_types::{FormulaName, PkgVersion};
 
@@ -15,6 +18,32 @@ struct PanicRunner;
 impl CommandRunner for PanicRunner {
     fn run(&self, spec: &CommandSpec) -> Result<CommandOutput, io::Error> {
         panic!("host command must not run: {:?}", spec.program())
+    }
+}
+
+struct CleanupSabotageRunner {
+    rack: Utf8PathBuf,
+    outside: Utf8PathBuf,
+}
+
+impl CommandRunner for CleanupSabotageRunner {
+    fn run(&self, _: &CommandSpec) -> Result<CommandOutput, io::Error> {
+        let root = std::fs::read_dir(self.rack.as_std_path())?
+            .filter_map(Result::ok)
+            .find_map(|entry| {
+                let name = entry.file_name();
+                name.to_string_lossy()
+                    .starts_with(".zapbrew-step-journal")
+                    .then(|| Utf8PathBuf::from_path_buf(entry.path()).expect("utf8 journal root"))
+            })
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "journal root"))?;
+        std::fs::remove_dir_all(&root)?;
+        symlink(&self.outside, &root)?;
+        Ok(CommandOutput::new(
+            ExitStatus::from_raw(0),
+            Vec::new(),
+            Vec::new(),
+        ))
     }
 }
 
@@ -566,4 +595,84 @@ async fn postinstall_failure_does_not_roll_back_prior_formula() {
             "{formula} journal must not survive"
         );
     }
+}
+
+#[tokio::test]
+async fn postinstall_cleanup_failure_reports_selected_keg_and_journal_root() {
+    let temp = TempDir::new().expect("temp");
+    let env = scratch_env(&temp);
+    let keg = make_keg(&env, "demo", "1.0");
+    let existing = keg.path().join("share/existing");
+    std::fs::create_dir_all(existing.parent().expect("share parent")).expect("share");
+    std::fs::write(&existing, b"original").expect("original");
+    let command = keg.path().join("bin/sabotage");
+    std::fs::create_dir_all(command.parent().expect("bin parent")).expect("bin");
+    std::fs::write(&command, b"sabotage").expect("command");
+    std::fs::set_permissions(&command, std::fs::Permissions::from_mode(0o755))
+        .expect("command mode");
+    let outside = env.prefix.join("cleanup-sabotage");
+    std::fs::create_dir_all(&outside).expect("outside");
+    let payload = br#"[{
+        "name": "demo",
+        "full_name": "demo",
+        "versions": {"stable": "1.0", "bottle": false},
+        "post_install_defined": true,
+        "post_install_steps": [
+            {
+                "type": "write",
+                "path": {"base": "keg", "path": "share/existing"},
+                "content": "new",
+                "overwrite": true
+            },
+            {
+                "type": "run",
+                "command": {"base": "keg", "path": "bin/sabotage"}
+            }
+        ]
+    }]"#;
+    let catalog = Arc::new(Catalog::from_payload(payload, &env.bottle_tag).expect("catalog"));
+    let casks = Arc::new(CaskCatalog::from_payload(b"[]", &env.bottle_tag).expect("casks"));
+    let ctx = Ctx {
+        env: env.clone(),
+        http: reqwest::Client::new(),
+        catalog,
+        casks,
+        commands: Arc::new(CleanupSabotageRunner {
+            rack: env.cellar.join("demo"),
+            outside: outside.clone(),
+        }),
+        reporter: Arc::new(RecordingReporter::default()),
+    };
+
+    let error = postinstall::run(
+        &ctx,
+        Args {
+            names: vec!["demo".to_owned()],
+        },
+    )
+    .await
+    .expect_err("journal cleanup must fail");
+    let (error_keg, leftovers) = match error {
+        OpError::CleanupIncomplete { keg, leftovers } => (keg, leftovers),
+        other => panic!("unexpected error: {other:?}"),
+    };
+
+    assert_eq!(error_keg, keg.path());
+    assert_eq!(leftovers.len(), 1);
+    assert!(leftovers[0].is_symlink());
+    assert!(
+        leftovers[0]
+            .file_name()
+            .is_some_and(|name| name.starts_with(".zapbrew-step-journal"))
+    );
+    assert_eq!(
+        Utf8PathBuf::from_path_buf(std::fs::read_link(&leftovers[0]).expect("journal symlink"))
+            .expect("utf8 journal target"),
+        outside
+    );
+    assert!(outside.is_dir());
+    assert_eq!(
+        std::fs::read_to_string(existing).expect("replacement"),
+        "new"
+    );
 }

@@ -122,6 +122,70 @@ impl CommandRunner for PanicRunner {
         panic!("host command must not run: {:?}", spec.program())
     }
 }
+struct MarkerRunner {
+    markers: Utf8PathBuf,
+    calls: Mutex<Vec<String>>,
+    fail: String,
+}
+
+impl MarkerRunner {
+    fn new(markers: impl Into<Utf8PathBuf>, fail: impl Into<String>) -> Self {
+        Self {
+            markers: markers.into(),
+            calls: Mutex::new(Vec::new()),
+            fail: fail.into(),
+        }
+    }
+
+    fn calls(&self) -> Vec<String> {
+        self.calls.lock().expect("calls lock").clone()
+    }
+
+    fn marker(&self, name: &str) -> Utf8PathBuf {
+        self.markers.join(name)
+    }
+}
+
+impl CommandRunner for MarkerRunner {
+    fn run(&self, spec: &CommandSpec) -> Result<CommandOutput, io::Error> {
+        let program = std::path::Path::new(spec.program())
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        std::fs::create_dir_all(&self.markers)?;
+        std::fs::write(self.markers.join(&program), program.as_bytes())?;
+        self.calls.lock().expect("calls lock").push(program.clone());
+        let (code, stderr) = if program == self.fail {
+            (1, b"injected maintenance failure".to_vec())
+        } else {
+            (0, Vec::new())
+        };
+        let raw = if code == 0 { 0 } else { code << 8 };
+        Ok(CommandOutput::new(
+            ExitStatus::from_raw(raw),
+            Vec::new(),
+            stderr,
+        ))
+    }
+}
+
+struct RollbackSabotageRunner {
+    parent: Utf8PathBuf,
+    moved: Utf8PathBuf,
+}
+
+impl CommandRunner for RollbackSabotageRunner {
+    fn run(&self, _: &CommandSpec) -> Result<CommandOutput, io::Error> {
+        std::fs::rename(&self.parent, &self.moved)?;
+        symlink(&self.moved, &self.parent)?;
+        Ok(CommandOutput::new(
+            ExitStatus::from_raw(1 << 8),
+            Vec::new(),
+            b"injected command failure".to_vec(),
+        ))
+    }
+}
 
 fn env(temp: &TempDir) -> Env {
     let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).expect("utf8 temp");
@@ -781,5 +845,147 @@ async fn rollback_removes_prefix_links_into_external_cellar() {
 
     assert!(matches!(error, OpError::CommandFailed { .. }));
     assert!(!environment.prefix.join("share/tree-links").exists());
+    assert!(!environment.cellar.join("root").exists());
+}
+
+#[tokio::test]
+async fn run_and_maintenance_effects_survive_rollback() {
+    let server = MockServer::start().await;
+    let bytes = bottle("root", &[("bin/generic", b"generic")]);
+    mount(&server, &bytes, 1).await;
+    let digest = sha(&bytes);
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    let markers = Utf8PathBuf::from_path_buf(temp.path().join("markers")).expect("utf8 markers");
+    std::fs::create_dir_all(&markers).expect("markers dir");
+    let runner = Arc::new(MarkerRunner::new(&markers, "gdk-pixbuf-query-loaders"));
+    let steps = json!([
+        {"type":"write", "path":path_spec("var", "root/should-roll-back"), "content":"journalled", "overwrite":true},
+        {"type":"run", "command":path_spec("bin", "generic"), "args":[]},
+        {"type":"gdk_pixbuf_query_loaders"}
+    ]);
+    let (ctx, _) = context(
+        environment.clone(),
+        vec![
+            formula("root", &format!("{}/root", server.uri()), &digest, steps),
+            helper_formula("gdk-pixbuf"),
+        ],
+        runner.clone(),
+    );
+
+    let error = install::run(&ctx, args())
+        .await
+        .expect_err("maintenance failure");
+
+    assert!(
+        matches!(error, OpError::CommandFailed { .. }),
+        "unexpected error: {error:?}"
+    );
+    assert!(
+        !environment
+            .prefix
+            .join("var/root/should-roll-back")
+            .exists()
+    );
+    assert!(!environment.cellar.join("root/1.0").exists());
+    assert!(runner.marker("generic").is_file());
+    assert!(runner.marker("gdk-pixbuf-query-loaders").is_file());
+    assert_eq!(
+        runner.calls(),
+        vec!["generic".to_owned(), "gdk-pixbuf-query-loaders".to_owned()]
+    );
+}
+
+#[tokio::test]
+async fn inverse_failure_merges_into_outer_rollback_incomplete() {
+    let server = MockServer::start().await;
+    let bytes = bottle("root", &[("bin/generic", b"generic")]);
+    mount(&server, &bytes, 1).await;
+    let digest = sha(&bytes);
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    let parent = environment.prefix.join("var/root");
+    let target = parent.join("existing");
+    std::fs::create_dir_all(&parent).expect("target parent");
+    std::fs::write(&target, b"original").expect("original");
+    let moved =
+        Utf8PathBuf::from_path_buf(temp.path().join("moved-root")).expect("utf8 moved root");
+    let runner = Arc::new(RollbackSabotageRunner {
+        parent: parent.clone(),
+        moved: moved.clone(),
+    });
+    let steps = json!([
+        {"type":"write", "path":path_spec("var", "root/existing"), "content":"new", "overwrite":true},
+        {"type":"run", "command":path_spec("bin", "generic")}
+    ]);
+    let (ctx, _) = context(
+        environment.clone(),
+        vec![formula(
+            "root",
+            &format!("{}/root", server.uri()),
+            &digest,
+            steps,
+        )],
+        runner,
+    );
+
+    let error = install::run(&ctx, args())
+        .await
+        .expect_err("rollback must report the confined inverse failure");
+    let (original, leftovers) = match error {
+        OpError::RollbackIncomplete {
+            original,
+            leftovers,
+        } => (original, leftovers),
+        other => panic!("unexpected error: {other:?}"),
+    };
+
+    assert!(matches!(*original, OpError::CommandFailed { .. }));
+    assert!(leftovers.contains(target.as_str()), "{leftovers}");
+    assert_eq!(
+        std::fs::read(moved.join("existing")).expect("new bytes"),
+        b"new"
+    );
+    assert_eq!(
+        std::fs::read_link(&parent).expect("sabotaged parent"),
+        moved
+    );
+    assert!(!environment.cellar.join("root/1.0").exists());
+}
+
+#[tokio::test]
+async fn rollback_replays_multiple_inverses_in_reverse_order() {
+    let server = MockServer::start().await;
+    let bytes = bottle("root", &[("bin/generic", b"generic")]);
+    mount(&server, &bytes, 1).await;
+    let digest = sha(&bytes);
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    let target = environment.prefix.join("var/root/existing");
+    std::fs::create_dir_all(target.parent().expect("target parent")).expect("target parent");
+    std::fs::write(&target, b"original").expect("original");
+    let steps = json!([
+        {"type":"write", "path":path_spec("var", "root/existing"), "content":"first", "overwrite":true},
+        {"type":"write", "path":path_spec("var", "root/existing"), "content":"second", "overwrite":true},
+        {"type":"run", "command":path_spec("bin", "generic")}
+    ]);
+    let (ctx, _) = context(
+        environment.clone(),
+        vec![formula(
+            "root",
+            &format!("{}/root", server.uri()),
+            &digest,
+            steps,
+        )],
+        Arc::new(RecordingRunner::failing()),
+    );
+
+    let error = install::run(&ctx, args())
+        .await
+        .expect_err("command failure");
+
+    assert!(matches!(error, OpError::CommandFailed { .. }));
+    assert_eq!(std::fs::read(&target).expect("restored bytes"), b"original");
+    assert!(!environment.cellar.join("root/1.0").exists());
     assert!(!environment.cellar.join("root").exists());
 }
