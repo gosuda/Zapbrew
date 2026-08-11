@@ -10,13 +10,19 @@ use tokio::io::AsyncWriteExt;
 use zapbrew_prefix::Env;
 use zapbrew_types::{BottleFile, Checksum, FormulaName, PkgVersion};
 
-use crate::cache::{CachePaths, artifact_cache_paths, cache_paths, checksum_file, publish};
+use crate::cache::{
+    CachePaths, artifact_cache_paths, bottle_basename, cache_paths, checksum_file, publish,
+};
 use crate::error::NetError;
 use crate::progress::download_progress;
 use crate::types::{CachedArtifact, CachedBottle, DownloadRequest};
 
 /// Maximum download attempts (brew `retryable_download` default).
 const MAX_ATTEMPTS: u32 = 5;
+
+/// Default bottle root URL mirrored by the API; unset `HOMEBREW_BOTTLE_DOMAIN`
+/// keeps the original `bottle.url` verbatim.
+const BOTTLE_DEFAULT_DOMAIN: &str = "https://ghcr.io/v2/homebrew/core";
 
 /// Fetch one cask-style artifact into `$HOMEBREW_CACHE`.
 ///
@@ -128,11 +134,15 @@ pub async fn fetch_bottle(
     pkg_version: &PkgVersion,
     rebuild: u32,
 ) -> Result<CachedBottle, NetError> {
-    let paths = cache_paths(env, name, bottle, pkg_version, rebuild)?;
+    let resolved_url = resolve_bottle_url(env, name, bottle, pkg_version, rebuild)?;
+    let fallback_url = (resolved_url != bottle.url).then(|| bottle.url.clone());
+    let mut effective_bottle = bottle.clone();
+    effective_bottle.url = resolved_url.clone();
+    let paths = cache_paths(env, name, &effective_bottle, pkg_version, rebuild)?;
 
     if paths.final_path.is_file()
         && let Ok(actual) = checksum_file(&paths.final_path)
-        && actual == bottle.sha256
+        && actual == effective_bottle.sha256
     {
         return Ok(CachedBottle {
             path: paths.final_path,
@@ -143,52 +153,61 @@ pub async fn fetch_bottle(
 
     // Crash window: a fully written `.incomplete` that never reached `publish`
     // would otherwise Range past EOF (416) forever. Publish it if checksum matches.
-    if let Some(cached) = try_publish_complete(bottle, &paths)? {
+    if let Some(cached) = try_publish_complete(&effective_bottle, &paths)? {
         return Ok(cached);
     }
 
     let mut last_error: Option<NetError> = None;
-
-    for attempt in 0..MAX_ATTEMPTS {
-        match attempt_download(env, http, bottle, &paths).await {
-            Ok(()) => match checksum_file(&paths.incomplete) {
-                Ok(actual) if actual == bottle.sha256 => {
-                    publish(&paths)?;
-                    return Ok(CachedBottle {
-                        path: paths.final_path.clone(),
-                        alias: paths.alias.clone(),
-                        reused: false,
-                    });
-                }
-                Ok(actual) => {
-                    let _ = std::fs::remove_file(paths.incomplete.as_std_path());
-                    last_error = Some(NetError::ChecksumMismatch {
-                        expected: bottle.sha256.clone(),
-                        actual,
-                        path: paths.incomplete.clone(),
-                    });
-                }
+    for (origin, url) in [Some(resolved_url), fallback_url]
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        if origin > 0 {
+            let _ = std::fs::remove_file(paths.incomplete.as_std_path());
+        }
+        effective_bottle.url = url;
+        for attempt in 0..MAX_ATTEMPTS {
+            match attempt_download(env, http, &effective_bottle, &paths).await {
+                Ok(()) => match checksum_file(&paths.incomplete) {
+                    Ok(actual) if actual == effective_bottle.sha256 => {
+                        publish(&paths)?;
+                        return Ok(CachedBottle {
+                            path: paths.final_path.clone(),
+                            alias: paths.alias.clone(),
+                            reused: false,
+                        });
+                    }
+                    Ok(actual) => {
+                        let _ = std::fs::remove_file(paths.incomplete.as_std_path());
+                        last_error = Some(NetError::ChecksumMismatch {
+                            expected: effective_bottle.sha256.clone(),
+                            actual,
+                            path: paths.incomplete.clone(),
+                        });
+                    }
+                    Err(err) => {
+                        let _ = std::fs::remove_file(paths.incomplete.as_std_path());
+                        last_error = Some(err);
+                    }
+                },
                 Err(err) => {
-                    let _ = std::fs::remove_file(paths.incomplete.as_std_path());
+                    // Network / HTTP / IO / invalid-response: keep `.incomplete` for resume.
                     last_error = Some(err);
                 }
-            },
-            Err(err) => {
-                // Network / HTTP / IO / invalid-response: keep `.incomplete` for resume.
-                last_error = Some(err);
             }
-        }
 
-        if attempt + 1 < MAX_ATTEMPTS {
-            let secs = retry_delay_secs(attempt);
-            if secs > 0 {
-                tokio::time::sleep(Duration::from_secs(secs)).await;
+            if attempt + 1 < MAX_ATTEMPTS {
+                let secs = retry_delay_secs(attempt);
+                if secs > 0 {
+                    tokio::time::sleep(Duration::from_secs(secs)).await;
+                }
             }
         }
     }
 
     Err(last_error.unwrap_or_else(|| NetError::InvalidResponse {
-        url: bottle.url.clone(),
+        url: effective_bottle.url,
         reason: "download failed without a recorded error".to_owned(),
     }))
 }
@@ -353,10 +372,13 @@ async fn attempt_download(
     let url = bottle.url.as_str();
     let existing = incomplete_len(&paths.incomplete)?;
 
-    let mut request = http
-        .get(url)
-        .header(AUTHORIZATION, format!("Bearer {}", bearer_token(env)))
-        .header(ACCEPT, "application/octet-stream");
+    let mut request = http.get(url).header(ACCEPT, "application/octet-stream");
+
+    if is_ghcr_artifact_url(url)
+        && let Some(auth) = ghcr_auth_header(env)
+    {
+        request = request.header(AUTHORIZATION, auth);
+    }
 
     if existing > 0 {
         request = request.header(RANGE, format!("bytes={existing}-"));
@@ -468,18 +490,108 @@ fn try_publish_complete(
     }
 }
 
-fn bearer_token(env: &Env) -> &str {
-    env.docker_registry_token
-        .as_deref()
-        .or(env.github_packages_token.as_deref())
-        .unwrap_or("QQ==")
-}
-
 /// Internal retry delay policy: production uses `2^attempt` seconds; test builds
 /// of this crate are zero-delay. Integration tests (`tests/`) compile the library
 /// without `cfg(test)` and use `start_paused = true` so production sleeps auto-advance.
 fn retry_delay_secs(attempt: u32) -> u64 {
     RetryDelay::current().secs(attempt)
+}
+
+fn ghcr_auth_header(env: &Env) -> Option<String> {
+    if let Some(token) = env.docker_registry_token.as_deref() {
+        return Some(format!("Bearer {token}"));
+    }
+
+    if let Some(token) = env.docker_registry_basic_auth_token.as_deref() {
+        if token == "none" {
+            return None;
+        }
+        return Some(format!("Basic {token}"));
+    }
+
+    Some("Bearer QQ==".to_owned())
+}
+
+fn is_ghcr_artifact_url(url: &str) -> bool {
+    let Some(path) = url.strip_prefix("https://ghcr.io/v2/") else {
+        return false;
+    };
+    path.split('/')
+        .filter(|segment| !segment.is_empty())
+        .count()
+        >= 3
+}
+
+fn resolve_bottle_url(
+    env: &Env,
+    name: &FormulaName,
+    bottle: &BottleFile,
+    pkg_version: &PkgVersion,
+    rebuild: u32,
+) -> Result<String, NetError> {
+    if env.bottle_domain == BOTTLE_DEFAULT_DOMAIN {
+        return Ok(bottle.url.clone());
+    }
+
+    let root = normalize_bottle_domain(&env.bottle_domain);
+    if is_ghcr_root(&root) {
+        let image_name = github_image_name(name.name());
+        Ok(format!(
+            "{root}/{image_name}/blobs/sha256:{}",
+            bottle.sha256
+        ))
+    } else {
+        let filename = bottle_basename(name, pkg_version, bottle.tag, rebuild)?;
+        let encoded = percent_encode_path_segment(&filename);
+        Ok(format!("{root}/{encoded}"))
+    }
+}
+
+fn normalize_bottle_domain(domain: &str) -> String {
+    let domain = domain.trim_end_matches('/');
+    let Some(rest) = domain.strip_prefix("docker://ghcr.io/") else {
+        return domain.to_owned();
+    };
+    let mut segments = rest.split('/');
+    match (segments.next(), segments.next(), segments.next()) {
+        (Some(org), Some(repo), None) if !org.is_empty() && !repo.is_empty() => {
+            format!("https://ghcr.io/v2/{org}/{repo}")
+        }
+        _ => domain.to_owned(),
+    }
+}
+
+/// Exact HTTPS GHCR OCI roots only.
+fn is_ghcr_root(root: &str) -> bool {
+    let root = root.trim_end_matches('/');
+    let Some(path) = root.strip_prefix("https://ghcr.io/v2/") else {
+        return false;
+    };
+    if root.contains('?') || root.contains('#') {
+        return false;
+    }
+    let mut segments = path.split('/');
+    matches!(
+        (segments.next(), segments.next(), segments.next()),
+        (Some(org), Some(repo), None) if !org.is_empty() && !repo.is_empty()
+    )
+}
+
+fn github_image_name(name: &str) -> String {
+    name.replace('@', "/").replace('+', "x")
+}
+
+fn percent_encode_path_segment(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push('%');
+            out.push_str(&format!("{b:02X}"));
+        }
+    }
+    out
 }
 
 #[derive(Clone, Copy)]
@@ -518,4 +630,178 @@ fn parse_content_range_start(value: &str) -> Option<u64> {
     let rest = value.trim().strip_prefix("bytes ")?;
     let (start, _) = rest.split_once('-')?;
     start.trim().parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::str::FromStr;
+
+    use camino::Utf8PathBuf;
+    use tempfile::TempDir;
+    use zapbrew_prefix::{CommandOutput, CommandRunner, CommandSpec, Env, EnvDetectInput};
+    use zapbrew_types::{BottleFile, BottleTag, Checksum, FormulaName, PkgVersion};
+
+    struct PanicRunner;
+    impl CommandRunner for PanicRunner {
+        fn run(&self, _spec: &CommandSpec) -> Result<CommandOutput, std::io::Error> {
+            panic!("command runner should not be invoked for linux detect_from");
+        }
+    }
+
+    fn test_env() -> (TempDir, Env) {
+        let dir = TempDir::new().expect("tempdir");
+        let home = Utf8PathBuf::from_path_buf(dir.path().to_path_buf()).expect("utf8");
+        let cache = home.join("cache");
+        let mut vars = HashMap::new();
+        vars.insert("HOMEBREW_CACHE".to_owned(), cache.as_str().to_owned());
+        vars.insert(
+            "HOMEBREW_PREFIX".to_owned(),
+            home.join("prefix").as_str().to_owned(),
+        );
+        let input = EnvDetectInput {
+            os: "linux".to_owned(),
+            arch: "x86_64".to_owned(),
+            home,
+            xdg_cache_home: None,
+            vars,
+            available_parallelism: 2,
+        };
+        let env = Env::detect_from(&input, &PanicRunner).expect("env");
+        (dir, env)
+    }
+
+    fn bottle(url: &str, sha: &str) -> BottleFile {
+        BottleFile {
+            tag: BottleTag::from_str("x86_64_linux").expect("tag"),
+            cellar: "any".into(),
+            url: url.to_owned(),
+            sha256: Checksum::from_str(sha).expect("sha"),
+        }
+    }
+
+    fn name() -> FormulaName {
+        FormulaName::from_str("wget").expect("name")
+    }
+
+    fn version() -> PkgVersion {
+        PkgVersion::from_str("1.25.0").expect("version")
+    }
+
+    fn env_with_bottle_domain(bottle_domain: &str) -> (TempDir, Env) {
+        let (dir, mut env) = test_env();
+        env.bottle_domain = bottle_domain.to_owned();
+        (dir, env)
+    }
+
+    #[test]
+    fn default_bottle_domain_preserves_original_url() {
+        let (_dir, env) = env_with_bottle_domain(BOTTLE_DEFAULT_DOMAIN);
+        let bottle = bottle("https://example.test/original", "a".repeat(64).as_str());
+        let resolved = resolve_bottle_url(&env, &name(), &bottle, &version(), 0).expect("resolve");
+        assert_eq!(resolved, "https://example.test/original");
+    }
+
+    #[test]
+    fn https_ghcr_root_rewrites_to_oci_blob_url() {
+        let (_dir, env) = env_with_bottle_domain("https://ghcr.io/v2/foo/bar");
+        let sha = "a".repeat(64);
+        let bottle = bottle("https://ignored.test/", &sha);
+        let resolved = resolve_bottle_url(&env, &name(), &bottle, &version(), 0).expect("resolve");
+        assert_eq!(
+            resolved,
+            format!("https://ghcr.io/v2/foo/bar/wget/blobs/sha256:{sha}")
+        );
+    }
+
+    #[test]
+    fn docker_ghcr_scheme_normalizes_to_https_v2() {
+        let (_dir, env) = env_with_bottle_domain("docker://ghcr.io/foo/bar");
+        let sha = "a".repeat(64);
+        let bottle = bottle("https://ignored.test/", &sha);
+        let resolved = resolve_bottle_url(&env, &name(), &bottle, &version(), 0).expect("resolve");
+        assert_eq!(
+            resolved,
+            format!("https://ghcr.io/v2/foo/bar/wget/blobs/sha256:{sha}")
+        );
+    }
+
+    #[test]
+    fn http_ghcr_root_is_flat_mirror_not_oci() {
+        let (_dir, env) = env_with_bottle_domain("http://ghcr.io/v2/foo/bar");
+        let sha = "a".repeat(64);
+        let bottle = bottle("https://ignored.test/", &sha);
+        let resolved = resolve_bottle_url(&env, &name(), &bottle, &version(), 0).expect("resolve");
+        assert_eq!(
+            resolved,
+            "http://ghcr.io/v2/foo/bar/wget--1.25.0.x86_64_linux.bottle.tar.gz"
+        );
+    }
+
+    #[test]
+    fn custom_v2_mirror_is_flat_not_oci() {
+        let (_dir, env) = env_with_bottle_domain("https://mirror.example/v2/foo/bar");
+        let sha = "a".repeat(64);
+        let bottle = bottle("https://ignored.test/", &sha);
+        let resolved = resolve_bottle_url(&env, &name(), &bottle, &version(), 0).expect("resolve");
+        assert_eq!(
+            resolved,
+            "https://mirror.example/v2/foo/bar/wget--1.25.0.x86_64_linux.bottle.tar.gz"
+        );
+    }
+
+    #[test]
+    fn is_ghcr_root_rejects_non_ghcr_and_non_https() {
+        assert!(is_ghcr_root("https://ghcr.io/v2/homebrew/core"));
+        assert!(is_ghcr_root("https://ghcr.io/v2/foo/bar"));
+        assert!(!is_ghcr_root("https://ghcr.io/v2/foo/bar/baz"));
+
+        assert!(!is_ghcr_root("http://ghcr.io/v2/homebrew/core"));
+        assert!(!is_ghcr_root("https://mirror.example/v2/homebrew/core"));
+        assert!(!is_ghcr_root("https://ghcr.io/v2/homebrew"));
+        assert!(!is_ghcr_root("https://ghcr.io/v2/"));
+        assert!(!is_ghcr_root("https://ghcr.io/v2/homebrew//core"));
+        assert!(!is_ghcr_root("https://ghcr.io/v2/homebrew/core?ref=main"));
+        assert!(!is_ghcr_root(
+            "https://evil.com/https://ghcr.io/v2/homebrew/core"
+        ));
+    }
+
+    fn auth_env(docker: Option<&str>, basic: Option<&str>) -> (TempDir, Env) {
+        let (dir, mut env) = test_env();
+        env.docker_registry_token = docker.map(|s| s.to_owned());
+        env.docker_registry_basic_auth_token = basic.map(|s| s.to_owned());
+        (dir, env)
+    }
+
+    #[test]
+    fn auth_default_is_bearer_qq() {
+        let (_dir, env) = auth_env(None, None);
+        assert_eq!(ghcr_auth_header(&env), Some("Bearer QQ==".to_owned()));
+    }
+
+    #[test]
+    fn auth_docker_token_precedes_basic() {
+        let (_dir, env) = auth_env(Some("docker-t"), Some("basic-t"));
+        assert_eq!(ghcr_auth_header(&env), Some("Bearer docker-t".to_owned()));
+    }
+
+    #[test]
+    fn auth_basic_token_used_when_no_docker() {
+        let (_dir, env) = auth_env(None, Some("basic-t"));
+        assert_eq!(ghcr_auth_header(&env), Some("Basic basic-t".to_owned()));
+    }
+
+    #[test]
+    fn auth_basic_none_omits_header() {
+        let (_dir, env) = auth_env(None, Some("none"));
+        assert_eq!(ghcr_auth_header(&env), None);
+    }
+
+    #[test]
+    fn auth_docker_none_is_a_bearer_token() {
+        let (_dir, env) = auth_env(Some("none"), Some("basic-t"));
+        assert_eq!(ghcr_auth_header(&env), Some("Bearer none".to_owned()));
+    }
 }

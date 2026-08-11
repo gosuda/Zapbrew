@@ -330,6 +330,10 @@ fn scalar_list_and_bool_vars() {
     input
         .vars
         .insert("HOMEBREW_DOCKER_REGISTRY_TOKEN".into(), "reg-token".into());
+    input.vars.insert(
+        "HOMEBREW_DOCKER_REGISTRY_BASIC_AUTH_TOKEN".into(),
+        "basic-token".into(),
+    );
     input.vars.insert("HOMEBREW_NO_EMOJI".into(), "1".into());
     input
         .vars
@@ -374,6 +378,10 @@ fn scalar_list_and_bool_vars() {
     assert_eq!(env.download_concurrency, 5);
     assert_eq!(env.github_packages_token.as_deref(), Some("gh-token"));
     assert_eq!(env.docker_registry_token.as_deref(), Some("reg-token"));
+    assert_eq!(
+        env.docker_registry_basic_auth_token.as_deref(),
+        Some("basic-token")
+    );
     assert!(env.no_emoji);
     assert_eq!(env.install_badge, "OK");
     assert!(env.no_env_hints);

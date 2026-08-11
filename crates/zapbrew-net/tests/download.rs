@@ -121,7 +121,6 @@ async fn happy_path_writes_final_and_alias() {
     let url = blob_url(&server, digest);
     Mock::given(method("GET"))
         .and(path(blob_path(digest)))
-        .and(header("authorization", "Bearer QQ=="))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO))
         .mount(&server)
         .await;
@@ -165,65 +164,6 @@ async fn reuse_cached_valid_final_skips_network() {
     assert!(second.reused);
     assert_eq!(second.path, first.path);
     assert_eq!(second.alias, first.alias);
-}
-
-#[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn auth_default_qq_when_no_tokens() {
-    let server = MockServer::start().await;
-    let digest = "authqq";
-    let url = blob_url(&server, digest);
-    Mock::given(method("GET"))
-        .and(path(blob_path(digest)))
-        .and(header("authorization", "Bearer QQ=="))
-        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO))
-        .expect(1)
-        .mount(&server)
-        .await;
-
-    let (_dir, env) = test_env();
-    assert!(env.docker_registry_token.is_none());
-    assert!(env.github_packages_token.is_none());
-    let bottle = bottle(&url, SHA_HELLO);
-    let _ = assert_ok_cached(fetch_bottle(&env, &http(), &name(), &bottle, &version(), 0).await);
-}
-
-#[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn auth_docker_precedes_github() {
-    let server = MockServer::start().await;
-    let digest = "authdocker";
-    let url = blob_url(&server, digest);
-    Mock::given(method("GET"))
-        .and(path(blob_path(digest)))
-        .and(header("authorization", "Bearer docker-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO))
-        .expect(1)
-        .mount(&server)
-        .await;
-
-    let (_dir, mut env) = test_env();
-    env.docker_registry_token = Some("docker-token".to_owned());
-    env.github_packages_token = Some("github-token".to_owned());
-    let bottle = bottle(&url, SHA_HELLO);
-    let _ = assert_ok_cached(fetch_bottle(&env, &http(), &name(), &bottle, &version(), 0).await);
-}
-
-#[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn auth_github_when_no_docker() {
-    let server = MockServer::start().await;
-    let digest = "authgithub";
-    let url = blob_url(&server, digest);
-    Mock::given(method("GET"))
-        .and(path(blob_path(digest)))
-        .and(header("authorization", "Bearer github-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO))
-        .expect(1)
-        .mount(&server)
-        .await;
-
-    let (_dir, mut env) = test_env();
-    env.github_packages_token = Some("github-token".to_owned());
-    let bottle = bottle(&url, SHA_HELLO);
-    let _ = assert_ok_cached(fetch_bottle(&env, &http(), &name(), &bottle, &version(), 0).await);
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]
@@ -541,4 +481,141 @@ async fn fetch_artifact_reuses_valid_final() {
         .expect("second fetch");
     assert!(second.reused);
     assert_eq!(first.path, second.path);
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn default_bottle_domain_keeps_original_url() {
+    let server = MockServer::start().await;
+    let digest = "defaultdomain";
+    let url = blob_url(&server, digest);
+    let (_dir, env) = test_env();
+    assert_eq!(env.bottle_domain, "https://ghcr.io/v2/homebrew/core");
+    Mock::given(method("GET"))
+        .and(path(blob_path(digest)))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO.to_vec()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let bottle = bottle(&url, SHA_HELLO);
+    let cached =
+        assert_ok_cached(fetch_bottle(&env, &http(), &name(), &bottle, &version(), 0).await);
+    assert!(!cached.reused);
+    let requests = server.received_requests().await.expect("recorded");
+    assert_eq!(requests.len(), 1);
+    assert!(!requests[0].headers.contains_key("authorization"));
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn custom_bottle_domain_v2_mirror_is_flat_no_auth() {
+    let server = MockServer::start().await;
+    let (_dir, mut env) = test_env();
+    env.bottle_domain = format!("{}/v2/foo/bar", server.uri());
+    let expected_path = "/v2/foo/bar/wget--1.25.0.x86_64_linux.bottle.tar.gz";
+    Mock::given(method("GET"))
+        .and(path(expected_path))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO.to_vec()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let bottle = bottle(
+        &format!(
+            "{}/v2/homebrew/core/wget/blobs/sha256:{SHA_HELLO}",
+            server.uri()
+        ),
+        SHA_HELLO,
+    );
+    let cached =
+        assert_ok_cached(fetch_bottle(&env, &http(), &name(), &bottle, &version(), 0).await);
+    assert!(!cached.reused);
+
+    let requests = server.received_requests().await.expect("recorded");
+    assert_eq!(requests.len(), 1);
+    assert!(!requests[0].headers.contains_key("authorization"));
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn custom_bottle_domain_flat_builds_filename_url() {
+    let server = MockServer::start().await;
+    let (_dir, mut env) = test_env();
+    env.bottle_domain = format!("{}/bottles", server.uri());
+    let expected_path = "/bottles/wget--1.25.0.x86_64_linux.bottle.tar.gz";
+    Mock::given(method("GET"))
+        .and(path(expected_path))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO.to_vec()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let bottle = bottle(
+        &format!("{}/v2/homebrew/core/wget/blobs/sha256:unused", server.uri()),
+        SHA_HELLO,
+    );
+    let cached =
+        assert_ok_cached(fetch_bottle(&env, &http(), &name(), &bottle, &version(), 0).await);
+    assert!(!cached.reused);
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn flat_bottle_mirror_sends_no_auth() {
+    let server = MockServer::start().await;
+    let (_dir, mut env) = test_env();
+    env.bottle_domain = format!("{}/bottles", server.uri());
+    let expected_path = "/bottles/wget--1.25.0.x86_64_linux.bottle.tar.gz";
+    Mock::given(method("GET"))
+        .and(path(expected_path))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO.to_vec()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let bottle = bottle(
+        &format!("{}/v2/homebrew/core/wget/blobs/sha256:unused", server.uri()),
+        SHA_HELLO,
+    );
+    let cached =
+        assert_ok_cached(fetch_bottle(&env, &http(), &name(), &bottle, &version(), 0).await);
+    assert!(!cached.reused);
+
+    let requests = server.received_requests().await.expect("recorded");
+    assert_eq!(requests.len(), 1);
+    assert!(!requests[0].headers.contains_key("authorization"));
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn unavailable_custom_mirror_falls_back_to_catalog_url() {
+    let mirror = MockServer::start().await;
+    let catalog = MockServer::start().await;
+    let digest = "fallback";
+    Mock::given(method("GET"))
+        .and(path(blob_path(digest)))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO))
+        .expect(1)
+        .mount(&catalog)
+        .await;
+
+    let (_dir, mut env) = test_env();
+    let bottle = bottle(&blob_url(&catalog, digest), SHA_HELLO);
+    let seeded =
+        assert_ok_cached(fetch_bottle(&env, &http(), &name(), &bottle, &version(), 0).await);
+    let incomplete = Utf8PathBuf::from(format!("{}.incomplete", seeded.path));
+    std::fs::remove_file(seeded.path.as_std_path()).expect("remove seeded final");
+    let _ = std::fs::remove_file(seeded.alias.as_std_path());
+    std::fs::write(incomplete.as_std_path(), BODY_PART1).expect("seed partial");
+
+    catalog.reset().await;
+    Mock::given(method("GET"))
+        .and(path(blob_path(digest)))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO))
+        .expect(1)
+        .mount(&catalog)
+        .await;
+    env.bottle_domain = format!("{}/bottles", mirror.uri());
+
+    let cached =
+        assert_ok_cached(fetch_bottle(&env, &http(), &name(), &bottle, &version(), 0).await);
+    assert!(!cached.reused);
+
+    let mirror_requests = mirror.received_requests().await.expect("mirror requests");
+    assert_eq!(mirror_requests.len(), 5);
+    let catalog_requests = catalog.received_requests().await.expect("catalog requests");
+    assert_eq!(catalog_requests.len(), 1);
+    assert!(!catalog_requests[0].headers.contains_key("range"));
 }
