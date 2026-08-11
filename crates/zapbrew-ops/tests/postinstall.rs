@@ -473,3 +473,97 @@ async fn postinstall_rollback_restores_original_on_failure() {
         "unexpected error: {msg}"
     );
 }
+
+#[tokio::test]
+async fn postinstall_failure_does_not_roll_back_prior_formula() {
+    let temp = TempDir::new().expect("temp");
+    let env = scratch_env(&temp);
+    let first = make_keg(&env, "first", "1.0");
+    let second = make_keg(&env, "second", "1.0");
+    let first_target = first.path().join("share/existing");
+    let second_target = second.path().join("share/existing");
+    for target in [&first_target, &second_target] {
+        std::fs::create_dir_all(target.parent().expect("share parent")).expect("share");
+        std::fs::write(target, b"original").expect("original");
+    }
+    let payload = br#"[
+        {
+            "name": "first",
+            "full_name": "first",
+            "versions": {"stable": "1.0", "bottle": false},
+            "post_install_defined": true,
+            "post_install_steps": [{
+                "type": "write",
+                "path": {"base": "keg", "path": "share/existing"},
+                "content": "first-new",
+                "overwrite": true
+            }]
+        },
+        {
+            "name": "second",
+            "full_name": "second",
+            "versions": {"stable": "1.0", "bottle": false},
+            "post_install_defined": true,
+            "post_install_steps": [
+                {
+                    "type": "write",
+                    "path": {"base": "keg", "path": "share/existing"},
+                    "content": "second-new",
+                    "overwrite": true
+                },
+                {
+                    "type": "mkdir",
+                    "path": {"base": "keg", "path": "share/missing_parent/child"}
+                }
+            ]
+        }
+    ]"#;
+    let catalog = Arc::new(Catalog::from_payload(payload, &env.bottle_tag).expect("catalog"));
+    let casks = Arc::new(CaskCatalog::from_payload(b"[]", &env.bottle_tag).expect("casks"));
+    let ctx = Ctx {
+        env: env.clone(),
+        http: reqwest::Client::new(),
+        catalog,
+        casks,
+        commands: Arc::new(PanicRunner),
+        reporter: Arc::new(RecordingReporter::default()),
+    };
+
+    let error = postinstall::run(
+        &ctx,
+        Args {
+            names: vec!["first".to_owned(), "second".to_owned()],
+        },
+    )
+    .await
+    .expect_err("second formula must fail");
+    let message = error.to_string();
+    assert!(
+        message.contains("create install-step directory"),
+        "{message}"
+    );
+    assert!(
+        message.contains("second/1.0/share/missing_parent/child"),
+        "{message}"
+    );
+
+    assert_eq!(
+        std::fs::read_to_string(&first_target).expect("read first"),
+        "first-new"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&second_target).expect("read second"),
+        "original"
+    );
+    for formula in ["first", "second"] {
+        let entries =
+            std::fs::read_dir(env.cellar.join(formula).as_std_path()).expect("read formula rack");
+        assert!(
+            entries.flatten().all(|entry| !entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".zapbrew-step-journal")),
+            "{formula} journal must not survive"
+        );
+    }
+}
