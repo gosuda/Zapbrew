@@ -6,6 +6,7 @@ use crate::OpError;
 /// A supported systemd user-service operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemctlAction {
+    Disable,
     Enable,
     Start,
     Stop,
@@ -15,6 +16,7 @@ pub enum SystemctlAction {
 impl SystemctlAction {
     const fn as_str(self) -> &'static str {
         match self {
+            Self::Disable => "disable",
             Self::Enable => "enable",
             Self::Start => "start",
             Self::Stop => "stop",
@@ -116,6 +118,127 @@ pub fn systemctl_is_enabled(unit: &str) -> CommandSpec {
         .arg("--user")
         .arg("is-enabled")
         .arg(unit)
+}
+
+/// Observed activity of a systemd user unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemdActivity {
+    Active,
+    Inactive,
+}
+
+/// Observed enablement of a systemd user unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemdEnablement {
+    Absent,
+    Enabled,
+    Disabled,
+}
+
+/// Observed registration and process state of a launchd label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchdState {
+    Unloaded,
+    LoadedInactive,
+    Running,
+}
+
+/// Query systemd activity without conflating manager failures with inactivity.
+pub fn query_systemd_activity(
+    runner: &dyn CommandRunner,
+    unit: &str,
+) -> Result<SystemdActivity, OpError> {
+    let spec = systemctl_is_active(unit);
+    let output = run_query(runner, &spec)?;
+    let state = String::from_utf8_lossy(output.stdout()).trim().to_owned();
+    match (output.status().code(), state.as_str()) {
+        (Some(0), "active") => Ok(SystemdActivity::Active),
+        (Some(3), "inactive" | "failed") => Ok(SystemdActivity::Inactive),
+        _ => Err(query_failed(&spec, &output)),
+    }
+}
+
+/// Query systemd enablement without conflating manager failures with disabled units.
+pub fn query_systemd_enablement(
+    runner: &dyn CommandRunner,
+    unit: &str,
+) -> Result<SystemdEnablement, OpError> {
+    let spec = systemctl_is_enabled(unit);
+    let output = run_query(runner, &spec)?;
+    let state = String::from_utf8_lossy(output.stdout()).trim().to_owned();
+    match (output.status().code(), state.as_str()) {
+        (Some(0), "enabled" | "enabled-runtime" | "linked" | "linked-runtime" | "alias") => {
+            Ok(SystemdEnablement::Enabled)
+        }
+        (
+            Some(1),
+            "disabled" | "static" | "indirect" | "generated" | "transient" | "masked"
+            | "masked-runtime",
+        ) => Ok(SystemdEnablement::Disabled),
+        (Some(1), "not-found") => Ok(SystemdEnablement::Absent),
+        _ => Err(query_failed(&spec, &output)),
+    }
+}
+
+/// Query a launchd label without conflating lookup failures with an unloaded job.
+pub fn query_launchd_state(
+    runner: &dyn CommandRunner,
+    label: &str,
+) -> Result<LaunchdState, OpError> {
+    let spec = CommandSpec::new("launchctl").arg("list").arg(label);
+    let output = run_query(runner, &spec)?;
+    if output.success() {
+        let stdout = String::from_utf8_lossy(output.stdout());
+        let observed_label = stdout.lines().find_map(|line| {
+            line.trim()
+                .strip_prefix("\"Label\" =")
+                .map(|value| value.trim().trim_end_matches(';').trim_matches('"'))
+        });
+        if observed_label != Some(label) {
+            return Err(query_failed(&spec, &output));
+        }
+        let pid = stdout.lines().find_map(|line| {
+            line.trim()
+                .strip_prefix("\"PID\" =")
+                .map(|value| value.trim().trim_end_matches(';'))
+        });
+        return match pid {
+            None | Some("-") => Ok(LaunchdState::LoadedInactive),
+            Some(value) if value.parse::<u32>().is_ok_and(|pid| pid > 0) => {
+                Ok(LaunchdState::Running)
+            }
+            Some(_) => Err(query_failed(&spec, &output)),
+        };
+    }
+
+    let stderr = String::from_utf8_lossy(output.stderr());
+    if output.status().code() == Some(113)
+        && (stderr.contains("Could not find service") || stderr.contains("Service cannot be found"))
+    {
+        return Ok(LaunchdState::Unloaded);
+    }
+    Err(query_failed(&spec, &output))
+}
+
+fn run_query(runner: &dyn CommandRunner, spec: &CommandSpec) -> Result<CommandOutput, OpError> {
+    let program = spec.program().to_string_lossy().into_owned();
+    runner
+        .run(spec)
+        .map_err(|source| OpError::io("run", program, source))
+}
+
+fn query_failed(spec: &CommandSpec, output: &CommandOutput) -> OpError {
+    let stderr = String::from_utf8_lossy(output.stderr()).trim().to_owned();
+    let stdout = String::from_utf8_lossy(output.stdout()).trim().to_owned();
+    OpError::CommandFailed {
+        program: spec.program().to_string_lossy().into_owned(),
+        status: output.status().to_string(),
+        stderr: if stderr.is_empty() {
+            format!("unexpected query output: {stdout:?}")
+        } else {
+            stderr
+        },
+    }
 }
 
 /// Load or unload a launchd plist.

@@ -8,9 +8,10 @@ use std::sync::Mutex;
 use camino::{Utf8Path, Utf8PathBuf};
 use zapbrew_ops::OpError;
 use zapbrew_ops::platform::{
-    LaunchctlAction, SystemctlAction, ditto, git_clone, git_pull, hdiutil_attach, hdiutil_detach,
-    installer, launchctl, pkgutil_forget, remove_path, run_checked, systemctl, systemctl_is_active,
-    systemctl_is_enabled, unzip,
+    LaunchctlAction, LaunchdState, SystemctlAction, SystemdActivity, SystemdEnablement, ditto,
+    git_clone, git_pull, hdiutil_attach, hdiutil_detach, installer, launchctl, pkgutil_forget,
+    query_launchd_state, query_systemd_activity, query_systemd_enablement, remove_path,
+    run_checked, systemctl, systemctl_is_active, systemctl_is_enabled, unzip,
 };
 use zapbrew_prefix::{CommandOutput, CommandRunner, CommandSpec};
 
@@ -83,6 +84,18 @@ fn service_specs_include_platform_scoping() {
             "systemctl",
             "--user",
             "enable",
+            "homebrew.mxcl.redis.service",
+        ]
+    );
+    assert_eq!(
+        argv(&systemctl(
+            SystemctlAction::Disable,
+            "homebrew.mxcl.redis.service",
+        )),
+        [
+            "systemctl",
+            "--user",
+            "disable",
             "homebrew.mxcl.redis.service",
         ]
     );
@@ -212,6 +225,112 @@ impl CommandRunner for RecordingRunner {
             Response::Io => Err(io::Error::new(io::ErrorKind::NotFound, "tool missing")),
         }
     }
+}
+
+fn output(code: i32, stdout: &str, stderr: &str) -> Response {
+    Response::Output(CommandOutput::new(
+        status(code),
+        stdout.as_bytes().to_vec(),
+        stderr.as_bytes().to_vec(),
+    ))
+}
+
+#[test]
+fn systemd_queries_accept_only_documented_states() {
+    let active = RecordingRunner::new(output(0, "active\n", ""));
+    assert_eq!(
+        query_systemd_activity(&active, "homebrew.demo.service").expect("active"),
+        SystemdActivity::Active
+    );
+    let inactive = RecordingRunner::new(output(3, "inactive\n", ""));
+    assert_eq!(
+        query_systemd_activity(&inactive, "homebrew.demo.service").expect("inactive"),
+        SystemdActivity::Inactive
+    );
+    let enabled = RecordingRunner::new(output(0, "enabled\n", ""));
+    assert_eq!(
+        query_systemd_enablement(&enabled, "homebrew.demo.service").expect("enabled"),
+        SystemdEnablement::Enabled
+    );
+    let disabled = RecordingRunner::new(output(1, "disabled\n", ""));
+    assert_eq!(
+        query_systemd_enablement(&disabled, "homebrew.demo.service").expect("disabled"),
+        SystemdEnablement::Disabled
+    );
+    let absent = RecordingRunner::new(output(1, "not-found\n", ""));
+    assert_eq!(
+        query_systemd_enablement(&absent, "homebrew.demo.service").expect("absent"),
+        SystemdEnablement::Absent
+    );
+
+    for response in [output(0, "", ""), output(1, "", "permission denied\n")] {
+        let runner = RecordingRunner::new(response);
+        assert!(matches!(
+            query_systemd_activity(&runner, "homebrew.demo.service"),
+            Err(OpError::CommandFailed { .. })
+        ));
+    }
+}
+
+#[test]
+fn launchd_query_distinguishes_running_loaded_and_unloaded() {
+    let running = RecordingRunner::new(output(
+        0,
+        "{\n\"Label\" = \"homebrew.mxcl.demo\";\n\"PID\" = 42;\n}\n",
+        "",
+    ));
+    assert_eq!(
+        query_launchd_state(&running, "homebrew.mxcl.demo").expect("running"),
+        LaunchdState::Running
+    );
+    let pid_zero = RecordingRunner::new(output(
+        0,
+        "{\n\"Label\" = \"homebrew.mxcl.demo\";\n\"PID\" = 0;\n}\n",
+        "",
+    ));
+    assert!(matches!(
+        query_launchd_state(&pid_zero, "homebrew.mxcl.demo"),
+        Err(OpError::CommandFailed { .. })
+    ));
+    let loaded = RecordingRunner::new(output(0, "{\n\"Label\" = \"homebrew.mxcl.demo\";\n}\n", ""));
+    assert_eq!(
+        query_launchd_state(&loaded, "homebrew.mxcl.demo").expect("loaded"),
+        LaunchdState::LoadedInactive
+    );
+    let unloaded = RecordingRunner::new(output(113, "", "Could not find service\n"));
+    assert_eq!(
+        query_launchd_state(&unloaded, "homebrew.mxcl.demo").expect("unloaded"),
+        LaunchdState::Unloaded
+    );
+    for response in [
+        output(0, "", ""),
+        output(
+            0,
+            "{\n\"Label\" = \"homebrew.mxcl.demo\";\n\"PID\" = nope;\n}\n",
+            "",
+        ),
+        output(
+            0,
+            "{\n\"Label\" = \"homebrew.mxcl.other\";\n\"PID\" = 42;\n}\n",
+            "",
+        ),
+        output(1, "", "permission denied\n"),
+    ] {
+        let runner = RecordingRunner::new(response);
+        assert!(matches!(
+            query_launchd_state(&runner, "homebrew.mxcl.demo"),
+            Err(OpError::CommandFailed { .. })
+        ));
+    }
+}
+
+#[test]
+fn manager_queries_map_spawn_failures_to_io() {
+    let runner = RecordingRunner::new(Response::Io);
+    assert!(matches!(
+        query_systemd_activity(&runner, "homebrew.demo.service"),
+        Err(OpError::Io { .. })
+    ));
 }
 
 #[test]
