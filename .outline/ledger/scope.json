@@ -5646,7 +5646,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/reinstall.rs:22-126",
+        "zapbrew": "crates/zapbrew-ops/src/reinstall.rs:201-248",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/docs/Manpage.md#L1827-L1831"
       }
     },
@@ -5662,7 +5662,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/reinstall.rs:22-141",
+        "zapbrew": "crates/zapbrew-ops/src/reinstall.rs:145-200",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/docs/Manpage.md#L1827-L1831"
       }
     },
@@ -6305,7 +6305,7 @@
       ],
       "decision_refs": [],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/upgrade.rs:39-207",
+        "zapbrew": "crates/zapbrew-ops/src/upgrade.rs:265-335",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/docs/Manpage.md#L2362-L2483"
       }
     },
