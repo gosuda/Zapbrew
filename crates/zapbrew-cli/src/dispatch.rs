@@ -174,14 +174,28 @@ pub fn plan(command: Commands, globals: &GlobalArgs, width: usize) -> Result<Pla
                 }
             }
         }
-        Commands::Upgrade(args) => Plan {
-            needs_formula: true,
-            needs_cask: false,
-            kind: OpKind::Upgrade(upgrade::Args {
-                names: args.names,
-                dry_run: args.dry_run,
-            }),
-        },
+        Commands::Upgrade(args) => {
+            let mode = if args.cask {
+                upgrade::Mode::Cask
+            } else if args.formula {
+                upgrade::Mode::Formula
+            } else {
+                upgrade::Mode::Auto
+            };
+            Plan {
+                needs_formula: mode != upgrade::Mode::Cask,
+                needs_cask: mode != upgrade::Mode::Formula,
+                kind: OpKind::Upgrade(upgrade::Args {
+                    names: args.names,
+                    dry_run: args.dry_run,
+                    mode,
+                    appdir: appdir(args.appdir)?,
+                    greedy: args.greedy,
+                    greedy_latest: args.greedy_latest,
+                    greedy_auto_updates: args.greedy_auto_updates,
+                }),
+            }
+        }
         Commands::Outdated(args) => Plan {
             needs_formula: true,
             needs_cask: true,
@@ -1136,7 +1150,6 @@ mod tests {
             &["zapbrew", "install", "wget"][..],
             &["zapbrew", "install", "wget", "--include-test"][..],
             &["zapbrew", "reinstall", "wget", "--formula"][..],
-            &["zapbrew", "upgrade"][..],
             &["zapbrew", "deps", "wget"][..],
             &["zapbrew", "link", "wget"][..],
             &["zapbrew", "cleanup"][..],
@@ -1151,6 +1164,7 @@ mod tests {
             &["zapbrew", "info", "wget"][..],
             &["zapbrew", "uses", "firefox"][..],
             &["zapbrew", "fetch", "wget"][..],
+            &["zapbrew", "upgrade"][..],
         ] {
             assert_eq!(classify(args), (true, true), "args: {args:?}");
         }
@@ -1410,6 +1424,65 @@ mod tests {
                 formula: false,
                 cask: true,
                 appdir: Some("/Apps".into()),
+            })
+        );
+    }
+    #[test]
+    fn upgrade_auto_maps_every_field_and_loads_both_catalogs() {
+        let plan = planned(&[
+            "zapbrew",
+            "upgrade",
+            "foo",
+            "--dry-run",
+            "--greedy",
+            "--greedy-latest",
+            "--greedy-auto-updates",
+        ]);
+        assert!(plan.needs_formula);
+        assert!(plan.needs_cask);
+        assert_eq!(
+            plan.kind,
+            OpKind::Upgrade(zapbrew_ops::upgrade::Args {
+                names: vec!["foo".to_owned()],
+                dry_run: true,
+                mode: zapbrew_ops::upgrade::Mode::Auto,
+                appdir: None,
+                greedy: true,
+                greedy_latest: true,
+                greedy_auto_updates: true,
+            })
+        );
+    }
+
+    #[test]
+    fn upgrade_cask_only_maps_appdir_and_loads_casks() {
+        let plan = planned(&[
+            "zapbrew", "upgrade", "--cask", "firefox", "--appdir", "/Apps",
+        ]);
+        assert!(!plan.needs_formula);
+        assert!(plan.needs_cask);
+        assert_eq!(
+            plan.kind,
+            OpKind::Upgrade(zapbrew_ops::upgrade::Args {
+                names: vec!["firefox".to_owned()],
+                mode: zapbrew_ops::upgrade::Mode::Cask,
+                appdir: Some("/Apps".into()),
+                ..zapbrew_ops::upgrade::Args::default()
+            })
+        );
+    }
+
+    #[test]
+    fn upgrade_formula_only_loads_formula_catalog() {
+        let plan = planned(&["zapbrew", "upgrade", "--formula", "foo"]);
+        assert!(plan.needs_formula);
+        assert!(!plan.needs_cask);
+        assert_eq!(
+            plan.kind,
+            OpKind::Upgrade(zapbrew_ops::upgrade::Args {
+                names: vec!["foo".to_owned()],
+                mode: zapbrew_ops::upgrade::Mode::Formula,
+                ..zapbrew_ops::upgrade::Args::default()
             })
         );
     }

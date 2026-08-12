@@ -216,6 +216,11 @@ pub(super) enum Replacement {
     Replace,
 }
 
+pub(super) enum ArtifactSource<'a> {
+    Download,
+    Cached(&'a zapbrew_net::CachedArtifact),
+}
+
 /// One fully preflighted cask install request.
 pub(super) struct CaskInstall<'a> {
     pub(super) cask: &'a Cask,
@@ -226,6 +231,7 @@ pub(super) struct CaskInstall<'a> {
     pub(super) alias_name: &'a str,
     pub(super) appdir: &'a Utf8Path,
     pub(super) replacement: Replacement,
+    pub(super) artifact: ArtifactSource<'a>,
 }
 
 struct WrittenReceipt {
@@ -249,6 +255,7 @@ pub(super) async fn install(ctx: &Ctx, request: CaskInstall<'_>) -> Result<(), O
         alias_name,
         appdir,
         replacement,
+        artifact,
     } = request;
     if !one_normal_component(&cask.token) {
         return Err(OpError::Refusal {
@@ -278,16 +285,23 @@ pub(super) async fn install(ctx: &Ctx, request: CaskInstall<'_>) -> Result<(), O
         validate_reversible_replacement(cask, plan, &records)?;
     }
 
-    let cached = zapbrew_net::fetch_artifact(
-        &ctx.env,
-        &ctx.http,
-        &zapbrew_net::ArtifactDownloadRequest {
-            url: url.to_owned(),
-            alias_name: alias_name.to_owned(),
-            sha256: checksum.cloned(),
-        },
-    )
-    .await?;
+    let downloaded;
+    let cached = match artifact {
+        ArtifactSource::Cached(cached) => cached,
+        ArtifactSource::Download => {
+            downloaded = zapbrew_net::fetch_artifact(
+                &ctx.env,
+                &ctx.http,
+                &zapbrew_net::ArtifactDownloadRequest {
+                    url: url.to_owned(),
+                    alias_name: alias_name.to_owned(),
+                    sha256: checksum.cloned(),
+                },
+            )
+            .await?;
+            &downloaded
+        }
+    };
     let staging = unique_stage(ctx, &cask.token)?;
     confined_caskroom_dir(ctx, &staging)?;
     let mut journal = Vec::<Reverse>::new();

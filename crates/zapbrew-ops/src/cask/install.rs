@@ -4,7 +4,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use zapbrew_api::Cask;
 use zapbrew_types::BottleTag;
 
-use super::transaction::{CaskInstall, Replacement};
+use super::transaction::{ArtifactSource, CaskInstall, Replacement};
 use super::{CaskDownloadSpec, acquire_locks, artifact, download_spec, resolve, transaction};
 use crate::{Ctx, OpError};
 
@@ -122,6 +122,24 @@ pub(super) async fn execute<'a>(
     prepared: Prepared<'a>,
     replacement: Replacement,
 ) -> Result<(), OpError> {
+    execute_from(ctx, prepared, replacement, ArtifactSource::Download).await
+}
+
+pub(super) async fn execute_cached<'a>(
+    ctx: &'a Ctx,
+    prepared: Prepared<'a>,
+    replacement: Replacement,
+    cached: &'a zapbrew_net::CachedArtifact,
+) -> Result<(), OpError> {
+    execute_from(ctx, prepared, replacement, ArtifactSource::Cached(cached)).await
+}
+
+async fn execute_from<'a>(
+    ctx: &'a Ctx,
+    prepared: Prepared<'a>,
+    replacement: Replacement,
+    artifact: ArtifactSource<'a>,
+) -> Result<(), OpError> {
     transaction::install(
         ctx,
         CaskInstall {
@@ -133,6 +151,7 @@ pub(super) async fn execute<'a>(
             alias_name: &prepared.spec.alias_name,
             appdir: &prepared.appdir,
             replacement,
+            artifact,
         },
     )
     .await

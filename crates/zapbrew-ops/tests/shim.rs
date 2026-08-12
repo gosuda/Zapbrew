@@ -301,6 +301,7 @@ async fn brew_hint_reporter_prefixes_reinstall_and_restart() {
         UpgradeArgs {
             names: vec!["upd".to_owned()],
             dry_run: true,
+            ..UpgradeArgs::default()
         },
     )
     .await

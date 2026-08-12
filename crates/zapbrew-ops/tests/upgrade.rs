@@ -17,7 +17,7 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use zapbrew_api::{CaskCatalog, Catalog};
 use zapbrew_ops::transaction_test_support::{fail_install_after_unlink, fail_next_backup_cleanup};
-use zapbrew_ops::upgrade::{self, Args};
+use zapbrew_ops::upgrade::{self, Args, Mode};
 use zapbrew_ops::{Ctx, Reporter};
 use zapbrew_pour::LinkOptions;
 use zapbrew_prefix::{
@@ -128,6 +128,86 @@ fn context_flags(
         },
         recording,
     )
+}
+
+fn context_with_casks(
+    env: Env,
+    formulae: Vec<Value>,
+    cask_values: Vec<Value>,
+) -> (Ctx, Arc<RecordingReporter>) {
+    let formula_payload = serde_json::to_vec(&formulae).expect("catalog payload");
+    let cask_payload = serde_json::to_vec(&cask_values).expect("cask payload");
+    let catalog =
+        Arc::new(Catalog::from_payload(&formula_payload, &env.bottle_tag).expect("catalog"));
+    let casks = Arc::new(CaskCatalog::from_payload(&cask_payload, &env.bottle_tag).expect("casks"));
+    let recording = Arc::new(RecordingReporter::default());
+    let reporter: Arc<dyn Reporter> = recording.clone();
+    (
+        Ctx {
+            env,
+            http: reqwest::Client::new(),
+            catalog,
+            casks,
+            commands: Arc::new(PanicRunner),
+            reporter,
+        },
+        recording,
+    )
+}
+
+fn cask_archive(contents: &[u8]) -> Vec<u8> {
+    let encoder = GzEncoder::new(Vec::new(), Compression::default());
+    let mut archive = tar::Builder::new(encoder);
+    let mut header = tar::Header::new_gnu();
+    header.set_size(contents.len() as u64);
+    header.set_mode(0o755);
+    header.set_cksum();
+    archive
+        .append_data(&mut header, "tool", contents)
+        .expect("cask tar entry");
+    archive
+        .into_inner()
+        .expect("cask tar finish")
+        .finish()
+        .expect("cask gzip finish")
+}
+
+fn cask(token: &str, version: &str, url: &str, sha: &str) -> Value {
+    json!({
+        "token": token,
+        "version": version,
+        "sha256": sha,
+        "url": url,
+        "artifacts": [{"binary": ["tool"]}],
+    })
+}
+
+fn installed_cask(env: &Env, token: &str, version: &str, pkg: bool) {
+    let version_dir = env.caskroom.join(token).join(version);
+    std::fs::create_dir_all(&version_dir).expect("cask version dir");
+    std::fs::write(version_dir.join("tool"), b"old").expect("old cask tool");
+    std::fs::create_dir_all(env.prefix.join("bin")).expect("prefix bin");
+    let target = env.prefix.join("bin/tool");
+    if !target.exists() {
+        std::os::unix::fs::symlink(version_dir.join("tool"), &target).expect("old cask link");
+    }
+    let artifacts = if pkg {
+        vec![json!({"kind": "pkg", "source": "Old.pkg"})]
+    } else {
+        vec![json!({"kind": "symlink", "target": target.as_str()})]
+    };
+    let record = json!({
+        "schema": 1,
+        "token": token,
+        "version": version,
+        "appdir": env.home.join("Applications").as_str(),
+        "artifacts": artifacts,
+        "uninstall": [],
+        "zap": [],
+    });
+    let mut bytes = serde_json::to_vec_pretty(&record).expect("record");
+    bytes.push(b'\n');
+    std::fs::write(version_dir.join(".zapbrew-record.json"), bytes).expect("write record");
 }
 
 fn bottle(name: &str, version: &str) -> Vec<u8> {
@@ -687,4 +767,317 @@ async fn upgrade_dry_run_succeeds_under_exclusive_tap_lock_and_creates_no_locks(
         !locks.join("foo.formula.lock").exists(),
         "dry-run must not create a formula lock"
     );
+}
+
+#[tokio::test]
+async fn named_cask_upgrade_replaces_recorded_artifacts() {
+    let server = MockServer::start().await;
+    let archive = cask_archive(b"new");
+    mount(&server, "/tool.tar.gz", &archive, 1).await;
+    let temp = TempDir::new().expect("temp");
+    let env = env(&temp, false);
+    installed_cask(&env, "toolbox", "1.0", false);
+    let url = format!("{}/tool.tar.gz", server.uri());
+    let (ctx, _) = context_with_casks(
+        env.clone(),
+        vec![],
+        vec![cask("toolbox", "2.0", &url, &digest(&archive))],
+    );
+    upgrade::run(
+        &ctx,
+        Args {
+            names: vec!["toolbox".to_owned()],
+            mode: Mode::Cask,
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("cask upgrade");
+    assert!(!env.caskroom.join("toolbox/1.0").exists());
+    assert!(env.caskroom.join("toolbox/2.0").is_dir());
+    assert_eq!(
+        std::fs::read(env.prefix.join("bin/tool")).expect("tool"),
+        b"new"
+    );
+}
+
+#[tokio::test]
+async fn cask_upgrade_dry_run_has_no_request_or_mutation() {
+    let server = MockServer::start().await;
+    let archive = cask_archive(b"new");
+    mount(&server, "/tool.tar.gz", &archive, 0).await;
+    let temp = TempDir::new().expect("temp");
+    let env = env(&temp, false);
+    installed_cask(&env, "drybox", "1.0", false);
+    let url = format!("{}/tool.tar.gz", server.uri());
+    let (ctx, reporter) = context_with_casks(
+        env.clone(),
+        vec![],
+        vec![cask("drybox", "2.0", &url, &digest(&archive))],
+    );
+    upgrade::run(
+        &ctx,
+        Args {
+            names: vec!["drybox".to_owned()],
+            mode: Mode::Cask,
+            dry_run: true,
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("cask dry run");
+    assert!(env.caskroom.join("drybox/1.0").is_dir());
+    assert!(!env.caskroom.join("drybox/2.0").exists());
+    assert!(
+        !env.locks.join("drybox.cask.lock").exists(),
+        "dry-run must not create a cask lock"
+    );
+    assert!(reporter.take().iter().any(|line| line.contains("drybox")));
+}
+
+#[tokio::test]
+async fn unsafe_mixed_cask_refuses_before_formula_download() {
+    let server = MockServer::start().await;
+    let formula_archive = bottle("foo", "2.0");
+    mount(&server, "/foo.tar.gz", &formula_archive, 0).await;
+    let temp = TempDir::new().expect("temp");
+    let env = env(&temp, false);
+    installed(&env, "foo", "1.0", 0, true);
+    installed_cask(&env, "unsafe-box", "1.0", true);
+    let formula_url = format!("{}/foo.tar.gz", server.uri());
+    let (ctx, _) = context_with_casks(
+        env.clone(),
+        vec![formula(
+            "foo",
+            "2.0",
+            0,
+            0,
+            &formula_url,
+            &digest(&formula_archive),
+        )],
+        vec![cask(
+            "unsafe-box",
+            "2.0",
+            "http://unused.invalid/cask.tar.gz",
+            "no_check",
+        )],
+    );
+    let error = upgrade::run(
+        &ctx,
+        Args {
+            names: vec!["foo".to_owned(), "unsafe-box".to_owned()],
+            ..Args::default()
+        },
+    )
+    .await
+    .expect_err("unsafe cask");
+    assert!(error.to_string().contains("irreversible pkg"));
+    assert!(env.cellar.join("foo/1.0").is_dir());
+    assert!(!env.cellar.join("foo/2.0").exists());
+}
+
+#[tokio::test]
+async fn mixed_cask_download_failure_precedes_formula_mutation() {
+    let server = MockServer::start().await;
+    let formula_archive = bottle("foo", "2.0");
+    mount(&server, "/foo.tar.gz", &formula_archive, 1).await;
+    Mock::given(method("GET"))
+        .and(path("/cask.tar.gz"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(1..)
+        .mount(&server)
+        .await;
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp, false);
+    installed(&environment, "foo", "1.0", 0, true);
+    installed_cask(&environment, "safe-box", "1.0", false);
+    let (ctx, _) = context_with_casks(
+        environment.clone(),
+        vec![formula(
+            "foo",
+            "2.0",
+            0,
+            0,
+            &format!("{}/foo.tar.gz", server.uri()),
+            &digest(&formula_archive),
+        )],
+        vec![cask(
+            "safe-box",
+            "2.0",
+            &format!("{}/cask.tar.gz", server.uri()),
+            "no_check",
+        )],
+    );
+
+    upgrade::run(
+        &ctx,
+        Args {
+            names: vec!["foo".to_owned(), "safe-box".to_owned()],
+            ..Args::default()
+        },
+    )
+    .await
+    .expect_err("cask download failure");
+
+    assert!(environment.cellar.join("foo/1.0").is_dir());
+    assert!(!environment.cellar.join("foo/2.0").exists());
+    assert!(environment.caskroom.join("safe-box/1.0").is_dir());
+    assert!(!environment.caskroom.join("safe-box/2.0").exists());
+}
+#[tokio::test]
+async fn unsafe_cask_refuses_before_deferred_migration_in_any_order() {
+    let server = MockServer::start().await;
+    mount(&server, "/formula_tap_migrations.jws.json", b"unused", 0).await;
+    let temp = TempDir::new().expect("temp");
+    let mut environment = env(&temp, false);
+    environment.api_domain = server.uri();
+    installed_cask(&environment, "unsafe-box", "1.0", true);
+    let (ctx, _) = context_with_casks(
+        environment.clone(),
+        vec![],
+        vec![cask(
+            "unsafe-box",
+            "2.0",
+            "http://unused.invalid/cask.tar.gz",
+            "no_check",
+        )],
+    );
+
+    for names in [
+        vec!["missing".to_owned(), "unsafe-box".to_owned()],
+        vec!["unsafe-box".to_owned(), "missing".to_owned()],
+    ] {
+        let error = upgrade::run(
+            &ctx,
+            Args {
+                names,
+                ..Args::default()
+            },
+        )
+        .await
+        .expect_err("unsafe cask");
+        assert!(error.to_string().contains("irreversible pkg"));
+        assert!(!environment.locks.join("missing.formula.lock").exists());
+        assert!(!environment.locks.join("unsafe-box.cask.lock").exists());
+        assert!(environment.caskroom.join("unsafe-box/1.0").is_dir());
+        assert!(!environment.caskroom.join("unsafe-box/2.0").exists());
+    }
+}
+
+#[tokio::test]
+async fn up_to_date_unsafe_cask_does_not_preempt_deferred_migration() {
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "/formula_tap_migrations.jws.json",
+        b"invalid signed payload",
+        // The invalid primary response triggers the documented default-mirror retry.
+        2,
+    )
+    .await;
+    let temp = TempDir::new().expect("temp");
+    let mut environment = env(&temp, false);
+    environment.api_domain = server.uri();
+    installed_cask(&environment, "current-box", "2.0", true);
+    let (ctx, _) = context_with_casks(
+        environment.clone(),
+        vec![],
+        vec![cask(
+            "current-box",
+            "2.0",
+            "http://unused.invalid/cask.tar.gz",
+            "no_check",
+        )],
+    );
+
+    let error = upgrade::run(
+        &ctx,
+        Args {
+            names: vec!["missing".to_owned(), "current-box".to_owned()],
+            ..Args::default()
+        },
+    )
+    .await
+    .expect_err("invalid migration response");
+
+    assert!(!error.to_string().contains("irreversible pkg"));
+    assert!(environment.caskroom.join("current-box/2.0").is_dir());
+    assert!(!environment.locks.join("current-box.cask.lock").exists());
+}
+#[tokio::test]
+async fn named_latest_cask_is_greedy_but_bare_upgrade_skips_it() {
+    let temp = TempDir::new().expect("temp");
+    let env = env(&temp, false);
+    installed_cask(&env, "rolling", "1.0", false);
+    let value = cask(
+        "rolling",
+        "latest",
+        "http://unused.invalid/latest.tar.gz",
+        "no_check",
+    );
+    let (bare_ctx, bare_reporter) = context_with_casks(env.clone(), vec![], vec![value.clone()]);
+    upgrade::run(
+        &bare_ctx,
+        Args {
+            mode: Mode::Cask,
+            dry_run: true,
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("bare dry run");
+    assert!(
+        !bare_reporter
+            .take()
+            .iter()
+            .any(|line| line.contains("rolling"))
+    );
+    let (named_ctx, named_reporter) = context_with_casks(env, vec![], vec![value]);
+    upgrade::run(
+        &named_ctx,
+        Args {
+            names: vec!["rolling".to_owned()],
+            mode: Mode::Cask,
+            dry_run: true,
+            ..Args::default()
+        },
+    )
+    .await
+    .expect("named dry run");
+    assert!(
+        named_reporter
+            .take()
+            .iter()
+            .any(|line| line.contains("rolling"))
+    );
+}
+
+#[tokio::test]
+async fn cask_dry_run_refuses_unapproved_appdir() {
+    let temp = TempDir::new().expect("temp");
+    let env = env(&temp, false);
+    installed_cask(&env, "dry-appdir", "1.0", false);
+    let (ctx, _) = context_with_casks(
+        env,
+        vec![],
+        vec![cask(
+            "dry-appdir",
+            "2.0",
+            "http://unused.invalid/cask.tar.gz",
+            "no_check",
+        )],
+    );
+    let error = upgrade::run(
+        &ctx,
+        Args {
+            names: vec!["dry-appdir".to_owned()],
+            mode: Mode::Cask,
+            appdir: Some("/etc".into()),
+            dry_run: true,
+            ..Args::default()
+        },
+    )
+    .await
+    .expect_err("unapproved appdir");
+    assert!(error.to_string().contains("outside approved roots"));
 }

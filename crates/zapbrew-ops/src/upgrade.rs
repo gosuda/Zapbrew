@@ -1,18 +1,20 @@
 use std::collections::BTreeSet;
 use std::str::FromStr;
 
-use zapbrew_api::Formula;
+use camino::Utf8PathBuf;
+use zapbrew_api::{Cask, Formula, Resolution};
 use zapbrew_net::{DownloadRequest, download_all};
 use zapbrew_prefix::{Keg, Rack};
 use zapbrew_types::{BottleFile, FormulaName};
 
+use crate::cask::{self, reinstall};
 use crate::install::{
     format_size, linked_replacement, make_tab, request_for_formula, resolve_formula,
     substitute_prefixes,
 };
 use crate::install_steps::InstallSteps;
-use crate::outdated::is_outdated;
-use crate::state::{InstalledFormula, scan_selected};
+use crate::outdated::{self, is_outdated, is_outdated_cask};
+use crate::state::{InstalledCask, InstalledFormula, scan_casks, scan_selected};
 use crate::tap::formula_taps;
 use crate::transaction::{
     InstallInput, acquire_formula_locks, acquire_shared_tap_locks, cleanup_replaced_kegs,
@@ -20,10 +22,23 @@ use crate::transaction::{
 };
 use crate::{Ctx, OpError};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mode {
+    #[default]
+    Auto,
+    Formula,
+    Cask,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Args {
     pub names: Vec<String>,
     pub dry_run: bool,
+    pub mode: Mode,
+    pub appdir: Option<Utf8PathBuf>,
+    pub greedy: bool,
+    pub greedy_latest: bool,
+    pub greedy_auto_updates: bool,
 }
 
 struct UpgradePlan<'a> {
@@ -36,13 +51,70 @@ struct UpgradePlan<'a> {
     request: DownloadRequest,
 }
 
+struct SelectedCask<'a> {
+    cask: &'a Cask,
+    old_display: String,
+}
+
+struct ResolvedTargets<'a> {
+    names: BTreeSet<String>,
+    formulae: Vec<&'a Formula>,
+    casks: Vec<(&'a Cask, &'a InstalledCask)>,
+    unresolved: Vec<String>,
+}
+
 pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
     let named = !args.names.is_empty();
-    let (names, formulae) = if named {
-        resolve_named(ctx, &args.names).await?
-    } else {
-        enumerate_installed(ctx)?
+    let cask_state = scan_casks(&ctx.env)?;
+    let ResolvedTargets {
+        mut names,
+        mut formulae,
+        casks,
+        unresolved,
+    } = resolve_targets(ctx, &args, &cask_state).await?;
+
+    let cask_outdated_args = outdated::Args {
+        greedy: named || args.greedy,
+        greedy_latest: args.greedy_latest,
+        greedy_auto_updates: args.greedy_auto_updates,
+        ..outdated::Args::default()
     };
+    let mut selected_casks = Vec::new();
+    for (cask, installed) in casks {
+        if is_outdated_cask(cask, installed, &cask_outdated_args).is_some() {
+            selected_casks.push(SelectedCask {
+                cask,
+                old_display: installed.installed_version().unwrap_or("latest").to_owned(),
+            });
+        }
+    }
+    selected_casks.sort_by(|left, right| left.cask.token.cmp(&right.cask.token));
+
+    let cask_tokens = selected_casks
+        .iter()
+        .map(|selected| selected.cask.token.clone())
+        .collect::<Vec<_>>();
+
+    if !cask_tokens.is_empty() {
+        reinstall::validate(
+            ctx,
+            &cask_tokens,
+            args.appdir.as_deref(),
+            reinstall::Purpose::Upgrade,
+        )?;
+    }
+    for requested in unresolved {
+        let formula = resolve_formula(ctx, &requested).await?;
+        if names.insert(formula.name.clone()) {
+            formulae.push(formula);
+        }
+    }
+    if args.appdir.is_some() && !formulae.is_empty() {
+        return Err(OpError::Refusal {
+            message: "--appdir cannot be used when upgrading formulae.".to_owned(),
+        });
+    }
+
     let _tap_locks = if args.dry_run {
         None
     } else {
@@ -56,6 +128,35 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
         None
     } else {
         Some(acquire_formula_locks(&ctx.env, &names)?)
+    };
+    let locked_casks = if args.dry_run || cask_tokens.is_empty() {
+        None
+    } else {
+        let locked_tokens = reinstall::lock_tokens(ctx, &cask_tokens, args.appdir.as_deref())?;
+        let current = scan_casks(&ctx.env)?;
+        selected_casks = selected_casks
+            .into_iter()
+            .filter_map(|selected| {
+                let installed = current.cask(&selected.cask.token)?;
+                is_outdated_cask(selected.cask, installed, &cask_outdated_args).map(|_| {
+                    SelectedCask {
+                        cask: selected.cask,
+                        old_display: installed.installed_version().unwrap_or("latest").to_owned(),
+                    }
+                })
+            })
+            .collect();
+        let still_outdated = selected_casks
+            .iter()
+            .map(|selected| selected.cask.token.clone())
+            .collect::<BTreeSet<_>>();
+        let locked = locked_tokens.prepare(
+            ctx,
+            &still_outdated,
+            args.appdir.as_deref(),
+            reinstall::Purpose::Upgrade,
+        )?;
+        Some(locked.validate_downloads(ctx)?)
     };
     let state = scan_selected(&ctx.env, &names)?;
 
@@ -120,23 +221,54 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
 
     if args.dry_run {
         print_upgrade_summary(ctx, "Would upgrade", &selected);
+        print_cask_summary(ctx, "Would upgrade", &selected_casks);
         return Ok(());
     }
-    if selected.is_empty() {
+    if selected.is_empty() && selected_casks.is_empty() {
         if !named {
             ctx.reporter.oh1("No packages to upgrade");
         }
         return Ok(());
     }
+    if !selected.is_empty() {
+        // brew's perform_preinstall_checks: refresh <prefix>/lib/ld.so and the
+        // preferred GCC ldconfig snippet before pouring Linux bottles.
+        zapbrew_prefix::symlink_ld_so(&ctx.env)?;
+        zapbrew_prefix::setup_preferred_gcc_libs(&ctx.env)?;
+    }
 
-    // brew's perform_preinstall_checks: refresh `<prefix>/lib/ld.so` for
-    // relocated Linux bottles on a fresh prefix. Deferred until after the
-    // dry-run and empty-selection returns so neither mutates the prefix.
-    zapbrew_prefix::symlink_ld_so(&ctx.env)?;
-    zapbrew_prefix::setup_preferred_gcc_libs(&ctx.env)?;
+    let mut plans = Vec::new();
+    for &(formula, installed) in &selected {
+        let active = installed
+            .linked()
+            .or_else(|| installed.optlinked())
+            .or_else(|| installed.latest())
+            .ok_or_else(|| OpError::InvalidState {
+                reason: format!("installed formula {} has no kegs", formula.name),
+            })?;
+        let name =
+            FormulaName::from_str(&formula.name).map_err(|source| OpError::InvalidState {
+                reason: format!("catalog formula name {} is invalid: {source}", formula.name),
+            })?;
+        let old_kegs = installed
+            .kegs()
+            .iter()
+            .filter(|keg| keg.version() != &formula.pkg_version)
+            .map(|keg| Keg::new(&ctx.env.cellar, name.clone(), keg.version().clone()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let (bottle, request) = request_for_formula(ctx, formula)?;
+        plans.push(UpgradePlan {
+            formula,
+            steps: InstallSteps::parse(ctx, formula)?,
+            installed_on_request: active.tab().installed_on_request,
+            old_display: active.version().to_string(),
+            old_kegs,
+            bottle,
+            request,
+        });
+    }
 
     print_upgrade_summary(ctx, "Upgrading", &selected);
-    let plans = build_plans(ctx, &selected)?;
     for plan in &plans {
         ctx.reporter
             .ohai(&format!("Fetching {}", plan.request.name.as_str()));
@@ -149,6 +281,10 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
         plans.iter().map(|plan| plan.request.clone()).collect(),
     )
     .await?;
+    let downloaded_casks = match locked_casks {
+        Some(casks) => Some(casks.download(ctx).await?),
+        None => None,
+    };
 
     for (plan, cached) in plans.into_iter().zip(cached) {
         ctx.reporter
@@ -204,22 +340,98 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
             format_size(summary.size)
         ));
     }
+
+    if let Some(downloaded_casks) = downloaded_casks {
+        print_cask_summary(ctx, "Upgrading", &selected_casks);
+        downloaded_casks.execute(ctx).await?;
+    }
     Ok(())
 }
 
-async fn resolve_named<'a>(
+async fn resolve_targets<'a>(
     ctx: &'a Ctx,
-    requested: &[String],
-) -> Result<(BTreeSet<String>, Vec<&'a Formula>), OpError> {
+    args: &Args,
+    cask_state: &'a crate::state::InstalledCaskState,
+) -> Result<ResolvedTargets<'a>, OpError> {
+    if args.names.is_empty() {
+        let (names, formulae) = if args.mode == Mode::Cask {
+            (BTreeSet::new(), Vec::new())
+        } else {
+            enumerate_installed(ctx)?
+        };
+        let casks = if args.mode == Mode::Formula {
+            Vec::new()
+        } else {
+            enumerate_installed_casks(ctx, cask_state)
+        };
+        return Ok(ResolvedTargets {
+            names,
+            formulae,
+            casks,
+            unresolved: Vec::new(),
+        });
+    }
+
     let mut names = BTreeSet::new();
     let mut formulae = Vec::new();
-    for name in requested {
-        let formula = resolve_formula(ctx, name).await?;
-        if names.insert(formula.name.clone()) {
-            formulae.push(formula);
+    let mut casks = Vec::new();
+    let mut cask_tokens = BTreeSet::new();
+    let mut unresolved = Vec::new();
+    for requested in &args.names {
+        match args.mode {
+            Mode::Formula => {
+                let formula = resolve_formula(ctx, requested).await?;
+                if names.insert(formula.name.clone()) {
+                    formulae.push(formula);
+                }
+            }
+            Mode::Cask => {
+                select_named_cask(ctx, cask_state, requested, &mut cask_tokens, &mut casks)?
+            }
+            Mode::Auto => {
+                let formula = match ctx.catalog.resolve(requested) {
+                    Resolution::Exact => ctx.catalog.get(requested),
+                    Resolution::Alias { ref real } => ctx.catalog.get(real),
+                    Resolution::Oldname { ref new } => ctx.catalog.get(new),
+                    Resolution::Missing { .. } => None,
+                };
+                if let Some(formula) = formula {
+                    if names.insert(formula.name.clone()) {
+                        formulae.push(formula);
+                    }
+                } else if ctx.casks.get(requested).is_some() {
+                    select_named_cask(ctx, cask_state, requested, &mut cask_tokens, &mut casks)?;
+                } else {
+                    unresolved.push(requested.clone());
+                }
+            }
         }
     }
-    Ok((names, formulae))
+    Ok(ResolvedTargets {
+        names,
+        formulae,
+        casks,
+        unresolved,
+    })
+}
+
+fn select_named_cask<'a>(
+    ctx: &'a Ctx,
+    state: &'a crate::state::InstalledCaskState,
+    requested: &str,
+    seen: &mut BTreeSet<String>,
+    selected: &mut Vec<(&'a Cask, &'a InstalledCask)>,
+) -> Result<(), OpError> {
+    let cask = cask::resolve(ctx, requested)?;
+    let Some(installed) = state.cask(&cask.token) else {
+        return Err(OpError::Refusal {
+            message: format!("{} is not installed", cask.token),
+        });
+    };
+    if seen.insert(cask.token.clone()) {
+        selected.push((cask, installed));
+    }
+    Ok(())
 }
 
 fn enumerate_installed(ctx: &Ctx) -> Result<(BTreeSet<String>, Vec<&Formula>), OpError> {
@@ -240,42 +452,22 @@ fn enumerate_installed(ctx: &Ctx) -> Result<(BTreeSet<String>, Vec<&Formula>), O
     Ok((names, formulae))
 }
 
-fn build_plans<'a>(
-    ctx: &Ctx,
-    selected: &[(&'a Formula, &InstalledFormula)],
-) -> Result<Vec<UpgradePlan<'a>>, OpError> {
+fn enumerate_installed_casks<'a>(
+    ctx: &'a Ctx,
+    state: &'a crate::state::InstalledCaskState,
+) -> Vec<(&'a Cask, &'a InstalledCask)> {
+    let mut selected = Vec::new();
+    for installed in state.iter() {
+        if let Some(cask) = ctx.casks.get(installed.token()) {
+            selected.push((cask, installed));
+        } else {
+            ctx.reporter.opoo(&format!(
+                "{} is installed but unavailable in the cask API; skipping.",
+                installed.token()
+            ));
+        }
+    }
     selected
-        .iter()
-        .map(|(formula, installed)| {
-            let active = installed
-                .linked()
-                .or_else(|| installed.optlinked())
-                .or_else(|| installed.latest())
-                .ok_or_else(|| OpError::InvalidState {
-                    reason: format!("installed formula {} has no kegs", formula.name),
-                })?;
-            let name =
-                FormulaName::from_str(&formula.name).map_err(|source| OpError::InvalidState {
-                    reason: format!("catalog formula name {} is invalid: {source}", formula.name),
-                })?;
-            let old_kegs = installed
-                .kegs()
-                .iter()
-                .filter(|keg| keg.version() != &formula.pkg_version)
-                .map(|keg| Keg::new(&ctx.env.cellar, name.clone(), keg.version().clone()))
-                .collect::<Result<Vec<_>, _>>()?;
-            let (bottle, request) = request_for_formula(ctx, formula)?;
-            Ok(UpgradePlan {
-                formula,
-                steps: InstallSteps::parse(ctx, formula)?,
-                installed_on_request: active.tab().installed_on_request,
-                old_display: active.version().to_string(),
-                old_kegs,
-                bottle,
-                request,
-            })
-        })
-        .collect()
 }
 
 fn print_upgrade_summary(ctx: &Ctx, verb: &str, selected: &[(&Formula, &InstalledFormula)]) {
@@ -299,6 +491,23 @@ fn print_upgrade_summary(ctx: &Ctx, verb: &str, selected: &[(&Formula, &Installe
         ctx.reporter.print(&format!(
             "{}  {old} -> {}",
             formula.name, formula.pkg_version
+        ));
+    }
+}
+
+fn print_cask_summary(ctx: &Ctx, verb: &str, selected: &[SelectedCask<'_>]) {
+    if selected.is_empty() {
+        return;
+    }
+    let noun = if selected.len() == 1 { "cask" } else { "casks" };
+    ctx.reporter
+        .oh1(&format!("{verb} {} outdated {noun}:", selected.len()));
+    for selected in selected {
+        ctx.reporter.print(&format!(
+            "{}  {} -> {}",
+            selected.cask.token,
+            selected.old_display,
+            selected.cask.version.as_deref().unwrap_or("latest")
         ));
     }
 }

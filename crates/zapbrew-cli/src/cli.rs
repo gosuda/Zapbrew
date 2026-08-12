@@ -114,7 +114,7 @@ pub enum Commands {
     Reinstall(ReinstallArgs),
     /// Uninstall formulae or casks.
     Uninstall(UninstallArgs),
-    /// Upgrade outdated formulae.
+    /// Upgrade outdated formulae or casks.
     Upgrade(UpgradeArgs),
     /// List outdated formulae and casks.
     Outdated(OutdatedArgs),
@@ -279,11 +279,29 @@ pub struct UninstallArgs {
 
 #[derive(Debug, Args)]
 pub struct UpgradeArgs {
-    /// Formula names to upgrade; empty upgrades all.
+    /// Formula or cask names to upgrade; empty upgrades all.
     pub names: Vec<String>,
+    /// Treat the named arguments as casks.
+    #[arg(long, conflicts_with = "formula")]
+    pub cask: bool,
+    /// Treat the named arguments as formulae.
+    #[arg(long)]
+    pub formula: bool,
+    /// Target application directory for cask apps.
+    #[arg(long, value_name = "DIR")]
+    pub appdir: Option<PathBuf>,
     /// Show what would be upgraded without doing it.
     #[arg(short = 'n', long)]
     pub dry_run: bool,
+    /// Also include casks with `version :latest` or `auto_updates true`.
+    #[arg(long)]
+    pub greedy: bool,
+    /// Also include casks with `version :latest`.
+    #[arg(long)]
+    pub greedy_latest: bool,
+    /// Also include casks that update themselves.
+    #[arg(long)]
+    pub greedy_auto_updates: bool,
 }
 
 #[derive(Debug, Args)]
@@ -857,6 +875,54 @@ mod tests {
         );
         assert_eq!(
             parse_kind(&["zapbrew", "list", "--cask", "--formula"]),
+            ErrorKind::ArgumentConflict
+        );
+    }
+
+    #[test]
+    fn upgrade_flags_and_selectors() {
+        let Commands::Upgrade(args) = command(&[
+            "zapbrew",
+            "upgrade",
+            "wget",
+            "firefox",
+            "--cask",
+            "--appdir",
+            "/A",
+            "-n",
+            "--greedy",
+            "--greedy-latest",
+            "--greedy-auto-updates",
+        ]) else {
+            panic!("expected upgrade");
+        };
+        assert_eq!(args.names, vec!["wget", "firefox"]);
+        assert!(args.cask);
+        assert!(!args.formula);
+        assert_eq!(args.appdir.as_deref(), Some(std::path::Path::new("/A")));
+        assert!(args.dry_run);
+        assert!(args.greedy);
+        assert!(args.greedy_latest);
+        assert!(args.greedy_auto_updates);
+
+        let Commands::Upgrade(formula) = command(&["zapbrew", "upgrade", "wget", "--formula"])
+        else {
+            panic!("expected upgrade");
+        };
+        assert!(formula.formula);
+        assert!(!formula.cask);
+        assert!(!formula.dry_run);
+
+        let Commands::Upgrade(bare) = command(&["zapbrew", "upgrade"]) else {
+            panic!("expected upgrade");
+        };
+        assert!(bare.names.is_empty());
+        assert!(!bare.cask);
+        assert!(!bare.formula);
+        assert!(!bare.greedy);
+
+        assert_eq!(
+            parse_kind(&["zapbrew", "upgrade", "--cask", "--formula", "x"]),
             ErrorKind::ArgumentConflict
         );
     }

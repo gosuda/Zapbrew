@@ -810,7 +810,11 @@ pub(super) fn confined_target_physical(
             message: format!("Cask target '{target}' is outside approved roots."),
         });
     }
-    if target == ctx.env.home || target == ctx.env.prefix || appdirs.contains(&target) {
+    if target == ctx.env.home
+        || target == ctx.env.prefix
+        || target == Utf8Path::new(crate::cask::DEFAULT_APPDIR)
+        || appdirs.contains(&target)
+    {
         return Err(OpError::Refusal {
             message: format!("Cask target '{target}' must be below an approved root."),
         });
@@ -820,17 +824,26 @@ pub(super) fn confined_target_physical(
             message: format!("Cask target '{target}' enters the managed Caskroom."),
         });
     }
-    let root: &Utf8Path = if target.starts_with(&ctx.env.home) {
-        &ctx.env.home
-    } else if target.starts_with(&ctx.env.prefix) {
-        &ctx.env.prefix
-    } else if let Some(&appdir) = appdirs.iter().find(|&&a| target.starts_with(a)) {
-        appdir
-    } else {
+    let authorized = target.starts_with(&ctx.env.home)
+        || target.starts_with(&ctx.env.prefix)
+        || appdirs.iter().any(|appdir| target.starts_with(appdir));
+    if !authorized {
         return Err(OpError::Refusal {
             message: format!("Cask target '{target}' is outside approved roots."),
         });
-    };
+    }
+    let fixed_applications = Utf8Path::new(crate::cask::DEFAULT_APPDIR);
+    let root = [
+        fixed_applications,
+        ctx.env.home.as_path(),
+        ctx.env.prefix.as_path(),
+    ]
+    .into_iter()
+    .filter(|root| target.starts_with(root))
+    .max_by_key(|root| root.components().count())
+    .ok_or_else(|| OpError::Refusal {
+        message: format!("Cask target '{target}' is outside approved physical roots."),
+    })?;
 
     let mut current = target;
     while current != root {

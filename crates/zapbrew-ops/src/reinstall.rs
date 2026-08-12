@@ -61,6 +61,7 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
             ctx,
             &cask_tokens,
             appdir,
+            crate::cask::reinstall::Purpose::Reinstall,
         )?)
     } else {
         None
