@@ -424,15 +424,17 @@ Download bottles without installing.
 ```text
 Download bottles without installing
 
-Usage: zapbrew fetch [OPTIONS] [NAMES]...
+Usage: zapbrew fetch [OPTIONS] <NAMES>...
 
 Arguments:
-  [NAMES]...  Formula names to fetch
+  <NAMES>...  Formula or cask names to fetch
 
 Options:
       --debug    Enable debug output
-      --deps     Also fetch the dependency closure
+      --formula  Fetch formulae only [alias: --formulae]
+      --cask     Fetch casks only [alias: --casks]
   -q, --quiet    Suppress non-essential output
+      --deps     Also fetch the dependency closure
   -v, --verbose  Enable verbose output
   -h, --help     Print help
 ```

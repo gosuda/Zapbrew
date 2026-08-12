@@ -10,12 +10,13 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use camino::Utf8PathBuf;
+use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use zapbrew_net::{
-    CachedArtifact, CachedBottle, DownloadRequest, NetError, download_all, fetch_artifact,
-    fetch_bottle,
+    ArtifactDownloadRequest, CachedArtifact, CachedBottle, DownloadRequest, NetError, download_all,
+    download_artifacts_all, fetch_artifact, fetch_bottle, prepare_artifact_downloads,
 };
 use zapbrew_prefix::{CommandOutput, CommandRunner, CommandSpec, Env, EnvDetectInput};
 use zapbrew_types::{BottleFile, BottleTag, Checksum, FormulaName, PkgVersion};
@@ -91,6 +92,13 @@ fn http() -> reqwest::Client {
         .redirect(reqwest::redirect::Policy::limited(10))
         .build()
         .expect("client")
+}
+
+fn sha(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn blob_path(digest: &str) -> String {
@@ -395,6 +403,15 @@ fn artifact_url(server: &MockServer, name: &str) -> String {
     format!("{}{}", server.uri(), artifact_path(name))
 }
 
+fn artifact_request(url: &str, sha256: Option<Checksum>) -> ArtifactDownloadRequest {
+    let basename = url.rsplit('/').next().unwrap_or(url).to_owned();
+    ArtifactDownloadRequest {
+        url: url.to_owned(),
+        alias_name: basename,
+        sha256,
+    }
+}
+
 #[tokio::test(flavor = "current_thread", start_paused = true)]
 async fn fetch_artifact_verifies_checksum_and_sends_no_auth() {
     let server = MockServer::start().await;
@@ -409,14 +426,16 @@ async fn fetch_artifact_verifies_checksum_and_sends_no_auth() {
 
     let (_dir, env) = test_env();
     let sha = Checksum::from_str(SHA_HELLO).expect("sha");
-    let cached = match fetch_artifact(&env, &http(), &url, Some(&sha)).await {
-        Ok(cached) => cached,
-        Err(err) => panic!("expected Ok, got {err}"),
-    };
+    let cached =
+        match fetch_artifact(&env, &http(), &artifact_request(&url, Some(sha.clone()))).await {
+            Ok(cached) => cached,
+            Err(err) => panic!("expected Ok, got {err}"),
+        };
     assert!(!cached.reused);
     assert!(cached.path.is_file());
     assert!(cached.alias.exists());
     assert_eq!(cached.alias.file_name(), Some("App.zip"));
+    assert_eq!(cached.sha256, sha);
     let bytes = std::fs::read(cached.path.as_std_path()).expect("read final");
     assert_eq!(bytes, BODY_HELLO);
 }
@@ -432,10 +451,11 @@ async fn fetch_artifact_no_check_skips_checksum() {
         .await;
 
     let (_dir, env) = test_env();
-    let cached: CachedArtifact = match fetch_artifact(&env, &http(), &url, None).await {
-        Ok(cached) => cached,
-        Err(err) => panic!("expected Ok, got {err}"),
-    };
+    let cached: CachedArtifact =
+        match fetch_artifact(&env, &http(), &artifact_request(&url, None)).await {
+            Ok(cached) => cached,
+            Err(err) => panic!("expected Ok, got {err}"),
+        };
     assert!(!cached.reused);
     let bytes = std::fs::read(cached.path.as_std_path()).expect("read final");
     assert_eq!(bytes, BODY_WRONG);
@@ -453,7 +473,7 @@ async fn fetch_artifact_checksum_mismatch_fails() {
 
     let (_dir, env) = test_env();
     let sha = Checksum::from_str(SHA_FULL).expect("sha");
-    match fetch_artifact(&env, &http(), &url, Some(&sha)).await {
+    match fetch_artifact(&env, &http(), &artifact_request(&url, Some(sha.clone()))).await {
         Ok(cached) => panic!("expected Err, got Ok(reused={})", cached.reused),
         Err(NetError::ChecksumMismatch { .. }) => {}
         Err(other) => panic!("expected ChecksumMismatch, got {other}"),
@@ -473,11 +493,11 @@ async fn fetch_artifact_reuses_valid_final() {
 
     let (_dir, env) = test_env();
     let sha = Checksum::from_str(SHA_HELLO).expect("sha");
-    let first = fetch_artifact(&env, &http(), &url, Some(&sha))
+    let first = fetch_artifact(&env, &http(), &artifact_request(&url, Some(sha.clone())))
         .await
         .expect("first fetch");
     assert!(!first.reused);
-    let second = fetch_artifact(&env, &http(), &url, Some(&sha))
+    let second = fetch_artifact(&env, &http(), &artifact_request(&url, Some(sha.clone())))
         .await
         .expect("second fetch");
     assert!(second.reused);
@@ -497,7 +517,7 @@ async fn fetch_artifact_refuses_symlinked_incomplete_file() {
 
     let (dir, env) = test_env();
     let sha = Checksum::from_str(SHA_HELLO).expect("sha");
-    let first = fetch_artifact(&env, &http(), &url, Some(&sha))
+    let first = fetch_artifact(&env, &http(), &artifact_request(&url, Some(sha.clone())))
         .await
         .expect("first fetch");
     fs::remove_file(first.path.as_std_path()).expect("remove final");
@@ -507,7 +527,7 @@ async fn fetch_artifact_refuses_symlinked_incomplete_file() {
     fs::write(&sentinel, b"keep").expect("sentinel");
     std::os::unix::fs::symlink(&sentinel, incomplete.as_std_path()).expect("symlink");
 
-    let error = fetch_artifact(&env, &http(), &url, Some(&sha))
+    let error = fetch_artifact(&env, &http(), &artifact_request(&url, Some(sha.clone())))
         .await
         .expect_err("symlinked incomplete must refuse");
     assert!(
@@ -536,7 +556,7 @@ async fn fetch_artifact_refuses_symlinked_downloads_ancestor() {
     std::os::unix::fs::symlink(&external, env.cache.join("downloads").as_std_path())
         .expect("downloads symlink");
 
-    let error = fetch_artifact(&env, &http(), &url, None)
+    let error = fetch_artifact(&env, &http(), &artifact_request(&url, None))
         .await
         .expect_err("symlinked cache ancestor must refuse");
     assert!(
@@ -687,4 +707,765 @@ async fn unavailable_custom_mirror_falls_back_to_catalog_url() {
     let catalog_requests = catalog.received_requests().await.expect("catalog requests");
     assert_eq!(catalog_requests.len(), 1);
     assert!(!catalog_requests[0].headers.contains_key("range"));
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn download_artifacts_all_rejects_conflicting_checksums_before_network() {
+    let server = MockServer::start().await;
+    let url = artifact_url(&server, "conflict.zip");
+    Mock::given(method("GET"))
+        .and(path(artifact_path("conflict.zip")))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let (_dir, env) = test_env();
+    let sha_a = Checksum::from_str(SHA_HELLO).expect("sha");
+    let sha_b = Checksum::from_str(SHA_FULL).expect("sha");
+    let requests = vec![
+        ArtifactDownloadRequest {
+            url: url.clone(),
+            alias_name: "a.zip".to_owned(),
+            sha256: Some(sha_a),
+        },
+        ArtifactDownloadRequest {
+            url,
+            alias_name: "b.zip".to_owned(),
+            sha256: Some(sha_b),
+        },
+    ];
+
+    let err = prepare_artifact_downloads(&env, requests).expect_err("conflict must fail preflight");
+    assert!(
+        matches!(err, NetError::InvalidResponse { .. }),
+        "unexpected {err}"
+    );
+    assert!(err.to_string().contains("conflicting"));
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn download_artifacts_all_shares_one_transfer_for_same_url_and_fans_aliases() {
+    let server = MockServer::start().await;
+    let url = artifact_url(&server, "shared.dmg");
+    Mock::given(method("GET"))
+        .and(path(artifact_path("shared.dmg")))
+        .and(header("accept", "application/octet-stream"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let (_dir, env) = test_env();
+    let sha = Checksum::from_str(SHA_HELLO).expect("sha");
+    let requests = vec![
+        ArtifactDownloadRequest {
+            url: url.clone(),
+            alias_name: "first--1.0.dmg".to_owned(),
+            sha256: Some(sha.clone()),
+        },
+        ArtifactDownloadRequest {
+            url,
+            alias_name: "second--1.0.dmg".to_owned(),
+            sha256: Some(sha.clone()),
+        },
+    ];
+
+    let prepared = prepare_artifact_downloads(&env, requests).expect("prepare");
+    let cached = download_artifacts_all(&env, &http(), prepared)
+        .await
+        .expect("shared download");
+    assert_eq!(cached.len(), 2);
+    assert_eq!(cached[0].path, cached[1].path);
+    assert_eq!(cached[0].sha256, sha);
+    assert_eq!(cached[1].sha256, sha);
+    assert_ne!(cached[0].alias, cached[1].alias);
+    assert!(cached[0].alias.is_file());
+    assert!(cached[1].alias.is_file());
+    assert!(cached[0].path.is_file());
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn download_artifacts_all_fans_out_aliases_when_no_check_is_not_first_request() {
+    let server = MockServer::start().await;
+    let unique_url = artifact_url(&server, "unique.zip");
+    let shared_url = artifact_url(&server, "shared.zip");
+    for route in [artifact_path("unique.zip"), artifact_path("shared.zip")] {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+
+    let (_dir, env) = test_env();
+    let expected = Checksum::from_str(SHA_HELLO).expect("sha");
+    let requests = vec![
+        ArtifactDownloadRequest {
+            url: unique_url,
+            alias_name: "unique.zip".to_owned(),
+            sha256: Some(expected.clone()),
+        },
+        ArtifactDownloadRequest {
+            url: shared_url.clone(),
+            alias_name: "checked.zip".to_owned(),
+            sha256: Some(expected.clone()),
+        },
+        ArtifactDownloadRequest {
+            url: shared_url,
+            alias_name: "unchecked.zip".to_owned(),
+            sha256: None,
+        },
+    ];
+
+    let prepared = prepare_artifact_downloads(&env, requests).expect("prepare");
+    let cached = download_artifacts_all(&env, &http(), prepared)
+        .await
+        .expect("downloads");
+
+    assert_eq!(
+        cached[1].alias.file_name(),
+        Some("checked.zip"),
+        "checked request must keep its alias"
+    );
+    assert_eq!(
+        cached[2].alias.file_name(),
+        Some("unchecked.zip"),
+        "no_check request must keep its alias"
+    );
+    assert!(cached[1].alias.is_file());
+    assert!(cached[2].alias.is_file());
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn download_artifacts_all_restores_input_order_despite_completion_order() {
+    let server = MockServer::start().await;
+    let first_url = artifact_url(&server, "first.zip");
+    let second_url = artifact_url(&server, "second.zip");
+    for (route, body) in [
+        ("/downloads/first.zip", BODY_C0),
+        ("/downloads/second.zip", BODY_C1),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(body))
+            .mount(&server)
+            .await;
+    }
+
+    let (_dir, env) = test_env();
+    let sha0 = Checksum::from_str(SHA_C0).expect("sha");
+    let sha1 = Checksum::from_str(SHA_C1).expect("sha");
+    let requests = vec![
+        ArtifactDownloadRequest {
+            url: first_url,
+            alias_name: "first--1.0.zip".to_owned(),
+            sha256: Some(sha0),
+        },
+        ArtifactDownloadRequest {
+            url: second_url,
+            alias_name: "second--1.0.zip".to_owned(),
+            sha256: Some(sha1.clone()),
+        },
+    ];
+
+    let prepared = prepare_artifact_downloads(&env, requests).expect("prepare");
+    let cached = download_artifacts_all(&env, &http(), prepared)
+        .await
+        .expect("ordered download");
+    assert_eq!(cached.len(), 2);
+    assert_eq!(cached[0].alias.file_name(), Some("first--1.0.zip"));
+    assert_eq!(cached[1].alias.file_name(), Some("second--1.0.zip"));
+    assert_eq!(cached[1].sha256, sha1);
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn download_artifacts_all_returns_first_error_in_input_order() {
+    let server = MockServer::start().await;
+    let bad_url = artifact_url(&server, "bad.zip");
+    let good_url = artifact_url(&server, "good.zip");
+    Mock::given(method("GET"))
+        .and(path(artifact_path("bad.zip")))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(artifact_path("good.zip")))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO))
+        .mount(&server)
+        .await;
+
+    let (_dir, env) = test_env();
+    let sha = Checksum::from_str(SHA_HELLO).expect("sha");
+    let requests = vec![
+        ArtifactDownloadRequest {
+            url: bad_url.clone(),
+            alias_name: "bad--1.0.zip".to_owned(),
+            sha256: Some(sha.clone()),
+        },
+        ArtifactDownloadRequest {
+            url: good_url,
+            alias_name: "good--1.0.zip".to_owned(),
+            sha256: Some(sha),
+        },
+    ];
+
+    let prepared = prepare_artifact_downloads(&env, requests).expect("prepare");
+    let err = download_artifacts_all(&env, &http(), prepared)
+        .await
+        .expect_err("first error");
+    assert!(
+        err.to_string().contains(&bad_url),
+        "expected {bad_url} in {err}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn download_artifacts_all_computes_actual_digest_for_no_check() {
+    let server = MockServer::start().await;
+    let url = artifact_url(&server, "unchecked.zip");
+    Mock::given(method("GET"))
+        .and(path(artifact_path("unchecked.zip")))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO))
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    let (_dir, env) = test_env();
+    let sha = Checksum::from_str(SHA_HELLO).expect("sha");
+    let requests = vec![ArtifactDownloadRequest {
+        url: url.clone(),
+        alias_name: "nocheck--1.0.zip".to_owned(),
+        sha256: None,
+    }];
+
+    let prepared1 = prepare_artifact_downloads(&env, requests.clone()).expect("prepare first");
+    let first = download_artifacts_all(&env, &http(), prepared1)
+        .await
+        .expect("first");
+    assert!(!first[0].reused);
+    assert_eq!(first[0].sha256, sha);
+
+    let prepared2 = prepare_artifact_downloads(&env, requests).expect("prepare second");
+    let second = download_artifacts_all(&env, &http(), prepared2)
+        .await
+        .expect("second");
+    assert!(!second[0].reused);
+    assert_eq!(second[0].sha256, sha);
+}
+
+#[test]
+fn prepare_rejects_malformed_url_before_transfer() {
+    let (_dir, env) = test_env();
+    let requests = vec![ArtifactDownloadRequest {
+        url: "not-a-url".to_owned(),
+        alias_name: "x.zip".to_owned(),
+        sha256: None,
+    }];
+
+    let err = prepare_artifact_downloads(&env, requests).expect_err("malformed URL");
+    assert!(err.to_string().contains("invalid URL"), "unexpected {err}");
+}
+
+#[test]
+fn prepare_rejects_invalid_source_basename_before_transfer() {
+    let (_dir, env) = test_env();
+    let requests = vec![ArtifactDownloadRequest {
+        url: "https://example.com/".to_owned(),
+        alias_name: "x.zip".to_owned(),
+        sha256: None,
+    }];
+
+    let err = prepare_artifact_downloads(&env, requests).expect_err("invalid source basename");
+    assert!(
+        err.to_string().contains("not a safe path segment"),
+        "unexpected {err}"
+    );
+}
+
+#[test]
+fn prepare_rejects_cross_url_alias_collision_before_transfer() {
+    let (_dir, env) = test_env();
+    let requests = vec![
+        ArtifactDownloadRequest {
+            url: "https://example.com/a.zip".to_owned(),
+            alias_name: "same.zip".to_owned(),
+            sha256: None,
+        },
+        ArtifactDownloadRequest {
+            url: "https://example.com/b.zip".to_owned(),
+            alias_name: "same.zip".to_owned(),
+            sha256: None,
+        },
+    ];
+
+    let err = prepare_artifact_downloads(&env, requests).expect_err("cross-URL alias collision");
+    assert!(err.to_string().contains("conflicting"), "unexpected {err}");
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn download_artifacts_all_rejects_conflicting_checksums_after_leading_no_check_before_network()
+ {
+    let server = MockServer::start().await;
+    let url = artifact_url(&server, "conflict.zip");
+    Mock::given(method("GET"))
+        .and(path(artifact_path("conflict.zip")))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let (_dir, env) = test_env();
+    let sha_a = Checksum::from_str(SHA_HELLO).expect("sha");
+    let sha_b = Checksum::from_str(SHA_FULL).expect("sha");
+    let requests = vec![
+        ArtifactDownloadRequest {
+            url: url.clone(),
+            alias_name: "none.zip".to_owned(),
+            sha256: None,
+        },
+        ArtifactDownloadRequest {
+            url: url.clone(),
+            alias_name: "a.zip".to_owned(),
+            sha256: Some(sha_a),
+        },
+        ArtifactDownloadRequest {
+            url,
+            alias_name: "b.zip".to_owned(),
+            sha256: Some(sha_b),
+        },
+    ];
+
+    let err = prepare_artifact_downloads(&env, requests).expect_err("conflict must fail preflight");
+    assert!(
+        matches!(err, NetError::InvalidResponse { .. }),
+        "unexpected {err}"
+    );
+    assert!(err.to_string().contains("conflicting"));
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn fetch_artifact_repairs_missing_alias_on_valid_final_reuse() {
+    let server = MockServer::start().await;
+    let url = artifact_url(&server, "repair-missing.zip");
+    Mock::given(method("GET"))
+        .and(path(artifact_path("repair-missing.zip")))
+        .and(header("accept", "application/octet-stream"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let (_dir, env) = test_env();
+    let sha = Checksum::from_str(SHA_HELLO).expect("sha");
+    let request = artifact_request(&url, Some(sha.clone()));
+    let first = fetch_artifact(&env, &http(), &request)
+        .await
+        .expect("first fetch");
+    assert!(!first.reused);
+
+    fs::remove_file(first.alias.as_std_path()).expect("remove alias");
+
+    let second = fetch_artifact(&env, &http(), &request)
+        .await
+        .expect("second fetch");
+    assert!(second.reused);
+    assert_eq!(second.path, first.path);
+    assert_eq!(second.sha256, sha);
+
+    let meta = std::fs::symlink_metadata(&second.alias).expect("alias meta");
+    assert!(meta.file_type().is_symlink(), "alias must be a symlink");
+    let target = std::fs::read_link(&second.alias).expect("alias target");
+    let expected = format!("downloads/{}", first.path.file_name().expect("file_name"));
+    assert_eq!(target, std::path::Path::new(&expected));
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn fetch_artifact_repairs_stale_alias_on_valid_final_reuse() {
+    let server = MockServer::start().await;
+    let url = artifact_url(&server, "repair-stale.zip");
+    Mock::given(method("GET"))
+        .and(path(artifact_path("repair-stale.zip")))
+        .and(header("accept", "application/octet-stream"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let (_dir, env) = test_env();
+    let sha = Checksum::from_str(SHA_HELLO).expect("sha");
+    let request = artifact_request(&url, Some(sha.clone()));
+    let first = fetch_artifact(&env, &http(), &request)
+        .await
+        .expect("first fetch");
+    assert!(!first.reused);
+
+    fs::remove_file(first.alias.as_std_path()).expect("remove alias");
+    std::os::unix::fs::symlink("somewhere/else", first.alias.as_std_path()).expect("stale link");
+
+    let second = fetch_artifact(&env, &http(), &request)
+        .await
+        .expect("second fetch");
+    assert!(second.reused);
+    assert_eq!(second.path, first.path);
+
+    let target = std::fs::read_link(&second.alias).expect("alias target");
+    let expected = format!("downloads/{}", first.path.file_name().expect("file_name"));
+    assert_eq!(target, std::path::Path::new(&expected));
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn fetch_artifact_refuses_symlinked_final_on_reuse() {
+    let server = MockServer::start().await;
+    let url = artifact_url(&server, "linked-final.zip");
+    Mock::given(method("GET"))
+        .and(path(artifact_path("linked-final.zip")))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let (dir, env) = test_env();
+    let sha = Checksum::from_str(SHA_HELLO).expect("sha");
+    let request = artifact_request(&url, Some(sha.clone()));
+    let first = fetch_artifact(&env, &http(), &request)
+        .await
+        .expect("first fetch");
+    assert!(!first.reused);
+
+    fs::remove_file(first.path.as_std_path()).expect("remove final");
+    let external = dir.path().join("external-final");
+    fs::write(&external, BODY_HELLO).expect("external");
+    std::os::unix::fs::symlink(&external, first.path.as_std_path()).expect("final symlink");
+
+    let err = fetch_artifact(&env, &http(), &request)
+        .await
+        .expect_err("symlinked final must refuse");
+    assert!(err.to_string().contains("symlink"), "unexpected {err}");
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn fetch_artifact_refuses_symlinked_incomplete_on_fast_publish() {
+    let server = MockServer::start().await;
+    let url = artifact_url(&server, "linked-incomplete.zip");
+    Mock::given(method("GET"))
+        .and(path(artifact_path("linked-incomplete.zip")))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let (dir, env) = test_env();
+    let sha = Checksum::from_str(SHA_HELLO).expect("sha");
+    let request = artifact_request(&url, Some(sha.clone()));
+    let first = fetch_artifact(&env, &http(), &request)
+        .await
+        .expect("first fetch");
+    assert!(!first.reused);
+
+    fs::remove_file(first.path.as_std_path()).expect("remove final");
+    let _ = fs::remove_file(first.alias.as_std_path());
+    let incomplete = camino::Utf8PathBuf::from(format!("{}.incomplete", first.path));
+    let external = dir.path().join("external-incomplete");
+    fs::write(&external, BODY_HELLO).expect("external");
+    std::os::unix::fs::symlink(&external, incomplete.as_std_path()).expect("incomplete symlink");
+
+    let err = fetch_artifact(&env, &http(), &request)
+        .await
+        .expect_err("symlinked incomplete must refuse");
+    assert!(err.to_string().contains("symlink"), "unexpected {err}");
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn download_artifacts_all_no_check_plus_declared_checksum_forces_one_get_and_verifies() {
+    let server = MockServer::start().await;
+    let url = artifact_url(&server, "preseed.zip");
+    Mock::given(method("GET"))
+        .and(path(artifact_path("preseed.zip")))
+        .and(header("accept", "application/octet-stream"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let (_dir, env) = test_env();
+    let expected = Checksum::from_str(SHA_HELLO).expect("sha");
+    let url_hash = sha(url.as_bytes());
+    let final_path = env
+        .cache
+        .join("downloads")
+        .join(format!("{url_hash}--preseed.zip"));
+    fs::create_dir_all(
+        final_path
+            .parent()
+            .expect("cache final has parent")
+            .as_std_path(),
+    )
+    .expect("mkdir");
+    fs::write(&final_path, BODY_HELLO).expect("preseed final");
+
+    let requests = vec![
+        ArtifactDownloadRequest {
+            url: url.clone(),
+            alias_name: "none.zip".to_owned(),
+            sha256: None,
+        },
+        ArtifactDownloadRequest {
+            url,
+            alias_name: "checked.zip".to_owned(),
+            sha256: Some(expected.clone()),
+        },
+    ];
+
+    let prepared = prepare_artifact_downloads(&env, requests).expect("prepare");
+    let cached = download_artifacts_all(&env, &http(), prepared)
+        .await
+        .expect("mixed batch");
+
+    assert_eq!(cached.len(), 2);
+    assert!(!cached[0].reused);
+    assert!(!cached[1].reused);
+    assert_eq!(cached[0].sha256, expected);
+    assert_eq!(cached[1].sha256, expected);
+    assert_ne!(cached[0].alias, cached[1].alias);
+    assert!(cached[0].alias.is_file());
+    assert!(cached[1].alias.is_file());
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn download_artifacts_all_no_check_plus_wrong_declared_checksum_fails() {
+    let server = MockServer::start().await;
+    let url = artifact_url(&server, "wrong.zip");
+    Mock::given(method("GET"))
+        .and(path(artifact_path("wrong.zip")))
+        .and(header("accept", "application/octet-stream"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO))
+        .expect(5)
+        .mount(&server)
+        .await;
+
+    let (_dir, env) = test_env();
+    let wrong_sha = Checksum::from_str(SHA_FULL).expect("sha");
+    let url_hash = sha(url.as_bytes());
+    let final_path = env
+        .cache
+        .join("downloads")
+        .join(format!("{url_hash}--wrong.zip"));
+    fs::create_dir_all(
+        final_path
+            .parent()
+            .expect("cache final has parent")
+            .as_std_path(),
+    )
+    .expect("mkdir");
+    fs::write(&final_path, BODY_HELLO).expect("preseed correct final");
+
+    let requests = vec![
+        ArtifactDownloadRequest {
+            url: url.clone(),
+            alias_name: "none.zip".to_owned(),
+            sha256: None,
+        },
+        ArtifactDownloadRequest {
+            url,
+            alias_name: "checked.zip".to_owned(),
+            sha256: Some(wrong_sha),
+        },
+    ];
+
+    let prepared = prepare_artifact_downloads(&env, requests).expect("prepare");
+    let err = download_artifacts_all(&env, &http(), prepared)
+        .await
+        .expect_err("wrong checksum must fail");
+    assert!(
+        matches!(err, NetError::ChecksumMismatch { .. }),
+        "unexpected {err}"
+    );
+
+    assert!(
+        final_path.is_file(),
+        "preseeded final must survive the mismatch"
+    );
+    let preserved = fs::read(final_path.as_std_path()).expect("read preserved final");
+    assert_eq!(preserved, BODY_HELLO);
+    assert!(!env.cache.join("none.zip").exists());
+    assert!(!env.cache.join("checked.zip").exists());
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn download_artifacts_all_forced_transfer_preserves_final_and_alias_on_mismatch() {
+    let server = MockServer::start().await;
+    let url = artifact_url(&server, "preserved.zip");
+    Mock::given(method("GET"))
+        .and(path(artifact_path("preserved.zip")))
+        .and(header("accept", "application/octet-stream"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_WRONG))
+        .expect(5)
+        .mount(&server)
+        .await;
+
+    let (_dir, env) = test_env();
+    let expected = Checksum::from_str(SHA_HELLO).expect("sha");
+    let url_hash = sha(url.as_bytes());
+    let final_path = env
+        .cache
+        .join("downloads")
+        .join(format!("{url_hash}--preserved.zip"));
+    let alias_path = env.cache.join("checked.zip");
+    fs::create_dir_all(
+        final_path
+            .parent()
+            .expect("cache final has parent")
+            .as_std_path(),
+    )
+    .expect("mkdir");
+    fs::write(&final_path, BODY_HELLO).expect("preseed final");
+    std::os::unix::fs::symlink(
+        format!(
+            "downloads/{}",
+            final_path.file_name().expect("cache final has file name")
+        ),
+        alias_path.as_std_path(),
+    )
+    .expect("preseed alias");
+
+    let requests = vec![
+        ArtifactDownloadRequest {
+            url: url.clone(),
+            alias_name: "none.zip".to_owned(),
+            sha256: None,
+        },
+        ArtifactDownloadRequest {
+            url,
+            alias_name: "checked.zip".to_owned(),
+            sha256: Some(expected),
+        },
+    ];
+
+    let prepared = prepare_artifact_downloads(&env, requests).expect("prepare");
+    let err = download_artifacts_all(&env, &http(), prepared)
+        .await
+        .expect_err("wrong checksum must fail");
+    assert!(
+        matches!(err, NetError::ChecksumMismatch { .. }),
+        "unexpected {err}"
+    );
+
+    let preserved = fs::read(final_path.as_std_path()).expect("old final still readable");
+    assert_eq!(preserved, BODY_HELLO);
+    assert!(alias_path.is_symlink(), "old alias must remain a symlink");
+    let target = fs::read_link(alias_path.as_std_path()).expect("read alias");
+    assert_eq!(
+        target,
+        std::path::Path::new(&format!(
+            "downloads/{}",
+            final_path.file_name().expect("file_name")
+        ))
+    );
+
+    let incomplete = Utf8PathBuf::from(format!("{}.incomplete", final_path));
+    assert!(
+        !incomplete.exists(),
+        "incomplete must be removed on mismatch"
+    );
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn prepare_rejects_static_hazard_before_any_network() {
+    let server = MockServer::start().await;
+    let hazard_url = artifact_url(&server, "hazard.zip");
+    let valid_url = artifact_url(&server, "valid.zip");
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let (dir, env) = test_env();
+    fs::create_dir_all(env.cache.join("downloads").as_std_path()).expect("downloads");
+    let hazard_hash = sha(hazard_url.as_bytes());
+    let hazard_incomplete = env
+        .cache
+        .join("downloads")
+        .join(format!("{hazard_hash}--hazard.zip.incomplete"));
+    let sentinel = dir.path().join("sentinel");
+    fs::write(&sentinel, b"keep").expect("sentinel");
+    std::os::unix::fs::symlink(&sentinel, hazard_incomplete.as_std_path()).expect("symlink");
+
+    let requests = vec![
+        ArtifactDownloadRequest {
+            url: valid_url,
+            alias_name: "valid.zip".to_owned(),
+            sha256: None,
+        },
+        ArtifactDownloadRequest {
+            url: hazard_url,
+            alias_name: "hazard.zip".to_owned(),
+            sha256: None,
+        },
+    ];
+
+    let err = prepare_artifact_downloads(&env, requests).expect_err("hazard must fail preflight");
+    assert!(err.to_string().contains("symlink"), "unexpected {err}");
+    assert_eq!(fs::read(&sentinel).expect("sentinel survives"), b"keep");
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn prepare_rejects_alias_directory_before_any_network() {
+    let server = MockServer::start().await;
+    let url = artifact_url(&server, "alias-dir.zip");
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let (_dir, env) = test_env();
+    fs::create_dir_all(env.cache.join("alias-dir.zip").as_std_path()).expect("alias directory");
+    let requests = vec![ArtifactDownloadRequest {
+        url,
+        alias_name: "alias-dir.zip".to_owned(),
+        sha256: None,
+    }];
+
+    let err = prepare_artifact_downloads(&env, requests)
+        .expect_err("alias directory must fail preflight");
+    assert!(
+        err.to_string().contains("alias path is a directory"),
+        "unexpected {err}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn fetch_bottle_reuses_valid_final_without_repairing_alias() {
+    let server = MockServer::start().await;
+    let digest = "formula-no-repair";
+    let url = blob_url(&server, digest);
+    Mock::given(method("GET"))
+        .and(path(blob_path(digest)))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY_HELLO))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let (_dir, env) = test_env();
+    let bottle = bottle(&url, SHA_HELLO);
+    let client = http();
+
+    let first =
+        assert_ok_cached(fetch_bottle(&env, &client, &name(), &bottle, &version(), 0).await);
+    assert!(!first.reused);
+    assert!(first.alias.is_file());
+
+    fs::remove_file(first.alias.as_std_path()).expect("remove alias");
+
+    let second =
+        assert_ok_cached(fetch_bottle(&env, &client, &name(), &bottle, &version(), 0).await);
+    assert!(second.reused);
+    assert_eq!(second.path, first.path);
+    assert!(
+        !second.alias.exists(),
+        "formula fetch must not repair alias on reuse"
+    );
 }

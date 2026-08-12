@@ -406,10 +406,17 @@ pub struct UnlinkArgs {
 
 #[derive(Debug, Args)]
 pub struct FetchArgs {
-    /// Formula names to fetch.
+    /// Formula or cask names to fetch.
+    #[arg(required = true)]
     pub names: Vec<String>,
+    /// Fetch formulae only.
+    #[arg(long, visible_alias = "formulae")]
+    pub formula: bool,
+    /// Fetch casks only.
+    #[arg(long, visible_alias = "casks", conflicts_with = "formula")]
+    pub cask: bool,
     /// Also fetch the dependency closure.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "cask")]
     pub deps: bool,
 }
 
@@ -1139,6 +1146,60 @@ mod tests {
             ),
         ] {
             assert_eq!(parse_kind(argv), expected, "argv: {argv:?}");
+        }
+    }
+
+    #[test]
+    fn fetch_requires_at_least_one_name() {
+        assert_eq!(
+            parse_kind(&["zapbrew", "fetch"]),
+            ErrorKind::MissingRequiredArgument
+        );
+    }
+
+    #[test]
+    fn fetch_formula_and_cask_flags_are_mutually_exclusive() {
+        assert_eq!(
+            parse_kind(&["zapbrew", "fetch", "--formula", "--cask", "foo"]),
+            ErrorKind::ArgumentConflict
+        );
+    }
+
+    #[test]
+    fn fetch_cask_conflicts_with_deps() {
+        assert_eq!(
+            parse_kind(&["zapbrew", "fetch", "--cask", "--deps", "foo"]),
+            ErrorKind::ArgumentConflict
+        );
+    }
+
+    #[test]
+    fn fetch_formula_and_formulae_aliases_both_set_flag() {
+        for argv in [
+            ["zapbrew", "fetch", "--formula", "foo"],
+            ["zapbrew", "fetch", "--formulae", "foo"],
+        ] {
+            let Commands::Fetch(args) = command(argv.as_slice()) else {
+                panic!("expected fetch");
+            };
+            assert!(args.formula);
+            assert!(!args.cask);
+            assert_eq!(args.names, vec!["foo"]);
+        }
+    }
+
+    #[test]
+    fn fetch_cask_and_casks_aliases_both_set_flag() {
+        for argv in [
+            ["zapbrew", "fetch", "--cask", "foo"],
+            ["zapbrew", "fetch", "--casks", "foo"],
+        ] {
+            let Commands::Fetch(args) = command(argv.as_slice()) else {
+                panic!("expected fetch");
+            };
+            assert!(args.cask);
+            assert!(!args.formula);
+            assert_eq!(args.names, vec!["foo"]);
         }
     }
 }

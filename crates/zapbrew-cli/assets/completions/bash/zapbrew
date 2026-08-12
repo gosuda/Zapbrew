@@ -653,7 +653,7 @@ _zapbrew() {
             return 0
             ;;
         zapbrew__subcmd__fetch)
-            opts="-q -v -h --deps --debug --quiet --verbose --help"
+            opts="-q -v -h --formulae --formula --casks --cask --deps --debug --quiet --verbose --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

@@ -1,21 +1,23 @@
 //! Bottle fetch into the Homebrew-compatible cache with resume and retries.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use futures::stream::{self, StreamExt};
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_RANGE, RANGE};
-use reqwest::{Client, StatusCode};
+use reqwest::{Client, StatusCode, Url};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 use zapbrew_prefix::Env;
 use zapbrew_types::{BottleFile, Checksum, FormulaName, PkgVersion};
 
 use crate::cache::{
-    CachePaths, artifact_cache_paths, bottle_basename, cache_paths, checksum_file, publish,
+    CachePaths, artifact_cache_paths_with_alias, bottle_basename, cache_paths, checksum_file,
+    ensure_alias, publish,
 };
 use crate::error::NetError;
 use crate::progress::download_progress;
-use crate::types::{CachedArtifact, CachedBottle, DownloadRequest};
+use crate::types::{ArtifactDownloadRequest, CachedArtifact, CachedBottle, DownloadRequest};
 
 /// Maximum download attempts (brew `retryable_download` default).
 const MAX_ATTEMPTS: u32 = 5;
@@ -24,43 +26,69 @@ const MAX_ATTEMPTS: u32 = 5;
 /// keeps the original `bottle.url` verbatim.
 const BOTTLE_DEFAULT_DOMAIN: &str = "https://ghcr.io/v2/homebrew/core";
 
-/// Fetch one cask-style artifact into `$HOMEBREW_CACHE`.
+/// Internal policy for one artifact fetch.
+///
+/// `expected_checksum` gates publish; `force_download` skips cached final/incomplete
+/// reuse so a `no_check` member can still force a fresh transfer without letting
+/// unverified bytes become canonical.
+#[derive(Debug, Clone)]
+struct ArtifactFetchOptions {
+    /// Declared digest, or `None` for a `no_check` artifact.
+    expected_checksum: Option<Checksum>,
+    /// Skip final/incomplete reuse and force a network transfer.
+    force_download: bool,
+}
+
+/// Fetch one cask-style artifact into `$HOMEBREW_CACHE` with a fetch policy.
 ///
 /// Uses the same content-addressed `downloads/` layout, `.incomplete` resume,
 /// retry policy, and fsync + atomic publish as bottles, but sends no GHCR
-/// bearer authorization header. `sha256 == None` skips checksum verification.
-pub async fn fetch_artifact(
+/// bearer authorization header. Streams into `.incomplete`, verifies
+/// `expected_checksum` there when present, then publishes; on mismatch only the
+/// `.incomplete` file is removed and any previous final/alias is preserved.
+async fn fetch_artifact_with_options(
     env: &Env,
     http: &Client,
     url: &str,
-    sha256: Option<&Checksum>,
+    alias_name: &str,
+    options: &ArtifactFetchOptions,
 ) -> Result<CachedArtifact, NetError> {
-    let paths = artifact_cache_paths(env, url)?;
-    let expected = sha256;
+    let paths = artifact_cache_paths_with_alias(env, url, alias_name)?;
+    let expected = options.expected_checksum.as_ref();
 
-    if let Some(expected) = expected
-        && paths.final_path.is_file()
-        && let Ok(actual) = checksum_file(&paths.final_path)
-        && &actual == expected
-    {
-        return Ok(CachedArtifact {
-            path: paths.final_path,
-            alias: paths.alias,
-            reused: true,
-        });
-    }
+    if !options.force_download {
+        // With a declared checksum, a matching final file is immediately reusable.
+        // Validate the cache path first and repair the alias before returning.
+        if let Some(expected) = expected
+            && cache_file_len(&env.cache, &paths.final_path)?.is_some()
+            && let Ok(actual) = checksum_file(&paths.final_path)
+            && &actual == expected
+        {
+            ensure_alias(&paths.alias, &paths.relative_target)?;
+            return Ok(CachedArtifact {
+                path: paths.final_path,
+                alias: paths.alias,
+                sha256: actual,
+                reused: true,
+            });
+        }
 
-    if let Some(expected) = expected
-        && paths.incomplete.is_file()
-        && let Ok(actual) = checksum_file(&paths.incomplete)
-        && &actual == expected
-    {
-        publish(&paths)?;
-        return Ok(CachedArtifact {
-            path: paths.final_path,
-            alias: paths.alias,
-            reused: false,
-        });
+        // With a declared checksum, a matching incomplete can be published without
+        // any network I/O. A non-matching or invalid incomplete is left for the
+        // retry loop so resume/restart and symlink validation work unchanged.
+        if let Some(expected) = expected
+            && cache_file_len(&env.cache, &paths.incomplete)?.is_some()
+            && let Ok(actual) = checksum_file(&paths.incomplete)
+            && &actual == expected
+        {
+            safe_publish(&env.cache, &paths)?;
+            return Ok(CachedArtifact {
+                path: paths.final_path.clone(),
+                alias: paths.alias.clone(),
+                sha256: actual,
+                reused: false,
+            });
+        }
     }
 
     let mut last_error: Option<NetError> = None;
@@ -69,12 +97,19 @@ pub async fn fetch_artifact(
         match attempt_artifact_download(env, http, url, &paths).await {
             Ok(()) => {
                 if let Some(expected) = expected {
+                    cache_file_len(&env.cache, &paths.incomplete)?.ok_or_else(|| {
+                        unsafe_cache_path(
+                            &paths.incomplete,
+                            "incomplete path is not a regular file",
+                        )
+                    })?;
                     match checksum_file(&paths.incomplete) {
                         Ok(actual) if &actual == expected => {
-                            publish(&paths)?;
+                            safe_publish(&env.cache, &paths)?;
                             return Ok(CachedArtifact {
                                 path: paths.final_path.clone(),
                                 alias: paths.alias.clone(),
+                                sha256: actual,
                                 reused: false,
                             });
                         }
@@ -92,10 +127,18 @@ pub async fn fetch_artifact(
                         }
                     }
                 } else {
-                    publish(&paths)?;
+                    cache_file_len(&env.cache, &paths.incomplete)?.ok_or_else(|| {
+                        unsafe_cache_path(
+                            &paths.incomplete,
+                            "incomplete path is not a regular file",
+                        )
+                    })?;
+                    let actual = checksum_file(&paths.incomplete)?;
+                    safe_publish(&env.cache, &paths)?;
                     return Ok(CachedArtifact {
                         path: paths.final_path.clone(),
                         alias: paths.alias.clone(),
+                        sha256: actual,
                         reused: false,
                     });
                 }
@@ -118,6 +161,30 @@ pub async fn fetch_artifact(
         url: url.to_owned(),
         reason: "download failed without a recorded error".to_owned(),
     }))
+}
+
+/// Fetch one cask-style artifact into `$HOMEBREW_CACHE`.
+///
+/// Uses the same content-addressed `downloads/` layout, `.incomplete` resume,
+/// retry policy, and fsync + atomic publish as bottles, but sends no GHCR
+/// bearer authorization header. `request.sha256 == None` skips checksum
+/// verification and keeps a conservative re-download policy for freshness.
+pub async fn fetch_artifact(
+    env: &Env,
+    http: &Client,
+    request: &ArtifactDownloadRequest,
+) -> Result<CachedArtifact, NetError> {
+    fetch_artifact_with_options(
+        env,
+        http,
+        &request.url,
+        &request.alias_name,
+        &ArtifactFetchOptions {
+            expected_checksum: request.sha256.clone(),
+            force_download: false,
+        },
+    )
+    .await
 }
 
 /// Fetch one bottle into `$HOMEBREW_CACHE`, reusing a valid final when present.
@@ -262,6 +329,243 @@ pub async fn download_all(
     Ok(bottles)
 }
 
+/// Opaque validated and grouped batch of artifact downloads.
+#[derive(Debug)]
+pub struct PreparedArtifactDownloads {
+    groups: Vec<PreparedGroup>,
+    count: usize,
+}
+
+#[derive(Debug)]
+struct PreparedGroup {
+    url: String,
+    members: Vec<PreparedMember>,
+    /// First declared checksum for the group, used to detect conflicts and to
+    /// verify the actual content after transfer.
+    sha256: Option<Checksum>,
+    /// True if any member is a `no_check` request. Any `no_check` forces a
+    /// fresh transfer for the whole group; declared checksums are still
+    /// verified against the actual content after download.
+    has_no_check: bool,
+    /// Canonical cache paths for the shared URL, validated before any network
+    /// I/O and reused during fan-out.
+    paths: CachePaths,
+}
+
+#[derive(Debug, Clone)]
+struct PreparedMember {
+    index: usize,
+    alias_name: String,
+    sha256: Option<Checksum>,
+}
+
+/// Validate every request, parse and scheme-check each URL, validate the cache
+/// path for the URL basename and alias, run `cache_file_len` on the final and
+/// incomplete paths to inspect static symlink/non-dir ancestors, group identical
+/// URLs, store the canonical `CachePaths` per group, and reject conflicting
+/// declared checksums or one alias mapped to distinct URLs before any network
+/// I/O. The returned prepared batch is consumed by `download_artifacts_all`.
+pub fn prepare_artifact_downloads(
+    env: &Env,
+    requests: Vec<ArtifactDownloadRequest>,
+) -> Result<PreparedArtifactDownloads, NetError> {
+    if requests.is_empty() {
+        return Ok(PreparedArtifactDownloads {
+            groups: Vec::new(),
+            count: 0,
+        });
+    }
+
+    let mut by_url: HashMap<String, PreparedGroup> = HashMap::new();
+    let mut by_alias: HashMap<String, String> = HashMap::new();
+
+    for (index, request) in requests.into_iter().enumerate() {
+        let parsed = Url::parse(&request.url).map_err(|err| NetError::InvalidResponse {
+            url: request.url.clone(),
+            reason: format!("invalid URL: {err}"),
+        })?;
+        if !matches!(parsed.scheme(), "http" | "https") {
+            return Err(NetError::InvalidResponse {
+                url: request.url.clone(),
+                reason: "URL must be absolute http or https".to_owned(),
+            });
+        }
+
+        // Validate the cache path for this URL/alias and inspect final/incomplete.
+        let paths = artifact_cache_paths_with_alias(env, &request.url, &request.alias_name)?;
+        cache_file_len(&env.cache, &paths.final_path)?;
+        cache_file_len(&env.cache, &paths.incomplete)?;
+        match std::fs::symlink_metadata(&paths.alias) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+                return Err(NetError::io(
+                    "validate",
+                    &paths.alias,
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "alias path is a directory",
+                    ),
+                ));
+            }
+            Ok(_) => {}
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => return Err(NetError::io("inspect", &paths.alias, source)),
+        }
+
+        // Reject one alias_name mapped to distinct URLs.
+        if let Some(existing_url) = by_alias.get(&request.alias_name) {
+            if existing_url != &request.url {
+                return Err(NetError::InvalidResponse {
+                    url: request.url.clone(),
+                    reason: format!("conflicting URLs for alias '{}'", request.alias_name),
+                });
+            }
+        } else {
+            by_alias.insert(request.alias_name.clone(), request.url.clone());
+        }
+
+        let group = by_url
+            .entry(request.url.clone())
+            .or_insert_with(|| PreparedGroup {
+                url: request.url.clone(),
+                members: Vec::new(),
+                sha256: None,
+                has_no_check: false,
+                paths: paths.clone(),
+            });
+
+        if request.sha256.is_none() {
+            group.has_no_check = true;
+        }
+
+        if let Some(sha256) = request.sha256.as_ref() {
+            match &group.sha256 {
+                None => group.sha256 = Some(sha256.clone()),
+                Some(first) if first != sha256 => {
+                    return Err(NetError::InvalidResponse {
+                        url: request.url.clone(),
+                        reason: "conflicting declared checksums for the same URL".to_owned(),
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        group.members.push(PreparedMember {
+            index,
+            alias_name: request.alias_name,
+            sha256: request.sha256,
+        });
+    }
+
+    let count = by_url.values().map(|g| g.members.len()).sum();
+    Ok(PreparedArtifactDownloads {
+        groups: by_url.into_values().collect(),
+        count,
+    })
+}
+
+/// Fetch many generic artifacts with bounded concurrency, restoring input order.
+///
+/// Consumes a prepared batch from `prepare_artifact_downloads`. Groups identical
+/// URLs so only one download is scheduled per content file, publishes the shared
+/// content once, then fans out request-specific aliases. Returns results in the
+/// same order as the input requests; the first error in input order is
+/// propagated.
+///
+/// `request.sha256 == None` keeps the conservative `fetch_artifact` re-download
+/// policy for `no_check` casks.
+pub async fn download_artifacts_all(
+    env: &Env,
+    http: &Client,
+    prepared: PreparedArtifactDownloads,
+) -> Result<Vec<CachedArtifact>, NetError> {
+    if prepared.groups.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let concurrency = env.download_concurrency.max(1);
+    let count = prepared.count;
+    let mut slots: Vec<Option<Result<CachedArtifact, NetError>>> = Vec::with_capacity(count);
+    slots.resize_with(count, || None);
+
+    let mut unordered = stream::iter(prepared.groups)
+        .map(|group| async move {
+            // Any no_check in the group forces a fresh transfer. Use the first
+            // no_check member as the representative so a mismatched declared
+            // checksum does not create an alias for a Some request.
+            let representative_index = if group.has_no_check {
+                group
+                    .members
+                    .iter()
+                    .position(|m| m.sha256.is_none())
+                    .expect("has_no_check implies a no_check member")
+            } else {
+                0
+            };
+            let options = ArtifactFetchOptions {
+                expected_checksum: group.sha256.clone(),
+                force_download: group.has_no_check,
+            };
+            let result = fetch_artifact_with_options(
+                env,
+                http,
+                &group.url,
+                &group.members[representative_index].alias_name,
+                &options,
+            )
+            .await;
+            let representative_request_index = group.members[representative_index].index;
+            (group, representative_request_index, result)
+        })
+        .buffer_unordered(concurrency);
+
+    while let Some((group, representative_request_index, result)) = unordered.next().await {
+        match result {
+            Ok(artifact) => {
+                for member in group.members {
+                    if member.index == representative_request_index {
+                        slots[member.index] = Some(Ok(artifact.clone()));
+                    } else {
+                        let alias_path = env.cache.join(member.alias_name.as_str());
+                        ensure_alias(&alias_path, &group.paths.relative_target)?;
+                        let mut result = artifact.clone();
+                        result.alias = alias_path;
+                        slots[member.index] = Some(Ok(result));
+                    }
+                }
+            }
+            Err(err) => {
+                let mut members: Vec<_> = group.members.into_iter().collect();
+                members.sort_by_key(|m| m.index);
+                if let Some(first) = members.first() {
+                    slots[first.index] = Some(Err(err));
+                }
+                for member in members.iter().skip(1) {
+                    slots[member.index] = Some(Err(NetError::InvalidResponse {
+                        url: group.url.clone(),
+                        reason: "download failed for shared URL".to_owned(),
+                    }));
+                }
+            }
+        }
+    }
+
+    let mut artifacts = Vec::with_capacity(count);
+    for slot in slots {
+        match slot {
+            Some(Ok(artifact)) => artifacts.push(artifact),
+            Some(Err(err)) => return Err(err),
+            None => {
+                return Err(NetError::InvalidResponse {
+                    url: String::new(),
+                    reason: "download_artifacts_all missing result slot".to_owned(),
+                });
+            }
+        }
+    }
+    Ok(artifacts)
+}
+
 /// One streaming cask-style artifact attempt (no checksum / publish).
 async fn attempt_artifact_download(
     env: &Env,
@@ -269,7 +573,7 @@ async fn attempt_artifact_download(
     url: &str,
     paths: &CachePaths,
 ) -> Result<(), NetError> {
-    let existing = incomplete_len(&env.cache, &paths.incomplete)?;
+    let existing = cache_file_len(&env.cache, &paths.incomplete)?.unwrap_or(0);
 
     let mut request = http.get(url).header(ACCEPT, "application/octet-stream");
 
@@ -312,7 +616,7 @@ async fn attempt_artifact_download(
             .await
             .map_err(|source| NetError::io("create", parent, source))?;
     }
-    let current = incomplete_len(&env.cache, &paths.incomplete)?;
+    let current = cache_file_len(&env.cache, &paths.incomplete)?.unwrap_or(0);
     if append && current != existing {
         return Err(unsafe_cache_path(
             &paths.incomplete,
@@ -377,7 +681,7 @@ async fn attempt_download(
     paths: &CachePaths,
 ) -> Result<(), NetError> {
     let url = bottle.url.as_str();
-    let existing = incomplete_len(&env.cache, &paths.incomplete)?;
+    let existing = cache_file_len(&env.cache, &paths.incomplete)?.unwrap_or(0);
 
     let mut request = http.get(url).header(ACCEPT, "application/octet-stream");
 
@@ -426,7 +730,7 @@ async fn attempt_download(
             .await
             .map_err(|source| NetError::io("create", parent, source))?;
     }
-    let current = incomplete_len(&env.cache, &paths.incomplete)?;
+    let current = cache_file_len(&env.cache, &paths.incomplete)?.unwrap_or(0);
     if append && current != existing {
         return Err(unsafe_cache_path(
             &paths.incomplete,
@@ -491,6 +795,7 @@ fn try_publish_complete(
     if !paths.incomplete.is_file() {
         return Ok(None);
     }
+
     match checksum_file(&paths.incomplete) {
         Ok(actual) if actual == bottle.sha256 => {
             publish(paths)?;
@@ -631,23 +936,23 @@ impl RetryDelay {
     }
 }
 
-fn incomplete_len(cache: &camino::Utf8Path, path: &camino::Utf8Path) -> Result<u64, NetError> {
+fn cache_file_len(
+    cache: &camino::Utf8Path,
+    path: &camino::Utf8Path,
+) -> Result<Option<u64>, NetError> {
     if path == cache || !path.starts_with(cache) {
         return Err(unsafe_cache_path(path, "path is outside the cache"));
     }
 
     let mut current = path;
-    let mut len = 0;
+    let mut len: Option<u64> = None;
     loop {
         match std::fs::symlink_metadata(current.as_std_path()) {
             Ok(meta) if meta.file_type().is_symlink() => {
                 return Err(unsafe_cache_path(current, "path is a symlink"));
             }
             Ok(meta) if current == path && !meta.is_file() => {
-                return Err(unsafe_cache_path(
-                    path,
-                    "incomplete path is not a regular file",
-                ));
+                return Err(unsafe_cache_path(path, "cache path is not a regular file"));
             }
             Ok(meta) if current != path && !meta.is_dir() => {
                 return Err(unsafe_cache_path(
@@ -655,7 +960,7 @@ fn incomplete_len(cache: &camino::Utf8Path, path: &camino::Utf8Path) -> Result<u
                     "cache ancestor is not a directory",
                 ));
             }
-            Ok(meta) if current == path => len = meta.len(),
+            Ok(meta) if current == path => len = Some(meta.len()),
             Ok(_) => {}
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
             Err(source) => return Err(NetError::io("inspect", current, source)),
@@ -668,6 +973,14 @@ fn incomplete_len(cache: &camino::Utf8Path, path: &camino::Utf8Path) -> Result<u
             .ok_or_else(|| unsafe_cache_path(path, "path has no cache-root ancestor"))?;
     }
     Ok(len)
+}
+
+fn safe_publish(cache: &camino::Utf8Path, paths: &CachePaths) -> Result<(), NetError> {
+    cache_file_len(cache, &paths.incomplete)?.ok_or_else(|| {
+        unsafe_cache_path(&paths.incomplete, "incomplete path is not a regular file")
+    })?;
+    cache_file_len(cache, &paths.final_path)?;
+    publish(paths)
 }
 
 fn unsafe_cache_path(path: &camino::Utf8Path, reason: &'static str) -> NetError {

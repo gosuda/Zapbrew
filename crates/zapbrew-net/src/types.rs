@@ -4,7 +4,19 @@
 //! internals (see `cache.rs`) never re-define it.
 
 use camino::Utf8PathBuf;
-use zapbrew_types::{BottleFile, FormulaName, PkgVersion};
+use zapbrew_types::{BottleFile, Checksum, FormulaName, PkgVersion};
+
+/// One generic artifact to fetch, as handed to `fetch_artifact` or
+/// `download_artifacts_all`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactDownloadRequest {
+    /// Source URL. The content cache path is derived solely from this value.
+    pub url: String,
+    /// Request-specific friendly basename under `$CACHE`.
+    pub alias_name: String,
+    /// Declared digest, or `None` for a `no_check` artifact.
+    pub sha256: Option<Checksum>,
+}
 
 /// A generic artifact successfully fetched into the cache.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,6 +25,8 @@ pub struct CachedArtifact {
     pub path: Utf8PathBuf,
     /// Friendly basename alias under `$CACHE`.
     pub alias: Utf8PathBuf,
+    /// Actual SHA-256 digest computed from the cached content.
+    pub sha256: Checksum,
     /// True when no response body was downloaded.
     pub reused: bool,
 }

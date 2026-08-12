@@ -149,6 +149,7 @@ async fn fresh_then_reused_print_exact_path_and_checksum() {
         Args {
             names: vec!["root".to_owned()],
             deps: false,
+            ..Default::default()
         },
     )
     .await
@@ -163,6 +164,7 @@ async fn fresh_then_reused_print_exact_path_and_checksum() {
         Args {
             names: vec!["root".to_owned()],
             deps: false,
+            ..Default::default()
         },
     )
     .await
@@ -196,6 +198,7 @@ async fn verbose_emits_download_urls() {
         Args {
             names: vec!["root".to_owned()],
             deps: false,
+            ..Default::default()
         },
     )
     .await
@@ -237,6 +240,7 @@ async fn deps_fetches_postorder_with_deterministic_messages() {
         Args {
             names: vec!["root".to_owned()],
             deps: true,
+            ..Default::default()
         },
     )
     .await
@@ -277,6 +281,7 @@ async fn missing_bottle_errors_without_cache_or_cellar_mutation() {
         Args {
             names: vec!["absent".to_owned()],
             deps: false,
+            ..Default::default()
         },
     )
     .await
@@ -288,4 +293,621 @@ async fn missing_bottle_errors_without_cache_or_cellar_mutation() {
     );
     assert!(!cache.exists());
     assert!(!cellar.exists());
+}
+
+fn cask(token: &str, version: &str, sha: &str, url: &str) -> Value {
+    json!({
+        "token": token,
+        "version": version,
+        "sha256": sha,
+        "url": url,
+    })
+}
+
+fn cask_with_old(token: &str, old: &str, version: &str, sha: &str, url: &str) -> Value {
+    json!({
+        "token": token,
+        "old_tokens": [old],
+        "version": version,
+        "sha256": sha,
+        "url": url,
+    })
+}
+
+fn ctx_casks(
+    env: Env,
+    formulae: Vec<Value>,
+    casks: Vec<Value>,
+    recording: RecordingReporter,
+) -> (Ctx, Arc<RecordingReporter>) {
+    let formula_bytes = serde_json::to_vec(&formulae).expect("formula json");
+    let cask_bytes = serde_json::to_vec(&casks).expect("cask json");
+    let reporter = Arc::new(recording);
+    (
+        Ctx {
+            catalog: Arc::new(
+                Catalog::from_payload(&formula_bytes, &env.bottle_tag).expect("catalog"),
+            ),
+            casks: Arc::new(
+                CaskCatalog::from_payload(&cask_bytes, &env.bottle_tag).expect("casks"),
+            ),
+            env,
+            http: reqwest::Client::new(),
+            commands: Arc::new(PanicRunner),
+            reporter: reporter.clone(),
+        },
+        reporter,
+    )
+}
+
+#[tokio::test]
+async fn auto_prefers_formula_over_cask() {
+    let server = MockServer::start().await;
+    let body = b"formula-body";
+    let digest = sha(body);
+    Mock::given(method("GET"))
+        .and(path("/formula"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(body.as_slice()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let temp = TempDir::new().expect("temp");
+    let formulae = vec![formula(
+        "firefox",
+        &format!("{}/formula", server.uri()),
+        &digest,
+    )];
+    let casks = vec![cask(
+        "firefox",
+        "1.0",
+        &digest,
+        &format!("{}/cask", server.uri()),
+    )];
+    let (ctx, reporter) = ctx_casks(env(&temp), formulae, casks, RecordingReporter::default());
+
+    fetch::run(
+        &ctx,
+        fetch::Args {
+            names: vec!["firefox".to_owned()],
+            deps: false,
+            mode: fetch::Mode::Auto,
+        },
+    )
+    .await
+    .expect("fetch");
+
+    let messages = reporter.take();
+    assert!(messages.iter().any(|m| m == "ohai:Fetching firefox"));
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.starts_with("print:Downloaded to: "))
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m == &format!("print:SHA-256: {digest}"))
+    );
+}
+
+#[tokio::test]
+async fn cask_only_ignores_formula_and_resolves_by_token() {
+    let server = MockServer::start().await;
+    let body = b"cask-body";
+    let digest = sha(body);
+    Mock::given(method("GET"))
+        .and(path("/cask"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(body.as_slice()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let temp = TempDir::new().expect("temp");
+    let casks = vec![cask(
+        "firefox",
+        "1.0",
+        &digest,
+        &format!("{}/cask", server.uri()),
+    )];
+    let (ctx, reporter) = ctx_casks(env(&temp), vec![], casks, RecordingReporter::default());
+
+    fetch::run(
+        &ctx,
+        fetch::Args {
+            names: vec!["firefox".to_owned()],
+            deps: false,
+            mode: fetch::Mode::CaskOnly,
+        },
+    )
+    .await
+    .expect("cask fetch");
+
+    let messages = reporter.take();
+    assert!(messages.iter().any(|m| m == "ohai:Fetching firefox"));
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.starts_with("print:Downloaded to: "))
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m == &format!("print:SHA-256: {digest}"))
+    );
+    assert!(!ctx.env.cellar.exists());
+    assert!(!ctx.env.caskroom.exists());
+}
+
+#[tokio::test]
+async fn formula_only_never_falls_back_to_cask() {
+    let temp = TempDir::new().expect("temp");
+    let mut no_bottle = formula("missing", "http://unused", &"0".repeat(64));
+    no_bottle.as_object_mut().expect("object").remove("bottle");
+    let casks = vec![cask("missing", "1.0", &"0".repeat(64), "http://cask")];
+    let (ctx, _) = ctx_casks(
+        env(&temp),
+        vec![no_bottle],
+        casks,
+        RecordingReporter::default(),
+    );
+
+    let error = fetch::run(
+        &ctx,
+        fetch::Args {
+            names: vec!["missing".to_owned()],
+            deps: false,
+            mode: fetch::Mode::FormulaOnly,
+        },
+    )
+    .await
+    .expect_err("formula-only miss");
+
+    assert!(error.to_string().contains("no bottle available"));
+    assert!(!ctx.env.cellar.exists());
+    assert!(!ctx.env.caskroom.exists());
+}
+
+#[tokio::test]
+async fn auto_resolves_cask_old_token_and_avoids_migration_io() {
+    let server = MockServer::start().await;
+    let body = b"renamed";
+    let digest = sha(body);
+    Mock::given(method("GET"))
+        .and(path("/app.dmg"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(body.as_slice()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let temp = TempDir::new().expect("temp");
+    let casks = vec![cask_with_old(
+        "firefox",
+        "fire-fox",
+        "1.0",
+        &digest,
+        &format!("{}/app.dmg", server.uri()),
+    )];
+    let (ctx, reporter) = ctx_casks(env(&temp), vec![], casks, RecordingReporter::default());
+
+    fetch::run(
+        &ctx,
+        fetch::Args {
+            names: vec!["fire-fox".to_owned()],
+            deps: false,
+            mode: fetch::Mode::Auto,
+        },
+    )
+    .await
+    .expect("old token");
+
+    let messages = reporter.take();
+    assert!(messages.iter().any(|m| m == "ohai:Fetching firefox"));
+    assert!(
+        messages
+            .iter()
+            .any(|m| m == &format!("print:SHA-256: {digest}"))
+    );
+    assert!(!ctx.env.cellar.exists());
+    assert!(!ctx.env.caskroom.exists());
+}
+
+#[tokio::test]
+async fn auto_with_deps_accepts_cask_without_expanding_dependencies() {
+    let server = MockServer::start().await;
+    let body = b"cask-body";
+    let digest = sha(body);
+    Mock::given(method("GET"))
+        .and(path("/app.dmg"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(body.as_slice()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let temp = TempDir::new().expect("temp");
+    let casks = vec![cask(
+        "with-deps",
+        "1.0",
+        &digest,
+        &format!("{}/app.dmg", server.uri()),
+    )];
+    let (ctx, reporter) = ctx_casks(env(&temp), vec![], casks, RecordingReporter::default());
+
+    fetch::run(
+        &ctx,
+        fetch::Args {
+            names: vec!["with-deps".to_owned()],
+            deps: true,
+            mode: fetch::Mode::Auto,
+        },
+    )
+    .await
+    .expect("cask deps");
+
+    let messages = reporter.take();
+    assert!(messages.iter().any(|m| m == "ohai:Fetching with-deps"));
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|m| m.starts_with("ohai:Fetching"))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn missing_cask_url_warns_and_skips() {
+    let temp = TempDir::new().expect("temp");
+    let casks = vec![json!({
+        "token": "no-url",
+        "version": "1.0",
+        "sha256": "no_check",
+    })];
+    let (ctx, reporter) = ctx_casks(env(&temp), vec![], casks, RecordingReporter::default());
+
+    fetch::run(
+        &ctx,
+        fetch::Args {
+            names: vec!["no-url".to_owned()],
+            deps: false,
+            mode: fetch::Mode::CaskOnly,
+        },
+    )
+    .await
+    .expect("skip");
+
+    let messages = reporter.take();
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.starts_with("opoo:Cask 'no-url' has no URL"))
+    );
+    assert!(!ctx.env.cellar.exists());
+    assert!(!ctx.env.caskroom.exists());
+}
+
+#[tokio::test]
+async fn missing_cask_checksum_warns_and_skips() {
+    let temp = TempDir::new().expect("temp");
+    let casks = vec![json!({
+        "token": "no-sha",
+        "version": "1.0",
+        "url": "https://example.com/app.dmg",
+    })];
+    let (ctx, reporter) = ctx_casks(env(&temp), vec![], casks, RecordingReporter::default());
+
+    fetch::run(
+        &ctx,
+        fetch::Args {
+            names: vec!["no-sha".to_owned()],
+            deps: false,
+            mode: fetch::Mode::CaskOnly,
+        },
+    )
+    .await
+    .expect("skip");
+
+    let messages = reporter.take();
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.starts_with("opoo:Cask 'no-sha' has no checksum"))
+    );
+    assert!(!ctx.env.cellar.exists());
+    assert!(!ctx.env.caskroom.exists());
+}
+
+#[tokio::test]
+async fn unsafe_cask_version_errors() {
+    let temp = TempDir::new().expect("temp");
+    let casks = vec![cask(
+        "bad",
+        "../1.0",
+        &"0".repeat(64),
+        "https://example.com/app.dmg",
+    )];
+    let (ctx, _) = ctx_casks(env(&temp), vec![], casks, RecordingReporter::default());
+
+    let error = fetch::run(
+        &ctx,
+        fetch::Args {
+            names: vec!["bad".to_owned()],
+            deps: false,
+            mode: fetch::Mode::CaskOnly,
+        },
+    )
+    .await
+    .expect_err("unsafe");
+
+    assert!(error.to_string().contains("version"));
+    assert!(!ctx.env.cellar.exists());
+    assert!(!ctx.env.caskroom.exists());
+}
+
+#[tokio::test]
+async fn malformed_cask_checksum_errors() {
+    let temp = TempDir::new().expect("temp");
+    let casks = vec![cask("bad", "1.0", "not-hex", "https://example.com/app.dmg")];
+    let (ctx, _) = ctx_casks(env(&temp), vec![], casks, RecordingReporter::default());
+
+    let error = fetch::run(
+        &ctx,
+        fetch::Args {
+            names: vec!["bad".to_owned()],
+            deps: false,
+            mode: fetch::Mode::CaskOnly,
+        },
+    )
+    .await
+    .expect_err("malformed");
+
+    assert!(error.to_string().contains("invalid checksum"));
+    assert!(!ctx.env.cellar.exists());
+    assert!(!ctx.env.caskroom.exists());
+}
+
+#[tokio::test]
+async fn cask_no_check_reports_actual_digest() {
+    let server = MockServer::start().await;
+    let body = b"unchecked-cask";
+    let digest = sha(body);
+    Mock::given(method("GET"))
+        .and(path("/app.dmg"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(body.as_slice()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let temp = TempDir::new().expect("temp");
+    let casks = vec![cask(
+        "nocheck",
+        "1.0",
+        "no_check",
+        &format!("{}/app.dmg", server.uri()),
+    )];
+    let (ctx, reporter) = ctx_casks(env(&temp), vec![], casks, RecordingReporter::default());
+
+    fetch::run(
+        &ctx,
+        fetch::Args {
+            names: vec!["nocheck".to_owned()],
+            deps: false,
+            mode: fetch::Mode::CaskOnly,
+        },
+    )
+    .await
+    .expect("no_check");
+
+    let messages = reporter.take();
+    assert!(
+        messages
+            .iter()
+            .any(|m| m == &format!("print:SHA-256: {digest}"))
+    );
+}
+
+#[tokio::test]
+async fn cask_checked_verifies_and_reports_actual_digest() {
+    let server = MockServer::start().await;
+    let body = b"checked-cask";
+    let digest = sha(body);
+    Mock::given(method("GET"))
+        .and(path("/app.dmg"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(body.as_slice()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let temp = TempDir::new().expect("temp");
+    let casks = vec![cask(
+        "checked",
+        "1.0",
+        &digest,
+        &format!("{}/app.dmg", server.uri()),
+    )];
+    let (ctx, reporter) = ctx_casks(env(&temp), vec![], casks, RecordingReporter::default());
+
+    fetch::run(
+        &ctx,
+        fetch::Args {
+            names: vec!["checked".to_owned()],
+            deps: false,
+            mode: fetch::Mode::CaskOnly,
+        },
+    )
+    .await
+    .expect("checked");
+
+    let messages = reporter.take();
+    assert!(
+        messages
+            .iter()
+            .any(|m| m == &format!("print:SHA-256: {digest}"))
+    );
+}
+
+#[tokio::test]
+async fn mixed_fetch_preflights_casks_before_formula_and_rejects_conflicting_checksums() {
+    let server = MockServer::start().await;
+
+    let formula_body = b"formula-body";
+    let formula_digest = sha(formula_body);
+    Mock::given(method("GET"))
+        .and(path("/bottle"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(formula_body.as_slice()))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let cask_body = b"cask-body";
+    let cask_digest_a = sha(cask_body);
+    let cask_digest_b = sha(b"other-body");
+    Mock::given(method("GET"))
+        .and(path("/app.dmg"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(cask_body.as_slice()))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let temp = TempDir::new().expect("temp");
+    let cask_url = format!("{}/app.dmg", server.uri());
+    let casks = vec![
+        cask("no-check", "1.0", "no_check", &cask_url),
+        cask("checked-a", "1.0", &cask_digest_a, &cask_url),
+        cask("checked-b", "1.0", &cask_digest_b, &cask_url),
+    ];
+    let formula_url = format!("{}/bottle", server.uri());
+    let formulae = vec![formula("wget", &formula_url, &formula_digest)];
+    let (ctx, _reporter) = ctx_casks(env(&temp), formulae, casks, RecordingReporter::default());
+
+    let error = fetch::run(
+        &ctx,
+        fetch::Args {
+            names: vec![
+                "wget".to_owned(),
+                "no-check".to_owned(),
+                "checked-a".to_owned(),
+                "checked-b".to_owned(),
+            ],
+            deps: false,
+            mode: fetch::Mode::Auto,
+        },
+    )
+    .await
+    .expect_err("conflicting cask checksums must fail preflight");
+    assert!(
+        error.to_string().contains("conflicting"),
+        "unexpected {error}"
+    );
+    assert!(!ctx.env.cellar.exists());
+    assert!(!ctx.env.caskroom.exists());
+}
+
+#[tokio::test]
+async fn auto_fetches_formula_and_cask_old_token_with_same_canonical() {
+    let server = MockServer::start().await;
+
+    let formula_body = b"formula-body";
+    let formula_digest = sha(formula_body);
+    Mock::given(method("GET"))
+        .and(path("/bottle"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(formula_body.as_slice()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let cask_body = b"cask-body";
+    let cask_digest = sha(cask_body);
+    Mock::given(method("GET"))
+        .and(path("/app.dmg"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(cask_body.as_slice()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let temp = TempDir::new().expect("temp");
+    let formula_url = format!("{}/bottle", server.uri());
+    let cask_url = format!("{}/app.dmg", server.uri());
+    let formulae = vec![formula("shared", &formula_url, &formula_digest)];
+    let casks = vec![cask_with_old(
+        "shared",
+        "old-shared",
+        "1.0",
+        &cask_digest,
+        &cask_url,
+    )];
+    let (ctx, reporter) = ctx_casks(env(&temp), formulae, casks, RecordingReporter::default());
+
+    fetch::run(
+        &ctx,
+        fetch::Args {
+            names: vec!["shared".to_owned(), "old-shared".to_owned()],
+            deps: false,
+            mode: fetch::Mode::Auto,
+        },
+    )
+    .await
+    .expect("fetch both");
+
+    let messages = reporter.take();
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|m| m.as_str() == "ohai:Fetching shared")
+            .count(),
+        2,
+        "both formula and cask should be fetched: {messages:?}"
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|m| m.starts_with("print:Downloaded to:"))
+            .count(),
+        2
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|m| m.starts_with("print:SHA-256:"))
+            .count(),
+        2
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m == &format!("print:SHA-256: {formula_digest}")),
+        "formula digest"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m == &format!("print:SHA-256: {cask_digest}")),
+        "cask digest"
+    );
+    assert!(!ctx.env.cellar.exists());
+    assert!(!ctx.env.caskroom.exists());
+}
+
+#[tokio::test]
+async fn cask_only_with_deps_refuses_before_effects() {
+    let temp = TempDir::new().expect("temp");
+    let (ctx, _) = ctx_casks(env(&temp), vec![], vec![], RecordingReporter::default());
+
+    let error = fetch::run(
+        &ctx,
+        fetch::Args {
+            names: vec!["anything".to_owned()],
+            deps: true,
+            mode: fetch::Mode::CaskOnly,
+        },
+    )
+    .await
+    .expect_err("cask deps");
+
+    assert_eq!(
+        error.to_string(),
+        "Fetching cask dependencies is not supported."
+    );
+    assert!(!ctx.env.cellar.exists());
+    assert!(!ctx.env.caskroom.exists());
 }

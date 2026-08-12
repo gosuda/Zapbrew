@@ -17,11 +17,18 @@ use zapbrew_types::{BottleFile, BottleTag, Checksum, FormulaName, PkgVersion};
 
 use crate::error::NetError;
 
-/// Compute the cache layout for a non-GHCR artifact URL.
-pub(crate) fn artifact_cache_paths(env: &Env, url: &str) -> Result<CachePaths, NetError> {
+/// Compute the cache layout for a non-GHCR artifact URL with a
+/// request-specific alias basename. The final path remains content-addressed by
+/// the URL, while the alias uses the caller-supplied `alias_name`.
+pub(crate) fn artifact_cache_paths_with_alias(
+    env: &Env,
+    url: &str,
+    alias_name: &str,
+) -> Result<CachePaths, NetError> {
     let path = url.split(['?', '#']).next().unwrap_or_default();
     let basename = path.rsplit('/').next().unwrap_or_default();
     validate_segment("artifact", basename)?;
+    validate_segment("alias", alias_name)?;
 
     let url_hash = hex_sha256(url.as_bytes());
     let hashed_name = format!("{url_hash}--{basename}");
@@ -31,7 +38,7 @@ pub(crate) fn artifact_cache_paths(env: &Env, url: &str) -> Result<CachePaths, N
     Ok(CachePaths {
         incomplete: incomplete_path(&final_path),
         final_path,
-        alias: env.cache.join(basename),
+        alias: env.cache.join(alias_name),
         relative_target: relative_alias_target(&hashed_name),
     })
 }
@@ -227,7 +234,7 @@ fn sync_parent_dir(_path: &Utf8Path) -> Result<(), NetError> {
 /// the target is left untouched; anything else occupying the path is replaced
 /// (matching brew's `ln -sf` semantics for the cache).
 #[cfg(unix)]
-fn ensure_alias(alias: &Utf8Path, relative_target: &str) -> Result<(), NetError> {
+pub(crate) fn ensure_alias(alias: &Utf8Path, relative_target: &str) -> Result<(), NetError> {
     use std::os::unix::fs::symlink;
 
     if let Ok(meta) = std::fs::symlink_metadata(alias) {
@@ -245,7 +252,7 @@ fn ensure_alias(alias: &Utf8Path, relative_target: &str) -> Result<(), NetError>
 /// published file to the alias path instead. Homebrew only runs on Unix;
 /// this keeps the crate compilable for any target.
 #[cfg(not(unix))]
-fn ensure_alias(alias: &Utf8Path, relative_target: &str) -> Result<(), NetError> {
+pub(crate) fn ensure_alias(alias: &Utf8Path, relative_target: &str) -> Result<(), NetError> {
     let Some(parent) = alias.parent() else {
         return Err(NetError::io(
             "copy",

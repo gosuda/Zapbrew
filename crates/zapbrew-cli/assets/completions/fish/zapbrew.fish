@@ -170,6 +170,8 @@ complete -c zapbrew -n "__fish_zapbrew_using_subcommand unlink" -l debug -d 'Ena
 complete -c zapbrew -n "__fish_zapbrew_using_subcommand unlink" -s q -l quiet -d 'Suppress non-essential output'
 complete -c zapbrew -n "__fish_zapbrew_using_subcommand unlink" -s v -l verbose -d 'Enable verbose output'
 complete -c zapbrew -n "__fish_zapbrew_using_subcommand unlink" -s h -l help -d 'Print help'
+complete -c zapbrew -n "__fish_zapbrew_using_subcommand fetch" -l formula -l formulae -d 'Fetch formulae only'
+complete -c zapbrew -n "__fish_zapbrew_using_subcommand fetch" -l cask -l casks -d 'Fetch casks only'
 complete -c zapbrew -n "__fish_zapbrew_using_subcommand fetch" -l deps -d 'Also fetch the dependency closure'
 complete -c zapbrew -n "__fish_zapbrew_using_subcommand fetch" -l debug -d 'Enable debug output'
 complete -c zapbrew -n "__fish_zapbrew_using_subcommand fetch" -s q -l quiet -d 'Suppress non-essential output'

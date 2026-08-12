@@ -275,7 +275,11 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (fetch)
 _arguments "${_arguments_options[@]}" : \
-'--deps[Also fetch the dependency closure]' \
+'--formula[Fetch formulae only]' \
+'--formulae[Fetch formulae only]' \
+'(--formula)--cask[Fetch casks only]' \
+'(--formula)--casks[Fetch casks only]' \
+'(--cask)--deps[Also fetch the dependency closure]' \
 '--debug[Enable debug output]' \
 '(-v --verbose)-q[Suppress non-essential output]' \
 '(-v --verbose)--quiet[Suppress non-essential output]' \
@@ -283,7 +287,7 @@ _arguments "${_arguments_options[@]}" : \
 '--verbose[Enable verbose output]' \
 '-h[Print help]' \
 '--help[Print help]' \
-'*::names -- Formula names to fetch:_default' \
+'*::names -- Formula or cask names to fetch:_default' \
 && ret=0
 ;;
 (cleanup)

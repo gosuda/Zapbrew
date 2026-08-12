@@ -273,14 +273,22 @@ pub fn plan(command: Commands, globals: &GlobalArgs, width: usize) -> Result<Pla
                 dry_run: args.dry_run,
             }),
         },
-        Commands::Fetch(args) => Plan {
-            needs_formula: true,
-            needs_cask: false,
-            kind: OpKind::Fetch(fetch::Args {
-                names: args.names,
-                deps: args.deps,
-            }),
-        },
+        Commands::Fetch(args) => {
+            let (needs_formula, needs_cask, mode) = match (args.formula, args.cask) {
+                (true, false) => (true, false, fetch::Mode::FormulaOnly),
+                (false, true) => (false, true, fetch::Mode::CaskOnly),
+                _ => (true, true, fetch::Mode::Auto),
+            };
+            Plan {
+                needs_formula,
+                needs_cask,
+                kind: OpKind::Fetch(fetch::Args {
+                    names: args.names,
+                    deps: args.deps,
+                    mode,
+                }),
+            }
+        }
         Commands::Cleanup(args) => Plan {
             needs_formula: true,
             needs_cask: false,
@@ -899,6 +907,7 @@ mod tests {
             OpKind::Fetch(zapbrew_ops::fetch::Args {
                 names: vec!["wget".to_owned()],
                 deps: true,
+                mode: zapbrew_ops::fetch::Mode::Auto,
             })
         );
     }
@@ -1076,7 +1085,6 @@ mod tests {
             &["zapbrew", "upgrade"][..],
             &["zapbrew", "deps", "wget"][..],
             &["zapbrew", "link", "wget"][..],
-            &["zapbrew", "fetch", "wget"][..],
             &["zapbrew", "cleanup"][..],
             &["zapbrew", "doctor"][..],
             &["zapbrew", "postinstall", "wget"][..],
@@ -1088,6 +1096,7 @@ mod tests {
             &["zapbrew", "outdated"][..],
             &["zapbrew", "info", "wget"][..],
             &["zapbrew", "uses", "firefox"][..],
+            &["zapbrew", "fetch", "wget"][..],
         ] {
             assert_eq!(classify(args), (true, true), "args: {args:?}");
         }
@@ -1198,5 +1207,50 @@ mod tests {
             }
             other => panic!("expected a cask install, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn fetch_auto_loads_both_catalogs() {
+        let plan = planned(&["zapbrew", "fetch", "foo"]);
+        assert!(plan.needs_formula);
+        assert!(plan.needs_cask);
+        assert_eq!(
+            plan.kind,
+            OpKind::Fetch(zapbrew_ops::fetch::Args {
+                names: vec!["foo".to_owned()],
+                deps: false,
+                mode: zapbrew_ops::fetch::Mode::Auto,
+            })
+        );
+    }
+
+    #[test]
+    fn fetch_formula_only_loads_formula_catalog() {
+        let plan = planned(&["zapbrew", "fetch", "--formula", "foo"]);
+        assert!(plan.needs_formula);
+        assert!(!plan.needs_cask);
+        assert_eq!(
+            plan.kind,
+            OpKind::Fetch(zapbrew_ops::fetch::Args {
+                names: vec!["foo".to_owned()],
+                deps: false,
+                mode: zapbrew_ops::fetch::Mode::FormulaOnly,
+            })
+        );
+    }
+
+    #[test]
+    fn fetch_cask_only_loads_cask_catalog() {
+        let plan = planned(&["zapbrew", "fetch", "--cask", "foo"]);
+        assert!(!plan.needs_formula);
+        assert!(plan.needs_cask);
+        assert_eq!(
+            plan.kind,
+            OpKind::Fetch(zapbrew_ops::fetch::Args {
+                names: vec!["foo".to_owned()],
+                deps: false,
+                mode: zapbrew_ops::fetch::Mode::CaskOnly,
+            })
+        );
     }
 }

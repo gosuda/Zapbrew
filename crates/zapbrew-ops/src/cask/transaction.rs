@@ -1,7 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::io;
-use std::str::FromStr;
 
 use camino::{Utf8Path, Utf8PathBuf};
 use jiff::Timestamp;
@@ -213,13 +212,14 @@ impl InstallRecord {
 
 /// One fully preflighted cask install request.
 pub(super) struct CaskInstall<'a> {
-    pub cask: &'a Cask,
-    pub plan: &'a Plan,
-    pub version: &'a str,
-    pub url: &'a str,
-    pub checksum: Option<&'a Checksum>,
-    pub appdir: &'a Utf8Path,
-    pub force: bool,
+    pub(super) cask: &'a Cask,
+    pub(super) plan: &'a Plan,
+    pub(super) version: &'a str,
+    pub(super) url: &'a str,
+    pub(super) checksum: Option<&'a Checksum>,
+    pub(super) alias_name: &'a str,
+    pub(super) appdir: &'a Utf8Path,
+    pub(super) force: bool,
 }
 
 struct WrittenReceipt {
@@ -239,6 +239,7 @@ pub(super) async fn install(ctx: &Ctx, request: CaskInstall<'_>) -> Result<(), O
         version,
         url,
         checksum,
+        alias_name,
         appdir,
         force,
     } = request;
@@ -262,7 +263,16 @@ pub(super) async fn install(ctx: &Ctx, request: CaskInstall<'_>) -> Result<(), O
         return Ok(());
     }
 
-    let cached = zapbrew_net::fetch_artifact(&ctx.env, &ctx.http, url, checksum).await?;
+    let cached = zapbrew_net::fetch_artifact(
+        &ctx.env,
+        &ctx.http,
+        &zapbrew_net::ArtifactDownloadRequest {
+            url: url.to_owned(),
+            alias_name: alias_name.to_owned(),
+            sha256: checksum.cloned(),
+        },
+    )
+    .await?;
     let staging = unique_stage(ctx, &cask.token)?;
     confined_caskroom_dir(ctx, &staging)?;
     let mut journal = Vec::<Reverse>::new();
@@ -457,41 +467,6 @@ fn write_receipt(ctx: &Ctx, cask: &Cask, version: &str) -> Result<WrittenReceipt
             Err(original)
         }
     }
-}
-
-pub(super) fn validate_download(
-    cask: &Cask,
-) -> Result<(String, String, Option<Checksum>), OpError> {
-    let version = cask
-        .version
-        .clone()
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| OpError::Refusal {
-            message: format!("Cask '{}' has no version.", cask.token),
-        })?;
-    if !one_normal_component(&version) {
-        return Err(OpError::Refusal {
-            message: format!("Cask '{}' version '{}' is unsafe.", cask.token, version),
-        });
-    }
-    let url = cask
-        .url
-        .clone()
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| OpError::Refusal {
-            message: format!("Cask '{}' has no URL.", cask.token),
-        })?;
-    let declared = cask.sha256.as_deref().ok_or_else(|| OpError::Refusal {
-        message: format!("Cask '{}' has no checksum.", cask.token),
-    })?;
-    let checksum = if declared == "no_check" {
-        None
-    } else {
-        Some(Checksum::from_str(declared).map_err(|_| OpError::Refusal {
-            message: format!("Cask '{}' has an invalid checksum.", cask.token),
-        })?)
-    };
-    Ok((version, url, checksum))
 }
 
 pub(super) fn installed_version_dirs(token_dir: &Utf8Path) -> Result<Vec<Utf8PathBuf>, OpError> {

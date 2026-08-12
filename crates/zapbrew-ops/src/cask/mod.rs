@@ -2,15 +2,183 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Component, Path};
+use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use camino::{Utf8Component, Utf8Path, Utf8PathBuf};
 use serde_json::Value;
 use zapbrew_api::Cask;
 use zapbrew_prefix::{CommandSpec, LockGuard};
-use zapbrew_types::BottleTag;
+use zapbrew_types::{BottleTag, Checksum};
 
 use crate::{Ctx, OpError};
+
+/// A validated cask download descriptor, shared between fetch and install.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CaskDownloadSpec {
+    pub(crate) token: String,
+    pub(crate) version: String,
+    pub(crate) url: String,
+    pub(crate) checksum: Option<Checksum>,
+    pub(crate) alias_name: String,
+}
+
+/// Why a cask cannot be downloaded. Carries the token (and version when
+/// relevant) so both fetch and install can render the same messages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CaskDownloadProblem {
+    pub(crate) token: String,
+    pub(crate) kind: CaskDownloadProblemKind,
+    pub(crate) version: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CaskDownloadProblemKind {
+    Unavailable(CaskUnavailable),
+    Invalid(CaskInvalid),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CaskUnavailable {
+    NoUrl,
+    NoChecksum,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CaskInvalid {
+    NoVersion,
+    UnsafeVersion,
+    InvalidChecksum,
+    UnsafeToken,
+}
+
+impl CaskDownloadProblem {
+    pub(crate) fn is_unavailable(&self) -> bool {
+        matches!(self.kind, CaskDownloadProblemKind::Unavailable(_))
+    }
+
+    /// Render the exact refusal message used by both fetch and install.
+    pub(crate) fn message(&self) -> String {
+        match (&self.kind, self.version.as_deref()) {
+            (CaskDownloadProblemKind::Unavailable(CaskUnavailable::NoUrl), _) => {
+                format!("Cask '{}' has no URL.", self.token)
+            }
+            (CaskDownloadProblemKind::Unavailable(CaskUnavailable::NoChecksum), _) => {
+                format!("Cask '{}' has no checksum.", self.token)
+            }
+            (CaskDownloadProblemKind::Invalid(CaskInvalid::NoVersion), _) => {
+                format!("Cask '{}' has no version.", self.token)
+            }
+            (CaskDownloadProblemKind::Invalid(CaskInvalid::UnsafeVersion), Some(version)) => {
+                format!("Cask '{}' version '{}' is unsafe.", self.token, version)
+            }
+            (CaskDownloadProblemKind::Invalid(CaskInvalid::UnsafeVersion), None) => {
+                format!("Cask '{}' has an unsafe version.", self.token)
+            }
+            (CaskDownloadProblemKind::Invalid(CaskInvalid::InvalidChecksum), _) => {
+                format!("Cask '{}' has an invalid checksum.", self.token)
+            }
+            (CaskDownloadProblemKind::Invalid(CaskInvalid::UnsafeToken), _) => {
+                format!("Cask '{}' has an unsafe token.", self.token)
+            }
+        }
+    }
+}
+
+/// Validate and extract the canonical download metadata for a cask.
+///
+/// The returned `CaskDownloadSpec` is used by both `install` and `fetch` so the
+/// URL, version, checksum, and cache alias decisions have a single owner.
+/// `no_check` is mapped to `checksum: None`. Missing URL or checksum are
+/// classified as unavailable; missing/unsafe version, unsafe token, or malformed
+/// checksum are invalid.
+pub(crate) fn download_spec(cask: &Cask) -> Result<CaskDownloadSpec, CaskDownloadProblem> {
+    let token = cask.token.clone();
+
+    if !one_normal_component(&token) {
+        return Err(CaskDownloadProblem {
+            token,
+            kind: CaskDownloadProblemKind::Invalid(CaskInvalid::UnsafeToken),
+            version: None,
+        });
+    }
+
+    let version = cask
+        .version
+        .clone()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| CaskDownloadProblem {
+            token: token.clone(),
+            kind: CaskDownloadProblemKind::Invalid(CaskInvalid::NoVersion),
+            version: None,
+        })?;
+    if !one_normal_component(&version) {
+        return Err(CaskDownloadProblem {
+            token: token.clone(),
+            kind: CaskDownloadProblemKind::Invalid(CaskInvalid::UnsafeVersion),
+            version: Some(version.clone()),
+        });
+    }
+
+    let url = cask
+        .url
+        .clone()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| CaskDownloadProblem {
+            token: token.clone(),
+            kind: CaskDownloadProblemKind::Unavailable(CaskUnavailable::NoUrl),
+            version: None,
+        })?;
+
+    let checksum = match cask.sha256.as_deref() {
+        None => Err(CaskDownloadProblem {
+            token: token.clone(),
+            kind: CaskDownloadProblemKind::Unavailable(CaskUnavailable::NoChecksum),
+            version: None,
+        }),
+        Some("no_check") => Ok(None),
+        Some(declared) => Checksum::from_str(declared)
+            .map(Some)
+            .map_err(|_| CaskDownloadProblem {
+                token: token.clone(),
+                kind: CaskDownloadProblemKind::Invalid(CaskInvalid::InvalidChecksum),
+                version: None,
+            }),
+    }?;
+
+    let alias_name = cask_alias_name(&token, &version, &url);
+
+    Ok(CaskDownloadSpec {
+        token,
+        version,
+        url,
+        checksum,
+        alias_name,
+    })
+}
+
+/// Build a cask-style cache alias basename: `<token>--<version><ext>`.
+///
+/// The extension follows Ruby's `Pathname#extname`: leading dot(s) on the URL
+/// basename are ignored, then the last dot suffix is used (`foo.tar.gz` yields
+/// `.gz`, `.hidden` yields none, and `foo.` yields `.`). When there is no dot,
+/// no extension is appended.
+fn cask_alias_name(token: &str, version: &str, url: &str) -> String {
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    let basename = path.rsplit('/').next().unwrap_or("");
+    // Match Ruby's Pathname#extname: leading dot(s) do not start an extension;
+    // the extension is the last dot suffix in the remaining basename.
+    let name = basename.trim_start_matches('.');
+    let ext = if name.is_empty() {
+        ""
+    } else if let Some(i) = name.rfind('.') {
+        let dot = basename.len() - name.len() + i;
+        &basename[dot..]
+    } else {
+        ""
+    };
+    format!("{token}--{version}{ext}")
+}
 
 mod archive;
 mod artifact;
@@ -359,6 +527,7 @@ fn unsupported(token: &str, kind: &str) -> OpError {
 #[cfg(test)]
 mod tests {
     use super::archive_suffix;
+    use super::cask_alias_name;
 
     #[test]
     fn archive_suffix_strips_query_and_fragment_and_folds_case() {
@@ -377,5 +546,18 @@ mod tests {
         // suffix is produced.
         assert!(!archive_suffix("https://h/App%ZZdmg.tar.gz").ends_with(".dmg"));
         assert!(archive_suffix("https://h/App%ZZdmg.tar.gz").ends_with(".tar.gz"));
+    }
+
+    #[test]
+    fn cask_alias_name_matches_pathname_extname() {
+        let cases = [
+            ("https://h/foo", "x--1.0"),
+            ("https://h/.hidden", "x--1.0"),
+            ("https://h/foo.", "x--1.0."),
+            ("https://h/foo.tar.gz", "x--1.0.gz"),
+        ];
+        for (url, expected) in cases {
+            assert_eq!(cask_alias_name("x", "1.0", url), expected, "for {url}");
+        }
     }
 }

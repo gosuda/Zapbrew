@@ -7,7 +7,10 @@ mod progress;
 mod select;
 mod types;
 
-pub use download::{download_all, fetch_artifact, fetch_bottle};
+pub use download::{
+    PreparedArtifactDownloads, download_all, download_artifacts_all, fetch_artifact, fetch_bottle,
+    prepare_artifact_downloads,
+};
 pub use error::NetError;
 pub use select::select_bottle;
-pub use types::{CachedArtifact, CachedBottle, DownloadRequest};
+pub use types::{ArtifactDownloadRequest, CachedArtifact, CachedBottle, DownloadRequest};

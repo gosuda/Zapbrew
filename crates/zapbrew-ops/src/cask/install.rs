@@ -78,27 +78,30 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<(), OpError> {
     let prepared = planned
         .into_iter()
         .map(|(cask, plan)| {
-            let (version, url, checksum) = transaction::validate_download(cask)?;
-            Ok((cask, plan, version, url, checksum))
+            let spec = super::download_spec(cask).map_err(|problem| OpError::Refusal {
+                message: problem.message(),
+            })?;
+            Ok((cask, plan, spec))
         })
         .collect::<Result<Vec<_>, OpError>>()?;
 
     // All pure validation is complete; only now take per-token locks.
     let canonical = prepared
         .iter()
-        .map(|(cask, _, _, _, _)| cask.token.clone())
+        .map(|(cask, _, _)| cask.token.clone())
         .collect::<std::collections::BTreeSet<_>>();
     let _locks = acquire_locks(ctx, &canonical)?;
 
-    for (cask, plan, version, url, checksum) in prepared {
+    for (cask, plan, spec) in prepared {
         transaction::install(
             ctx,
             transaction::CaskInstall {
                 cask,
                 plan: &plan,
-                version: &version,
-                url: &url,
-                checksum: checksum.as_ref(),
+                version: &spec.version,
+                url: &spec.url,
+                checksum: spec.checksum.as_ref(),
+                alias_name: &spec.alias_name,
                 appdir: &appdir,
                 force: args.force,
             },
