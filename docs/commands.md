@@ -176,23 +176,35 @@ Options:
 
 ### `zapbrew upgrade`
 
-Upgrade outdated formulae.
+Upgrade outdated formulae or casks.
 
 ```text
-Upgrade outdated formulae
+Upgrade outdated formulae or casks
 
 Usage: zapbrew upgrade [OPTIONS] [NAMES]...
 
 Arguments:
-  [NAMES]...  Formula names to upgrade; empty upgrades all
+  [NAMES]...  Formula or cask names to upgrade; empty upgrades all
 
 Options:
-      --debug    Enable debug output
-  -n, --dry-run  Show what would be upgraded without doing it
-  -q, --quiet    Suppress non-essential output
-  -v, --verbose  Enable verbose output
-  -h, --help     Print help
+      --cask                 Treat the named arguments as casks
+      --debug                Enable debug output
+      --formula              Treat the named arguments as formulae
+  -q, --quiet                Suppress non-essential output
+      --appdir <DIR>         Target application directory for cask apps
+  -v, --verbose              Enable verbose output
+  -n, --dry-run              Show what would be upgraded without doing it
+      --greedy               Also include casks with `version :latest` or `auto_updates true`
+      --greedy-latest        Also include casks with `version :latest`
+      --greedy-auto-updates  Also include casks that update themselves
+  -h, --help                 Print help
 ```
+
+> Cask upgrades use the same safe replacement rules as cask reinstall. Zapbrew
+> requires valid install records and refuses `pkg` artifacts or predecessor
+> uninstall directives before it downloads or changes any selected package.
+> Named casks are checked greedily. Bare upgrades skip `latest` and self-updating
+> casks unless a matching `--greedy` option includes them.
 
 ### `zapbrew outdated`
 

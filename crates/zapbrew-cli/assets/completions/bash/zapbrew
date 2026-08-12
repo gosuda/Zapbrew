@@ -1943,12 +1943,16 @@ _zapbrew() {
             return 0
             ;;
         zapbrew__subcmd__upgrade)
-            opts="-n -q -v -h --dry-run --debug --quiet --verbose --help"
+            opts="-n -q -v -h --cask --formula --appdir --dry-run --greedy --greedy-latest --greedy-auto-updates --debug --quiet --verbose --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --appdir)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 *)
                     COMPREPLY=()
                     ;;
