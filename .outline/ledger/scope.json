@@ -2248,7 +2248,7 @@
     {
       "cell_id": "cp.cask-reinstall.preflight-record-trust",
       "module": "ops-cask-reinstall",
-      "behavior": "Cask replacement preflight resolves and locks canonical tokens, validates appdir and every installed record, refuses irreversible pkg and uninstall effects, derives one effective appdir, and plans replacement artifacts",
+      "behavior": "Cask replacement prepares one replacement operation for each selected cask before execution",
       "platform": "any",
       "effect": "trust",
       "expected_disposition": "must-match",
@@ -2260,14 +2260,54 @@
         "D5-cask-tranche-granularity"
       ],
       "source_pair": {
+        "zapbrew": "crates/zapbrew-ops/src/cask/reinstall.rs:44-61; crates/zapbrew-ops/src/cask/reinstall.rs:191-224",
+        "homebrew": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cask/reinstall.rb#L43-L56"
+      }
+    },
+    {
+      "cell_id": "cp.cask-reinstall.safety-preflight",
+      "module": "ops-cask-reinstall",
+      "behavior": "Before replacement effects, Zapbrew locks canonical tokens, validates appdir and every installed record, refuses irreversible pkg and uninstall effects, derives one effective appdir, and plans every replacement artifact",
+      "platform": "any",
+      "effect": "trust",
+      "expected_disposition": "safety-deviation-candidate",
+      "expected_evidence": [
+        "unit-fixture-io"
+      ],
+      "decision_refs": [
+        "D2-linux-cask-subset",
+        "D5-cask-tranche-granularity"
+      ],
+      "source_pair": {
         "zapbrew": "crates/zapbrew-ops/src/cask/reinstall.rs:136-258; crates/zapbrew-ops/src/cask/reinstall.rs:261-331",
-        "homebrew": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cask/reinstall.rb#L41-L68"
+        "homebrew": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cask/reinstall.rb#L41-L84"
+      }
+    },
+    {
+      "cell_id": "cp.cask-reinstall.transaction-safety",
+      "module": "ops-cask-reinstall",
+      "behavior": "Zapbrew retains canonical token locks through replacement, executes each replacement as a journaled whole-token transaction, and binds every upgrade plan to its previously validated cached artifact",
+      "platform": "any",
+      "effect": "filesystem-mutation",
+      "expected_disposition": "safety-deviation-candidate",
+      "expected_evidence": [
+        "cross-compile",
+        "unit-fixture-io",
+        "process-integration"
+      ],
+      "decision_refs": [
+        "D2-linux-cask-subset",
+        "D5-cask-tranche-granularity"
+      ],
+      "source_pair": {
+        "zapbrew": "crates/zapbrew-ops/src/cask/reinstall.rs:19-102; crates/zapbrew-ops/src/cask/install.rs:119-158; crates/zapbrew-ops/src/cask/transaction.rs:213-436",
+        "homebrew": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cask/reinstall.rb#L41-L84; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cask/upgrade.rb#L214-L283"
       }
     },
     {
       "cell_id": "cp.cask-reinstall.transactions",
       "module": "ops-cask-reinstall",
-      "behavior": "Direct reinstall retains canonical token locks while each cask fetches and replaces in sequence; upgrade validates and downloads all selected cask artifacts before formula install transactions, then replaces casks from their corresponding cached artifacts",
+      "behavior": "Selected cask artifacts are fetched before those casks are replaced",
       "platform": "any",
       "effect": "filesystem-mutation",
       "expected_disposition": "must-match",
@@ -2281,7 +2321,7 @@
         "D5-cask-tranche-granularity"
       ],
       "source_pair": {
-        "zapbrew": "crates/zapbrew-ops/src/cask/reinstall.rs:19-102; crates/zapbrew-ops/src/cask/reinstall.rs:126-160; crates/zapbrew-ops/src/upgrade.rs:278-347",
+        "zapbrew": "crates/zapbrew-ops/src/cask/reinstall.rs:19-102; crates/zapbrew-ops/src/cask/install.rs:119-158; crates/zapbrew-ops/src/cask/transaction.rs:288-317; crates/zapbrew-ops/src/upgrade.rs:278-347",
         "homebrew": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cask/reinstall.rb#L41-L84; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cask/upgrade.rb#L214-L283"
       }
     },
@@ -5559,9 +5599,27 @@
       }
     },
     {
+      "cell_id": "ops.reinstall.appdir-preflight-safety",
+      "module": "ops-cmd-reinstall",
+      "behavior": "Zapbrew refuses --appdir when any formula is selected and preflights every selected cask before formula preparation, downloads, or install transactions",
+      "platform": "any",
+      "effect": "refusal",
+      "expected_disposition": "safety-deviation-candidate",
+      "expected_evidence": [
+        "unit-fixture-io"
+      ],
+      "decision_refs": [
+        "D5-cask-tranche-granularity"
+      ],
+      "source_pair": {
+        "zapbrew": "crates/zapbrew-ops/src/reinstall.rs:44-83",
+        "homebrew": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cmd/reinstall.rb#L120-L193"
+      }
+    },
+    {
       "cell_id": "ops.reinstall.cask-gap",
       "module": "ops-cmd-reinstall",
-      "behavior": "Reinstall resolves requested names as formulae or casks using explicit selectors or formula-first auto mode, preflights selected casks before formula preparation, downloads, or install transactions, refuses --appdir with formulae, and executes prepared formula then cask reinstalls",
+      "behavior": "Reinstall accepts formulae and casks through explicit selectors or automatic mixed resolution, then executes the selected formula and cask reinstall paths",
       "platform": "any",
       "effect": "query",
       "expected_disposition": "must-match",
@@ -5573,7 +5631,7 @@
       ],
       "source_pair": {
         "zapbrew": "crates/zapbrew-ops/src/reinstall.rs:44-144",
-        "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/docs/Manpage.md#L1827-L1831; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cask/reinstall.rb#L18-L84"
+        "homebrew": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cmd/reinstall.rb#L120-L193; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cask/reinstall.rb#L18-L84"
       }
     },
     {
@@ -6219,7 +6277,7 @@
     {
       "cell_id": "ops.upgrade.cask-and-flag-gap",
       "module": "ops-cmd-upgrade",
-      "behavior": "Upgrade selects installed casks through explicit or formula-first auto mode, applies named or greedy latest/auto-update policy, validates selected replacements before deferred migration I/O, rechecks them under canonical token locks, and downloads all formula and cask artifacts before install transactions",
+      "behavior": "Upgrade accepts explicit formula or cask selection and automatic mixed resolution, applies named or greedy cask outdated policy, prefetches formula and cask downloads, then performs the selected upgrades",
       "platform": "any",
       "effect": "query",
       "expected_disposition": "must-match",
@@ -6232,7 +6290,7 @@
       ],
       "source_pair": {
         "zapbrew": "crates/zapbrew-ops/src/upgrade.rs:66-444",
-        "homebrew": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cask/upgrade.rb#L25-L283"
+        "homebrew": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cmd/upgrade.rb#L166-L326; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cask/upgrade.rb#L25-L283"
       }
     },
     {
@@ -6265,6 +6323,25 @@
       "source_pair": {
         "zapbrew": "crates/zapbrew-ops/src/upgrade.rs:39-207",
         "homebrew": "https://github.com/Homebrew/brew/blob/6.0.16/docs/Manpage.md#L2362-L2483"
+      }
+    },
+    {
+      "cell_id": "ops.upgrade.locked-preflight-safety",
+      "module": "ops-cmd-upgrade",
+      "behavior": "Before deferred formula migration I/O, Zapbrew validates every selected cask replacement, then rescans and reselects those casks while holding canonical token locks",
+      "platform": "any",
+      "effect": "trust",
+      "expected_disposition": "safety-deviation-candidate",
+      "expected_evidence": [
+        "unit-fixture-io"
+      ],
+      "decision_refs": [
+        "D5-cask-tranche-granularity",
+        "D8-shared-flag-contracts"
+      ],
+      "source_pair": {
+        "zapbrew": "crates/zapbrew-ops/src/upgrade.rs:99-159",
+        "homebrew": "https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cmd/upgrade.rb#L261-L326; https://github.com/Homebrew/brew/blob/3ecc9eff23feebf1bc73846d74e14a122c93b66f/Library/Homebrew/cask/upgrade.rb#L214-L283"
       }
     },
     {

@@ -785,6 +785,22 @@
       "finding": "none"
     },
     {
+      "cell": "cp.cask-reinstall.safety-preflight",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-reinstall.transaction-safety",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
       "cell": "cp.cask-reinstall.transactions",
       "achieved_evidence": [],
       "failure_evidence": null,
@@ -2552,6 +2568,14 @@
       "finding": "none"
     },
     {
+      "cell": "ops.reinstall.appdir-preflight-safety",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
       "cell": "ops.reinstall.cask-gap",
       "achieved_evidence": [],
       "failure_evidence": null,
@@ -2881,6 +2905,14 @@
     },
     {
       "cell": "ops.upgrade.flag-dry-run",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "ops.upgrade.locked-preflight-safety",
       "achieved_evidence": [],
       "failure_evidence": null,
       "perf_refs": [],

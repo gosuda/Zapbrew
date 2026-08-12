@@ -42,7 +42,7 @@ REPOSITORY = "gosuda/Zapbrew"
 PRECEDENCE = "constrained-parity"
 AUTHORITY = "repository-maintainer"
 CANONICAL_FILE_COUNT = 85
-CANONICAL_CELL_COUNT = 448
+CANONICAL_CELL_COUNT = 452
 DECISION_IDS = {
     "D2-linux-cask-subset",
     "D3-linux-service-registration",
