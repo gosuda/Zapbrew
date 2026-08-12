@@ -210,6 +210,12 @@ impl InstallRecord {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Replacement {
+    Refuse,
+    Replace,
+}
+
 /// One fully preflighted cask install request.
 pub(super) struct CaskInstall<'a> {
     pub(super) cask: &'a Cask,
@@ -219,7 +225,7 @@ pub(super) struct CaskInstall<'a> {
     pub(super) checksum: Option<&'a Checksum>,
     pub(super) alias_name: &'a str,
     pub(super) appdir: &'a Utf8Path,
-    pub(super) force: bool,
+    pub(super) replacement: Replacement,
 }
 
 struct WrittenReceipt {
@@ -228,10 +234,11 @@ struct WrittenReceipt {
 }
 
 /// Execute one fully preflighted install as a journaled whole-token
-/// transaction. With `force`, every installed version of the token collapses to
+/// transaction. Replacement collapses every installed version of the token to
 /// the new version: all old records are validated before any mutation, every
 /// deployed target and old version/metadata tree is backed up once, and a
-/// single atomic promote rename is the only commit point.
+/// single atomic promote rename is the only commit point. Reversible
+/// replacement rejects effects that the journal cannot undo.
 pub(super) async fn install(ctx: &Ctx, request: CaskInstall<'_>) -> Result<(), OpError> {
     let CaskInstall {
         cask,
@@ -241,7 +248,7 @@ pub(super) async fn install(ctx: &Ctx, request: CaskInstall<'_>) -> Result<(), O
         checksum,
         alias_name,
         appdir,
-        force,
+        replacement,
     } = request;
     if !one_normal_component(&cask.token) {
         return Err(OpError::Refusal {
@@ -257,10 +264,18 @@ pub(super) async fn install(ctx: &Ctx, request: CaskInstall<'_>) -> Result<(), O
     confined_caskroom_dir(ctx, &token_dir)?;
     let final_dir = token_dir.join(version);
     let installed = installed_version_dirs(&token_dir)?;
-    if !force && !installed.is_empty() {
+    if replacement == Replacement::Refuse && !installed.is_empty() {
         ctx.reporter
             .opoo(&format!("Cask '{}' is already installed.", cask.token));
         return Ok(());
+    }
+
+    let mut records = Vec::with_capacity(installed.len());
+    for old_dir in &installed {
+        records.push(read_record(ctx, &cask.token, old_dir)?);
+    }
+    if replacement != Replacement::Refuse && !installed.is_empty() {
+        validate_reversible_replacement(cask, plan, &records)?;
     }
 
     let cached = zapbrew_net::fetch_artifact(
@@ -278,7 +293,6 @@ pub(super) async fn install(ctx: &Ctx, request: CaskInstall<'_>) -> Result<(), O
     let mut journal = Vec::<Reverse>::new();
     let mut receipt = None;
     let mut backup_root = None;
-    let mut records: Vec<InstallRecord> = Vec::new();
     let result = (|| {
         archive::extract(ctx, &cached.path, url, &staging)?;
 
@@ -286,9 +300,7 @@ pub(super) async fn install(ctx: &Ctx, request: CaskInstall<'_>) -> Result<(), O
             // Whole-token force replacement: load and validate every old record
             // before any mutation, then back up each deployed target once and
             // every old version dir plus its matching metadata receipt tree.
-            for old_dir in &installed {
-                records.push(read_record(ctx, &cask.token, old_dir)?);
-            }
+            // Every old record was loaded and validated before the download.
             let mut seen = BTreeSet::new();
             let targets = records
                 .iter()
@@ -407,6 +419,48 @@ pub(super) async fn install(ctx: &Ctx, request: CaskInstall<'_>) -> Result<(), O
             }
         }
     }
+}
+
+fn validate_reversible_replacement(
+    cask: &Cask,
+    plan: &Plan,
+    records: &[InstallRecord],
+) -> Result<(), OpError> {
+    if plan
+        .actions
+        .iter()
+        .any(|action| matches!(action, Action::Pkg { .. }))
+    {
+        return Err(OpError::Refusal {
+            message: format!(
+                "Cask '{}' would install an irreversible pkg; reinstalling it is not supported.",
+                cask.token
+            ),
+        });
+    }
+    for record in records {
+        if record
+            .artifacts
+            .iter()
+            .any(|artifact| matches!(artifact, DeployedArtifact::Pkg { .. }))
+        {
+            return Err(OpError::Refusal {
+                message: format!(
+                    "Cask '{}' has an irreversible pkg install and cannot be reinstalled.",
+                    cask.token
+                ),
+            });
+        }
+        if !record.uninstall.is_empty() {
+            return Err(OpError::Refusal {
+                message: format!(
+                    "Cask '{}' has nonempty uninstall directives and cannot be reinstalled.",
+                    cask.token
+                ),
+            });
+        }
+    }
+    Ok(())
 }
 
 fn write_receipt(ctx: &Ctx, cask: &Cask, version: &str) -> Result<WrittenReceipt, OpError> {

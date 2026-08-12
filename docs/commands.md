@@ -125,22 +125,30 @@ Options:
 
 ### `zapbrew reinstall`
 
-Reinstall formulae.
+Reinstall formulae or casks that Zapbrew can restore safely.
 
 ```text
-Reinstall formulae
+Reinstall formulae or casks
 
-Usage: zapbrew reinstall [OPTIONS] [NAMES]...
+Usage: zapbrew reinstall [OPTIONS] <NAMES>...
 
 Arguments:
-  [NAMES]...  Formula names
+  <NAMES>...  Formula or cask names to reinstall
 
 Options:
-      --debug    Enable debug output
-  -q, --quiet    Suppress non-essential output
-  -v, --verbose  Enable verbose output
-  -h, --help     Print help
+      --cask          Treat the named arguments as casks
+      --debug         Enable debug output
+      --formula       Treat the named arguments as formulae
+  -q, --quiet         Suppress non-essential output
+      --appdir <DIR>  Target application directory for cask apps
+  -v, --verbose       Enable verbose output
+  -h, --help          Print help
 ```
+
+> Cask reinstall replaces all installed versions together. It requires
+> Zapbrew install records. It refuses `pkg` artifacts and uninstall directives
+> because Zapbrew cannot restore their effects if replacement fails. Without
+> `--appdir`, it preserves each cask's recorded application directory.
 
 ### `zapbrew uninstall`
 

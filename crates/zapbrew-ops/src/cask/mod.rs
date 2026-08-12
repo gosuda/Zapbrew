@@ -184,6 +184,7 @@ mod archive;
 mod artifact;
 pub mod install;
 pub mod list;
+pub mod reinstall;
 mod transaction;
 pub mod uninstall;
 

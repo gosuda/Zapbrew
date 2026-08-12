@@ -628,7 +628,7 @@ pub(super) fn backup_targets<'a>(
         let backup = backup_root.join(format!("target-{index}"));
         confined_caskroom_path(ctx, &backup)?;
         ensure_parent(&backup)?;
-        move_path(target, &backup)?;
+        backup_target(target, &backup)?;
         journal.push(Reverse::Restore {
             backup,
             target: target.to_path_buf(),
@@ -664,7 +664,13 @@ pub(super) fn rollback(ctx: &Ctx, journal: &[Reverse], appdirs: &[&Utf8Path]) ->
                 }
             }
             Reverse::Restore { backup, target } => {
-                if confined_caskroom_path(ctx, backup).is_err()
+                // The backup leaf can itself be a symlink (e.g. a binary/manpage
+                // deployed target), so confine its parent directory instead.
+                let Some(backup_parent) = backup.parent() else {
+                    leftovers.push(target.to_string());
+                    continue;
+                };
+                if confined_caskroom_dir(ctx, backup_parent).is_err()
                     || confined_target_physical(ctx, target, appdirs).is_err()
                 {
                     leftovers.push(target.to_string());
@@ -802,6 +808,11 @@ pub(super) fn confined_target_physical(
     if !target.is_absolute() || !safe_lexical(target.as_std_path()) {
         return Err(OpError::Refusal {
             message: format!("Cask target '{target}' is outside approved roots."),
+        });
+    }
+    if target == ctx.env.home || target == ctx.env.prefix || appdirs.contains(&target) {
+        return Err(OpError::Refusal {
+            message: format!("Cask target '{target}' must be below an approved root."),
         });
     }
     if target.starts_with(&ctx.env.caskroom) {
@@ -1042,6 +1053,30 @@ fn ensure_parent_journaled(target: &Utf8Path, journal: &mut Vec<Reverse>) -> Res
         journal.push(Reverse::Remove(root));
     }
     fs::create_dir_all(parent).map_err(|error| OpError::io("create", parent, error))
+}
+fn backup_target(source: &Utf8Path, backup: &Utf8Path) -> Result<(), OpError> {
+    match fs::rename(source, backup) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
+            if let Err(original) = copy_entry(source, backup) {
+                if remove_entry(backup).is_err() && path_exists(backup) {
+                    return Err(OpError::RollbackIncomplete {
+                        original: Box::new(original),
+                        leftovers: backup.to_string(),
+                    });
+                }
+                return Err(original);
+            }
+            if let Err(original) = remove_entry(source) {
+                return Err(OpError::RollbackIncomplete {
+                    original: Box::new(original),
+                    leftovers: backup.to_string(),
+                });
+            }
+            Ok(())
+        }
+        Err(error) => Err(OpError::io("move", backup, error)),
+    }
 }
 
 fn ensure_parent(target: &Utf8Path) -> Result<(), OpError> {

@@ -110,8 +110,8 @@ pub enum CompletionShell {
 pub enum Commands {
     /// Install formulae or casks.
     Install(InstallArgs),
-    /// Reinstall formulae.
-    Reinstall(NamesArgs),
+    /// Reinstall formulae or casks.
+    Reinstall(ReinstallArgs),
     /// Uninstall formulae or casks.
     Uninstall(UninstallArgs),
     /// Upgrade outdated formulae.
@@ -175,6 +175,22 @@ pub enum Commands {
 pub struct NamesArgs {
     /// Formula names.
     pub names: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct ReinstallArgs {
+    /// Formula or cask names to reinstall.
+    #[arg(required = true)]
+    pub names: Vec<String>,
+    /// Treat the named arguments as casks.
+    #[arg(long, conflicts_with = "formula")]
+    pub cask: bool,
+    /// Treat the named arguments as formulae.
+    #[arg(long)]
+    pub formula: bool,
+    /// Target application directory for cask apps.
+    #[arg(long, value_name = "DIR")]
+    pub appdir: Option<PathBuf>,
 }
 
 /// Homebrew `desc` arguments: named lookup or regex search across names/descriptions.

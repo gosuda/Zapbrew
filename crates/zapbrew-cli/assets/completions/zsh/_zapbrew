@@ -66,6 +66,9 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (reinstall)
 _arguments "${_arguments_options[@]}" : \
+'--appdir=[Target application directory for cask apps]:DIR:_files' \
+'(--formula)--cask[Treat the named arguments as casks]' \
+'--formula[Treat the named arguments as formulae]' \
 '--debug[Enable debug output]' \
 '(-v --verbose)-q[Suppress non-essential output]' \
 '(-v --verbose)--quiet[Suppress non-essential output]' \
@@ -73,7 +76,7 @@ _arguments "${_arguments_options[@]}" : \
 '--verbose[Enable verbose output]' \
 '-h[Print help]' \
 '--help[Print help]' \
-'*::names -- Formula names:_default' \
+'*::names -- Formula or cask names to reinstall:_default' \
 && ret=0
 ;;
 (uninstall)
@@ -1031,7 +1034,7 @@ esac
 _zapbrew_commands() {
     local commands; commands=(
 'install:Install formulae or casks' \
-'reinstall:Reinstall formulae' \
+'reinstall:Reinstall formulae or casks' \
 'uninstall:Uninstall formulae or casks' \
 'upgrade:Upgrade outdated formulae' \
 'outdated:List outdated formulae and casks' \
@@ -1170,7 +1173,7 @@ _zapbrew__subcmd__fetch_commands() {
 _zapbrew__subcmd__help_commands() {
     local commands; commands=(
 'install:Install formulae or casks' \
-'reinstall:Reinstall formulae' \
+'reinstall:Reinstall formulae or casks' \
 'uninstall:Uninstall formulae or casks' \
 'upgrade:Upgrade outdated formulae' \
 'outdated:List outdated formulae and casks' \

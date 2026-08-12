@@ -189,6 +189,131 @@ fn seed_record(fixture: &Fixture, token: &str, version: &str, appdir: &str, arti
     bytes.push(b'\n');
     std::fs::write(version_dir.join(".zapbrew-record.json"), bytes).expect("seed record");
 }
+
+fn seed_record_with_uninstall(
+    fixture: &Fixture,
+    token: &str,
+    version: &str,
+    appdir: &str,
+    artifacts: &[Value],
+) {
+    let version_dir = fixture.env.caskroom.join(token).join(version);
+    std::fs::create_dir_all(&version_dir).expect("version dir");
+    let record = json!({
+        "schema": 1,
+        "token": token,
+        "version": version,
+        "appdir": appdir,
+        "artifacts": artifacts,
+        "uninstall": [[{"delete": ["/tmp/example"]}]],
+        "zap": [],
+    });
+    let mut bytes = serde_json::to_vec_pretty(&record).expect("record json");
+    bytes.push(b'\n');
+    std::fs::write(version_dir.join(".zapbrew-record.json"), bytes).expect("seed record");
+}
+
+#[tokio::test]
+async fn force_replacement_refuses_irreversible_effects_before_download() {
+    for case in ["new-pkg", "old-pkg", "old-uninstall"] {
+        let server = MockServer::start().await;
+        let fixture = Fixture::new().macos();
+        let appdir = fixture.env.home.join("Applications");
+        let token = format!("force-{case}");
+        let artifacts = if case == "new-pkg" {
+            vec![json!({"pkg": ["App.pkg"]})]
+        } else {
+            vec![json!({"binary": ["tool"]})]
+        };
+        let value = cask(
+            &token,
+            &format!("{}/unused.tar.gz", server.uri()),
+            "no_check",
+            artifacts,
+        );
+        let old_artifacts = if case == "old-pkg" {
+            vec![json!({"kind": "pkg", "source": "Old.pkg"})]
+        } else {
+            vec![json!({
+                "kind": "symlink",
+                "target": fixture.env.prefix.join("bin/tool").as_str()
+            })]
+        };
+        if case == "old-uninstall" {
+            seed_record_with_uninstall(&fixture, &token, "0.9", appdir.as_str(), &old_artifacts);
+        } else {
+            seed_record(&fixture, &token, "0.9", appdir.as_str(), &old_artifacts);
+        }
+        let old_record = fixture
+            .env
+            .caskroom
+            .join(&token)
+            .join("0.9")
+            .join(".zapbrew-record.json");
+        let (ctx, _reporter) =
+            fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+        let error = err(install::run(&ctx, install_args(&[&token], &appdir, true)).await);
+        assert!(
+            error.to_string().contains("pkg") || error.to_string().contains("uninstall"),
+            "unexpected {case} refusal: {error}"
+        );
+        assert!(old_record.is_file(), "{case} predecessor must survive");
+        assert!(
+            server
+                .received_requests()
+                .await
+                .is_none_or(|requests| requests.is_empty()),
+            "{case} must not download"
+        );
+    }
+}
+
+#[tokio::test]
+async fn replacement_refuses_approved_root_targets_before_download() {
+    for root_name in ["home", "prefix", "appdir"] {
+        let server = MockServer::start().await;
+        let fixture = Fixture::new().macos();
+        let appdir = fixture.env.home.join("Applications");
+        let target = match root_name {
+            "home" => fixture.env.home.clone(),
+            "prefix" => fixture.env.prefix.clone(),
+            "appdir" => appdir.clone(),
+            _ => unreachable!(),
+        };
+        let token = format!("root-{root_name}");
+        seed_record(
+            &fixture,
+            &token,
+            "0.9",
+            appdir.as_str(),
+            &[json!({"kind": "path", "target": target.as_str()})],
+        );
+        std::fs::create_dir_all(&fixture.env.home).expect("home");
+        let marker = fixture.env.home.join(format!("{root_name}-marker"));
+        std::fs::write(&marker, b"keep").expect("marker");
+        let value = cask(
+            &token,
+            &format!("{}/unused.tar.gz", server.uri()),
+            "no_check",
+            vec![json!({"binary": ["tool"]})],
+        );
+        let (ctx, _reporter) =
+            fixture.context_casks(vec![value], Arc::new(PanicRunner), reqwest::Client::new());
+        let error = err(install::run(&ctx, install_args(&[&token], &appdir, true)).await);
+        assert!(
+            error.to_string().contains("must be below"),
+            "unexpected {root_name} refusal: {error}"
+        );
+        assert_eq!(std::fs::read(marker).expect("marker survives"), b"keep");
+        assert!(
+            server
+                .received_requests()
+                .await
+                .is_none_or(|requests| requests.is_empty()),
+            "{root_name} equality must not download"
+        );
+    }
+}
 #[tokio::test]
 async fn linux_uninstall_still_refuses() {
     let fixture = Fixture::new();

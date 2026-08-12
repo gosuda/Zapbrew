@@ -192,6 +192,7 @@ async fn reinstall_preserves_installed_on_request_and_replaces_same_keg() {
         &context,
         reinstall::Args {
             names: vec!["root".to_owned()],
+            ..Default::default()
         },
     )
     .await
@@ -241,6 +242,7 @@ async fn link_failure_restores_exact_old_keg_receipt_and_links() {
         &new_ctx,
         reinstall::Args {
             names: vec!["root".to_owned()],
+            ..Default::default()
         },
     )
     .await
@@ -271,6 +273,7 @@ async fn reinstall_requires_installed_formula() {
         &context,
         reinstall::Args {
             names: vec!["root".to_owned()],
+            ..Default::default()
         },
     )
     .await
@@ -297,6 +300,7 @@ async fn reinstall_caveats_and_summary_match_install_output() {
         &context,
         reinstall::Args {
             names: vec!["root".to_owned()],
+            ..Default::default()
         },
     )
     .await
@@ -337,6 +341,7 @@ async fn quiet_reinstall_drops_caveats() {
         &context,
         reinstall::Args {
             names: vec!["root".to_owned()],
+            ..Default::default()
         },
     )
     .await
@@ -400,6 +405,7 @@ async fn reinstall_blocked_by_exclusive_tap_lock() {
         &ctx,
         reinstall::Args {
             names: vec!["root".to_owned()],
+            ..Default::default()
         },
     )
     .await
@@ -417,4 +423,221 @@ async fn reinstall_blocked_by_exclusive_tap_lock() {
         !locks.join("root.formula.lock").exists(),
         "formula lock must not be created when tap lock blocks"
     );
+}
+
+fn formula_with_alias(name: &str, alias: &str, url: &str, digest: &str) -> Value {
+    json!({
+        "name": name,
+        "full_name": name,
+        "aliases": [alias],
+        "versions": {"stable": "1.0", "bottle": true},
+        "bottle": {"stable": {"rebuild": 0, "root_url": "unused", "files": {
+            "x86_64_linux": {"cellar": ":any_skip_relocation", "url": url, "sha256": digest}
+        }}},
+    })
+}
+
+fn formula_with_oldname(name: &str, oldname: &str, url: &str, digest: &str) -> Value {
+    json!({
+        "name": name,
+        "full_name": name,
+        "oldnames": [oldname],
+        "versions": {"stable": "1.0", "bottle": true},
+        "bottle": {"stable": {"rebuild": 0, "root_url": "unused", "files": {
+            "x86_64_linux": {"cellar": ":any_skip_relocation", "url": url, "sha256": digest}
+        }}},
+    })
+}
+
+fn ctx_both(env: Env, formulae: Vec<Value>, casks: Vec<Value>) -> (Ctx, Arc<RecordingReporter>) {
+    ctx_both_with_reporter(env, formulae, casks, RecordingReporter::default())
+}
+
+fn ctx_both_with_reporter(
+    env: Env,
+    formulae: Vec<Value>,
+    casks: Vec<Value>,
+    recording: RecordingReporter,
+) -> (Ctx, Arc<RecordingReporter>) {
+    let formula_bytes = serde_json::to_vec(&formulae).expect("formula json");
+    let cask_bytes = serde_json::to_vec(&casks).expect("cask json");
+    let recording = Arc::new(recording);
+    (
+        Ctx {
+            catalog: Arc::new(
+                Catalog::from_payload(&formula_bytes, &env.bottle_tag).expect("catalog"),
+            ),
+            casks: Arc::new(
+                CaskCatalog::from_payload(&cask_bytes, &env.bottle_tag).expect("casks"),
+            ),
+            env,
+            http: reqwest::Client::new(),
+            commands: Arc::new(PanicRunner),
+            reporter: recording.clone(),
+        },
+        recording,
+    )
+}
+
+#[tokio::test]
+async fn reinstall_resolves_alias() {
+    let server = MockServer::start().await;
+    let bottle = tarball("realroot", &[("bin/realroot", b"content")]);
+    let digest = sha(&bottle);
+    mount(&server, "/realroot", &bottle).await;
+    let temp = TempDir::new().expect("temp");
+    let env = env(&temp);
+    let f = formula_with_alias(
+        "realroot",
+        "root",
+        &format!("{}/realroot", server.uri()),
+        &digest,
+    );
+    let context = ctx_both(env, vec![f], Vec::new()).0;
+
+    install::run(
+        &context,
+        install::Args {
+            names: vec!["realroot".to_owned()],
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("install realroot");
+
+    reinstall::run(
+        &context,
+        reinstall::Args {
+            names: vec!["root".to_owned()],
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("reinstall by alias");
+}
+
+#[tokio::test]
+async fn reinstall_resolves_oldname() {
+    let server = MockServer::start().await;
+    let bottle = tarball("newroot", &[("bin/newroot", b"content")]);
+    let digest = sha(&bottle);
+    mount(&server, "/newroot", &bottle).await;
+    let temp = TempDir::new().expect("temp");
+    let env = env(&temp);
+    let f = formula_with_oldname(
+        "newroot",
+        "oldroot",
+        &format!("{}/newroot", server.uri()),
+        &digest,
+    );
+    let context = ctx_both(env, vec![f], Vec::new()).0;
+
+    install::run(
+        &context,
+        install::Args {
+            names: vec!["newroot".to_owned()],
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("install newroot");
+
+    reinstall::run(
+        &context,
+        reinstall::Args {
+            names: vec!["oldroot".to_owned()],
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("reinstall by oldname");
+}
+
+#[tokio::test]
+async fn reinstall_auto_prefers_formula_over_cask() {
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    let formula = json!({
+        "name": "foo",
+        "full_name": "foo",
+        "versions": {"stable": "1.0", "bottle": true},
+        "bottle": {"stable": {"rebuild": 0, "root_url": "unused", "files": {
+            "x86_64_linux": {"cellar": ":any_skip_relocation", "url": "http://unused", "sha256": "0".repeat(64)}
+        }}},
+    });
+    let cask = json!({
+        "token": "foo",
+        "version": "1.0",
+        "sha256": "no_check",
+        "url": "http://unused",
+        "artifacts": [json!({"binary": ["tool"]})],
+    });
+    let context = ctx_both(environment, vec![formula], vec![cask]).0;
+
+    let error = reinstall::run(
+        &context,
+        reinstall::Args {
+            names: vec!["foo".to_owned()],
+            ..Default::default()
+        },
+    )
+    .await
+    .expect_err("reinstall must choose formula");
+    assert_eq!(error.to_string(), "foo is not installed");
+}
+
+#[tokio::test]
+async fn reinstall_mixed_batch_preflight_fails_before_network() {
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    let formula = json!({
+        "name": "foo",
+        "full_name": "foo",
+        "versions": {"stable": "1.0", "bottle": true},
+        "bottle": {"stable": {"rebuild": 0, "root_url": "unused", "files": {
+            "x86_64_linux": {"cellar": ":any_skip_relocation", "url": "http://unused", "sha256": "0".repeat(64)}
+        }}},
+    });
+    let cask = json!({
+        "token": "bar",
+        "version": "1.0",
+        "sha256": "no_check",
+        "url": "http://unused",
+        "artifacts": [json!({"binary": ["tool"]})],
+    });
+    let context = ctx_both(environment, vec![formula], vec![cask]).0;
+
+    let error = reinstall::run(
+        &context,
+        reinstall::Args {
+            names: vec!["foo".to_owned(), "bar".to_owned()],
+            ..Default::default()
+        },
+    )
+    .await
+    .expect_err("reinstall must fail on cask preflight");
+    assert_eq!(error.to_string(), "Cask 'bar' is not installed.");
+}
+
+#[tokio::test]
+async fn reinstall_refuses_appdir_with_formula() {
+    let temp = TempDir::new().expect("temp");
+    let environment = env(&temp);
+    let context = ctx_both(
+        environment,
+        vec![formula("http://unused", &"0".repeat(64))],
+        Vec::new(),
+    )
+    .0;
+    let error = reinstall::run(
+        &context,
+        reinstall::Args {
+            names: vec!["root".to_owned()],
+            appdir: Some("/Apps".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect_err("appdir with formula must refuse");
+    assert!(error.to_string().contains("--appdir"), "{error}");
 }

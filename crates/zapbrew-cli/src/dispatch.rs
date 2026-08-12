@@ -121,11 +121,30 @@ pub fn plan(command: Commands, globals: &GlobalArgs, width: usize) -> Result<Pla
                 }
             }
         }
-        Commands::Reinstall(args) => Plan {
-            needs_formula: true,
-            needs_cask: false,
-            kind: OpKind::Reinstall(reinstall::Args { names: args.names }),
-        },
+        Commands::Reinstall(args) => {
+            if args.formula && args.appdir.is_some() {
+                return Err(OpError::Refusal {
+                    message: "zapbrew cannot honor --appdir with --formula: \
+                             the formula reinstall path does not support it. Use brew."
+                        .to_owned(),
+                });
+            }
+            let (needs_formula, needs_cask) = match (args.formula, args.cask) {
+                (true, false) => (true, false),
+                (false, true) => (false, true),
+                _ => (true, true),
+            };
+            Plan {
+                needs_formula,
+                needs_cask,
+                kind: OpKind::Reinstall(reinstall::Args {
+                    names: args.names,
+                    formula: args.formula,
+                    cask: args.cask,
+                    appdir: appdir(args.appdir)?,
+                }),
+            }
+        }
         Commands::Uninstall(args) => {
             if args.cask {
                 if let Some(flag) = unsupported_cask_uninstall_flag(&args) {
@@ -1116,7 +1135,7 @@ mod tests {
         for args in [
             &["zapbrew", "install", "wget"][..],
             &["zapbrew", "install", "wget", "--include-test"][..],
-            &["zapbrew", "reinstall", "wget"][..],
+            &["zapbrew", "reinstall", "wget", "--formula"][..],
             &["zapbrew", "upgrade"][..],
             &["zapbrew", "deps", "wget"][..],
             &["zapbrew", "link", "wget"][..],
@@ -1285,6 +1304,112 @@ mod tests {
                 names: vec!["foo".to_owned()],
                 deps: false,
                 mode: zapbrew_ops::fetch::Mode::CaskOnly,
+            })
+        );
+    }
+
+    #[test]
+    fn reinstall_requires_name() {
+        let result = Cli::try_parse_from(["zapbrew", "reinstall"]);
+        assert!(result.is_err(), "reinstall with no names must fail");
+    }
+
+    #[test]
+    fn reinstall_formula_and_cask_conflict() {
+        let result = Cli::try_parse_from(["zapbrew", "reinstall", "foo", "--formula", "--cask"]);
+        assert!(result.is_err(), "--formula and --cask must conflict");
+    }
+
+    #[test]
+    fn reinstall_formula_appdir_refused() {
+        let cli = Cli::parse_from([
+            "zapbrew",
+            "reinstall",
+            "foo",
+            "--formula",
+            "--appdir",
+            "/Apps",
+        ]);
+        let error = plan(cli.command.expect("command"), &cli.globals, WIDTH)
+            .expect_err("--appdir with --formula must refuse");
+        match error {
+            zapbrew_ops::OpError::Refusal { message } => {
+                assert!(
+                    message.contains("--appdir"),
+                    "refusal must name --appdir: {message}"
+                )
+            }
+            other => panic!("expected a refusal for --appdir, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reinstall_auto_loads_both_catalogs() {
+        let plan = planned(&["zapbrew", "reinstall", "foo"]);
+        assert!(plan.needs_formula);
+        assert!(plan.needs_cask);
+        assert_eq!(
+            plan.kind,
+            OpKind::Reinstall(zapbrew_ops::reinstall::Args {
+                names: vec!["foo".to_owned()],
+                formula: false,
+                cask: false,
+                appdir: None,
+            })
+        );
+    }
+
+    #[test]
+    fn reinstall_formula_only_loads_formula_catalog() {
+        let plan = planned(&["zapbrew", "reinstall", "foo", "--formula"]);
+        assert!(plan.needs_formula);
+        assert!(!plan.needs_cask);
+        assert_eq!(
+            plan.kind,
+            OpKind::Reinstall(zapbrew_ops::reinstall::Args {
+                names: vec!["foo".to_owned()],
+                formula: true,
+                cask: false,
+                appdir: None,
+            })
+        );
+    }
+
+    #[test]
+    fn reinstall_cask_only_loads_cask_catalog() {
+        let plan = planned(&["zapbrew", "reinstall", "foo", "--cask"]);
+        assert!(!plan.needs_formula);
+        assert!(plan.needs_cask);
+        assert_eq!(
+            plan.kind,
+            OpKind::Reinstall(zapbrew_ops::reinstall::Args {
+                names: vec!["foo".to_owned()],
+                formula: false,
+                cask: true,
+                appdir: None,
+            })
+        );
+    }
+
+    #[test]
+    fn reinstall_cask_maps_appdir_and_forces() {
+        let plan = planned(&[
+            "zapbrew",
+            "reinstall",
+            "--cask",
+            "firefox",
+            "--appdir",
+            "/Apps",
+        ]);
+        assert!(!plan.needs_formula);
+        assert!(plan.needs_cask);
+        assert_eq!(
+            plan.kind,
+            OpKind::Reinstall(zapbrew_ops::reinstall::Args {
+                names: vec!["firefox".to_owned()],
+                formula: false,
+                cask: true,
+                appdir: Some("/Apps".into()),
             })
         );
     }
