@@ -128,6 +128,13 @@ pub fn plan(command: Commands, globals: &GlobalArgs, width: usize) -> Result<Pla
         },
         Commands::Uninstall(args) => {
             if args.cask {
+                if let Some(flag) = unsupported_cask_uninstall_flag(&args) {
+                    return Err(OpError::Refusal {
+                        message: format!(
+                            "zapbrew cannot honor {flag} with --cask: the cask uninstall path does not support it. Use brew."
+                        ),
+                    });
+                }
                 Plan {
                     needs_formula: false,
                     needs_cask: true,
@@ -453,6 +460,19 @@ fn unsupported_cask_flag(args: &crate::cli::InstallArgs) -> Option<&'static str>
     .find_map(|(present, flag)| present.then_some(flag))
 }
 
+/// Cask uninstall can only honor `--zap` and the token list. `--force` and
+/// `--ignore-dependencies` have Homebrew semantics that the current cask
+/// uninstall path does not model (best-effort removal of uninstalled or partly
+/// damaged casks, and indirect cask-dependent checks). Refuse instead.
+fn unsupported_cask_uninstall_flag(args: &crate::cli::UninstallArgs) -> Option<&'static str> {
+    [
+        (args.force, "--force"),
+        (args.ignore_dependencies, "--ignore-dependencies"),
+    ]
+    .into_iter()
+    .find_map(|(present, flag)| present.then_some(flag))
+}
+
 /// Convert an optional cask `--appdir` to a UTF-8 path, refusing non-UTF-8.
 fn appdir(appdir: Option<PathBuf>) -> Result<Option<Utf8PathBuf>, OpError> {
     appdir
@@ -699,6 +719,21 @@ mod tests {
                 zap: true,
             })
         );
+    }
+
+    #[test]
+    fn uninstall_cask_refuses_unsupported_flags() {
+        for flag in ["--force", "--ignore-dependencies"] {
+            let cli = Cli::parse_from(["zapbrew", "uninstall", "--cask", "firefox", flag]);
+            let err = plan(cli.command.expect("command"), &cli.globals, WIDTH).expect_err(flag);
+            match err {
+                zapbrew_ops::OpError::Refusal { message } => assert!(
+                    message.contains(flag) && message.contains("--cask"),
+                    "refusal must name {flag}: {message}"
+                ),
+                other => panic!("expected a refusal for {flag}, got {other:?}"),
+            }
+        }
     }
 
     #[test]

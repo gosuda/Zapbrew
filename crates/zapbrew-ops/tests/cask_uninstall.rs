@@ -770,3 +770,27 @@ async fn token_mismatch_record_refuses_before_mutation() {
 }
 
 fn _path(_path: &Utf8Path) {}
+
+#[tokio::test]
+async fn linux_cask_uninstall_refuses_before_any_effect() {
+    let fixture = Fixture::new();
+    let runner = Arc::new(RecordingRunner::default());
+    let (ctx, _reporter) = fixture.context_casks(vec![], runner.clone(), reqwest::Client::new());
+    let result = uninstall::run(
+        &ctx,
+        Args {
+            tokens: vec!["anything".to_owned()],
+            zap: false,
+        },
+    )
+    .await;
+    assert!(
+        matches!(result, Err(OpError::Refusal { ref message }) if message == "Casks are not supported on Linux."),
+        "expected Linux refusal, got {result:?}"
+    );
+    assert!(
+        runner.calls().is_empty(),
+        "no host commands may run on Linux"
+    );
+    assert!(!fixture.env.caskroom.join("anything").exists());
+}
