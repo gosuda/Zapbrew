@@ -777,6 +777,22 @@
       "finding": "none"
     },
     {
+      "cell": "cp.cask-reinstall.preflight-record-trust",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
+      "cell": "cp.cask-reinstall.transactions",
+      "achieved_evidence": [],
+      "failure_evidence": null,
+      "perf_refs": [],
+      "deviation": null,
+      "finding": "none"
+    },
+    {
       "cell": "cp.cask-root.appdir-trust",
       "achieved_evidence": [],
       "failure_evidence": null,
